@@ -1,6 +1,6 @@
 # Herdr Mobile Client
 
-Herdr Mobile Client 是面向 iPhone 和 iPad 的 Herdr 远程终端客户端。产品定义见 [PRD](docs/PRD.md)，初步开发节奏见 [开发计划](docs/DEVELOPMENT_PLAN.md)。
+Herdr Mobile Client 是面向 iPhone 和 iPad 的 Herdr 远程终端客户端。产品定义见 [PRD](docs/PRD.md)，当前开发步骤见 [active plan](docs/plan/active_plan.md)。
 
 ## 技术栈
 
