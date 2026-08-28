@@ -1,10 +1,11 @@
 .PHONY: bootstrap generate test-core
 
+MISE ?= mise
+
 bootstrap: generate
 
 generate:
-	@command -v xcodegen >/dev/null || (echo "xcodegen is required: brew install xcodegen" && exit 1)
-	xcodegen generate
+	$(MISE) exec -- xcodegen generate
 
 test-core:
-	swift test --package-path Packages/HerdrKit
+	$(MISE) exec -- swift test --package-path Packages/HerdrKit

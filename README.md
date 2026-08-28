@@ -15,10 +15,13 @@ Herdr Mobile Client 是面向 iPhone 和 iPad 的 Herdr 远程终端客户端。
 
 ## 本地启动
 
-需要 macOS、Xcode 以及 XcodeGen。
+需要 macOS、Xcode 和 [mise](https://mise.jdx.dev/)。XcodeGen 由 `mise.toml` 固定为 2.46.0。
 
 ```sh
-brew install xcodegen
+brew install mise
+eval "$(mise activate zsh)"  # 写入 ~/.zshrc 后可省略
+mise trust
+mise install
 make bootstrap
 open HerdrMobile.xcodeproj
 ```

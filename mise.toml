@@ -1,0 +1,17 @@
+[settings]
+lockfile = true
+
+[tools]
+xcodegen = "2.46.0"
+
+[tasks.generate]
+description = "Generate the Xcode project from project.yml"
+run = "xcodegen generate"
+
+[tasks.bootstrap]
+description = "Bootstrap the local Xcode project"
+depends = ["generate"]
+
+[tasks.test-core]
+description = "Run HerdrKit package tests"
+run = "swift test --package-path Packages/HerdrKit"

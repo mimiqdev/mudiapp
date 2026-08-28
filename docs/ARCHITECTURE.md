@@ -74,4 +74,4 @@ Agent hook 不参与 server discovery。Herdr 默认通过进程和 terminal scr
 
 ## 工程生成与依赖
 
-`project.yml` 是 Xcode project 的来源，`make bootstrap` 生成本地 `.xcodeproj`。运行时依赖由 Swift Package Manager 解析。仓库保留 `Package.resolved` 的计划是在首次使用 macOS / Xcode 完成解析后提交，以固定可复现版本。
+`project.yml` 是 Xcode project 的来源，`mise.toml` 固定 XcodeGen 版本。`make bootstrap`（或 `mise run generate`）生成本地 `.xcodeproj`。运行时依赖由 Swift Package Manager 解析。仓库保留 `Package.resolved` 的计划是在首次使用 macOS / Xcode 完成解析后提交，以固定可复现版本。

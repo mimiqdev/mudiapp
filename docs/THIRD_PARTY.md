@@ -14,9 +14,9 @@ Citadel 会传递引入 SwiftNIO、Swift Crypto 和一个 SwiftNIO SSH fork 等�
 
 ## 构建工具
 
-| 组件 | 用途 | 许可证 | 是否进入 App |
-| --- | --- | --- | --- |
-| XcodeGen | 从 `project.yml` 生成 Xcode project | MIT | 否 |
+| 组件 | 声明版本 | 用途 | 许可证 | 是否进入 App |
+| --- | --- | --- | --- | --- |
+| XcodeGen | 2.46.0（`mise.toml`） | 从 `project.yml` 生成 Xcode project | MIT | 否 |
 
 ## Mosh 方案
 
