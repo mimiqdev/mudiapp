@@ -21,20 +21,37 @@
 - shortcut bar 接线、外接键盘、字体和主题（阶段 4）
 - Mosh、Auto transport、GhosttyKit、libmoshios（阶段 5）
 
-## 切片
+## 测试
 
-1. 连接表单 + 可见错误；用密码或 PEM 经 Citadel 建立 SSH 并申请 PTY
-2. PTY 接到 SwiftTerm，系统键盘可交互
-3. terminal 尺寸变化时把 rows/cols 发给远端
+先把这一节落地成会失败的自动化测试，再做下面的切片。真 sshd / 真机键盘不自动化。
 
-## 验证
+### 自动化
+
+不连真实 sshd。用 fake PTY / fake SSH 测会话缝，并保住现有测试。
+
+- `Host` Codable round-trip 不包含 password 或 PEM 字段
+- 认证失败时会话返回可展示的错误
+- 连接成功后，`send` 的字节到达 fake PTY
+- `resize` 把 rows/cols 传到 fake PTY
+- 断开后，UserDefaults、Keychain 和 App 沙盒文件里读不到本次密码或 PEM
+- `make test-core` 通过
+- 现有 `RootViewTests` 通过
+
+### 手工（出口，自动化全绿之后）
 
 - 打开 macOS Remote Login。模拟器可先连 `127.0.0.1:22`；归档前必须用真机连开发机的局域网地址（不要用 localhost）
 - 真机弹出系统软件键盘，输入一条命令（例如 `echo hello`），terminal 里能看到输出
 - 弹出软件键盘或旋转后，远端 `stty size` 会变
 - 杀掉 App 再开，表单是空的
-- `make test-core` 通过
+
+## 切片
+
+自动化测试已在仓库里且失败之后，才做这些：
+
+1. 连接表单 + 可见错误；用密码或 PEM 经 Citadel 建立 SSH 并申请 PTY
+2. PTY 接到 SwiftTerm，系统键盘可交互
+3. terminal 尺寸变化时把 rows/cols 发给远端
 
 ## 完成后
 
-归档为 `archive/01-ssh-interactive-terminal.md`，将 `future/02-ssh-vertical-slice.md` 提升为 `active_plan.md`，并补全切片和验证。
+归档为 `archive/01-ssh-interactive-terminal.md`，将 `future/02-ssh-vertical-slice.md` 提升为 `active_plan.md`。提升后先填 测试，确认后再写 切片。
