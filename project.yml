@@ -34,6 +34,8 @@ targets:
     platform: iOS
     sources:
       - path: HerdrMobile
+        excludes:
+          - "**/README.md"
     dependencies:
       - package: HerdrKit
       - package: SwiftTerm
@@ -68,3 +70,4 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Herdr.app/Herdr"
