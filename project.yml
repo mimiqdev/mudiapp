@@ -1,0 +1,70 @@
+name: HerdrMobile
+
+options:
+  minimumXcodeGenVersion: 2.46.0
+  bundleIdPrefix: dev.herdr
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "1,2"
+
+packages:
+  HerdrKit:
+    path: Packages/HerdrKit
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm.git
+    exactVersion: 1.15.0
+  Citadel:
+    url: https://github.com/orlandos-nl/Citadel.git
+    exactVersion: 0.12.1
+  SwiftMosh:
+    url: https://github.com/wiedymi/swift-mosh.git
+    exactVersion: 0.1.8
+
+targets:
+  HerdrMobile:
+    type: application
+    platform: iOS
+    sources:
+      - path: HerdrMobile
+    dependencies:
+      - package: HerdrKit
+      - package: SwiftTerm
+      - package: Citadel
+      - package: SwiftMosh
+        products:
+          - MoshCore
+          - MoshBootstrap
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.herdr.mobile
+        PRODUCT_NAME: Herdr
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Herdr
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIRequiresFullScreen: NO
+        SUPPORTS_MACCATALYST: NO
+    scheme:
+      testTargets:
+        - HerdrMobileTests
+      gatherCoverageData: true
+
+  HerdrMobileTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: HerdrMobileTests
+    dependencies:
+      - target: HerdrMobile
+      - package: HerdrKit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES

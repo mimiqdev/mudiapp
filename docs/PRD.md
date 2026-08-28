@@ -205,10 +205,13 @@ SSH bootstrap
 
 #### Herdr Discovery
 
-连接 Host 后，App 能识别 Herdr 是否可用。
+连接 Host 后，App 自动识别 Herdr 是否可用，并以只读方式查询当前 session。用户无需手动进入 shell 执行 discovery 命令。
+
+Herdr 的 default session 和 named session 分别对应独立的 background server namespace。App 将它们统一显示为 Herdr sessions。
 
 如果可用，应展示至少：
 
+- session
 - workspace
 - tab
 - pane
@@ -217,6 +220,8 @@ SSH bootstrap
 
 如果 Herdr 不可用，普通 terminal 连接仍然可以使用。
 
+Herdr discovery 本身不依赖 agent hook。Herdr integrations 可以提高 agent state 和原生 session identity 的准确度，属于可选的 server 端增强。
+
 ---
 
 #### Herdr Navigation
@@ -224,6 +229,12 @@ SSH bootstrap
 用户可以直接从 App 中选择 Herdr target。
 
 整个过程可以在 App 导航界面中完成，无需先进入 shell 手动操作 Herdr。
+
+Discovery 完成后的导航规则：
+
+1. 没有活动 session：显示未发现活动 Herdr session，并提供普通 terminal 入口；
+2. 只有一个活动 session：跳过 session 选择，直接列出其中的 workspace、tab、pane 和 agent；
+3. 存在多个活动 session：先展示 session 列表，用户选择后再展示对应的 workspace、tab、pane 和 agent。
 
 导航界面应突出：
 
@@ -238,6 +249,10 @@ SSH bootstrap
 选择 Herdr pane 后，进入该 pane 对应的真实 terminal。
 
 Terminal 是主要交互界面，并保留原始的终端体验，不转换成 Chat UI。
+
+App 仅在用户选择 pane，或明确触发“恢复上次 pane”时建立 terminal attach。单个 Herdr session 只会跳过 session 选择，不会自动选择或 attach 其中的 pane。
+
+恢复上次 pane 时不抢占已有的 writable controller。目标当前被其他客户端控制时，App 先进入 observe 状态，再由用户确认是否 takeover。
 
 ---
 
