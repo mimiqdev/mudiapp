@@ -1,34 +1,39 @@
 # Active plan — SSH 可交互 terminal
 
-**出口：** 在模拟器或真机上，通过 SSH 打开一个可交互 terminal。
+**出口：** 在真机上通过 SSH 打开一个可交互的远端 shell。模拟器可以先打通，不能代替真机验收。
 
 ## 范围内
 
-- 继续使用现有 iPhone / iPad 骨架、`HerdrKit` 领域模型和依赖边界
-- 能指定一台 Host（UI 可以很粗）并完成 SSH 认证
-- Citadel：登录、PTY、双向数据、窗口尺寸同步
-- SwiftTerm 接到字节流、键盘输入写回、resize
+- 验收路径是 **连接表单 → SSH 交互 shell**，不经过 Herdr browser。现有三栏导航和 Preview 数据可以留着，但不是本步出口。
+- 不持久化的表单：hostname、port、username，外加 **密码或 PEM 私钥（有一种能登上即可）**。
+- 凭据只在本次连接过程中持有，不写入 `Host`，不进 Keychain，不进日志。
+- Citadel：登录、申请 PTY、交互 shell、双向字节流。未知 host key 本步直接接受，不做指纹 UI。
+- SwiftTerm 显示输出；系统软件键盘把输入写回 PTY；尺寸变化同步到远端。
+- 连接失败时界面上显示错误即可，不做重连状态机。
+- SSH 会话接口本步只覆盖 connect / send / resize / disconnect。对象是 shell，不是 pane。
+- 为跑真机补上开发者签名（`DEVELOPMENT_TEAM`）。不包含 TestFlight 或正式 bundle id。
 
 ## 不在本步
 
-- Host 配置产品化、Keychain、host key UX、连接状态和手动重连（阶段 2）
-- Herdr discovery / `terminal session control` attach（阶段 3）
-- shortcut bar、外接键盘打磨、字体和主题（阶段 4）
-- Mosh、Auto transport、libmoshios（阶段 5）
-- GhosttyKit 对照（可另开 spike，不挡出口）
+- Host 保存、Keychain、host key 校验 UI、连接状态机、手动重连（阶段 2）
+- 实现 `TerminalTransport.attach(to:)`（阶段 3）
+- Herdr discovery / `terminal session control`（阶段 3）
+- shortcut bar 接线、外接键盘、字体和主题（阶段 4）
+- Mosh、Auto transport、GhosttyKit、libmoshios（阶段 5）
 
 ## 切片
 
-1. 最小 Host 输入（或临时调试配置），足以发起一次 SSH 连接
-2. Citadel SSH + PTY 接到 SwiftTerm，打通交互 shell
-3. 窗口或键盘导致的 resize 同步到远端
+1. 连接表单 + 可见错误；用密码或 PEM 经 Citadel 建立 SSH 并申请 PTY
+2. PTY 接到 SwiftTerm，系统键盘可交互
+3. terminal 尺寸变化时把 rows/cols 发给远端
 
 ## 验证
 
-- 模拟器或真机连接到一台真实 SSH host
-- 能输入命令并看到输出
-- 改变 terminal 尺寸后，远端 rows/cols 会更新
-- `make test-core` 仍然通过
+- 打开 macOS Remote Login。模拟器可先连 `127.0.0.1:22`；归档前必须用真机连开发机的局域网地址（不要用 localhost）
+- 真机弹出系统软件键盘，输入一条命令（例如 `echo hello`），terminal 里能看到输出
+- 弹出软件键盘或旋转后，远端 `stty size` 会变
+- 杀掉 App 再开，表单是空的
+- `make test-core` 通过
 
 ## 完成后
 
