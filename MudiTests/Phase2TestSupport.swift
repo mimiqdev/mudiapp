@@ -13,7 +13,7 @@ enum Phase2ConnectionState: Equatable, Sendable {
     case disconnected
 }
 
-enum Phase2HostKeyDecision: Sendable {
+enum Phase2HostKeyDecision: Equatable, Sendable {
     case accept
     case reject
 }
@@ -53,7 +53,7 @@ protocol Phase2Application: Sendable {
         hostKeyDecision: @escaping @Sendable (String) async -> Phase2HostKeyDecision
     ) async throws -> Phase2ConnectionState
     func connectionState() async -> Phase2ConnectionState
-    func stateHistory() async -> [Phase2ConnectionState]
+    func connectionStateStream() async -> AsyncStream<Phase2ConnectionState>
     func disconnect() async
     func reconnect() async throws -> Phase2ConnectionState
 }
@@ -120,8 +120,15 @@ actor Phase2SSHClient {
         self.outcomes = outcomes
     }
 
-    func connect() throws {
+    func connect(
+        hostKeyDecision: @escaping @Sendable (String) async -> Phase2HostKeyDecision
+    ) async throws {
         attempts += 1
+        let decision = await hostKeyDecision(presentedFingerprint)
+        guard decision == .accept else {
+            throw Phase2ConnectionError.hostKeyRejected
+        }
+
         let shouldFail = outcomes.isEmpty ? false : outcomes.removeFirst()
         if shouldFail {
             throw Phase2ConnectionError.connectionFailed
@@ -197,8 +204,10 @@ actor MissingPhase2Application: Phase2Application {
         .idle
     }
 
-    func stateHistory() async -> [Phase2ConnectionState] {
-        []
+    func connectionStateStream() async -> AsyncStream<Phase2ConnectionState> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
     }
 
     func disconnect() async {}
@@ -238,6 +247,18 @@ func phase2Credentials() -> SSHCredentials {
         password: "phase2-password-\(UUID().uuidString)",
         pemPrivateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nphase2-\(UUID().uuidString)\n-----END OPENSSH PRIVATE KEY-----"
     )
+}
+
+func firstPhase2States(
+    from stream: AsyncStream<Phase2ConnectionState>,
+    count: Int
+) async -> [Phase2ConnectionState] {
+    var iterator = stream.makeAsyncIterator()
+    var states: [Phase2ConnectionState] = []
+    while states.count < count, let state = await iterator.next() {
+        states.append(state)
+    }
+    return states
 }
 
 func dataContainsAny(_ data: Data?, markers: [String]) -> Bool {

@@ -16,7 +16,7 @@ final class Phase2ConnectionTests: XCTestCase {
         )
         let prompt = Phase2HostKeyPrompt(decision: .accept)
 
-        let state = try? await application.connect(
+        let state = try await application.connect(
             to: host,
             credentials: credentials,
             hostKeyDecision: { presentedFingerprint in
@@ -59,7 +59,9 @@ final class Phase2ConnectionTests: XCTestCase {
         }
 
         let attempts = await client.connectionAttempts()
-        XCTAssertEqual(attempts, 0)
+        XCTAssertEqual(attempts, 1)
+        let connectionState = await application.connectionState()
+        XCTAssertNotEqual(connectionState, .connected)
         let rememberedFingerprint = await knownHostKeys.fingerprint(for: host)
         XCTAssertNil(rememberedFingerprint)
     }
@@ -97,22 +99,26 @@ final class Phase2ConnectionTests: XCTestCase {
         }
 
         let attempts = await client.connectionAttempts()
-        XCTAssertEqual(attempts, 0)
+        XCTAssertEqual(attempts, 1)
     }
 
     func testSessionEntersConnectingThenConnected() async throws {
         let client = Phase2SSHClient(presentedFingerprint: "SHA256:known-key")
         let application = makeMissingPhase2Application(client: client)
 
-        let state = try? await application.connect(
+        let stateStream = await application.connectionStateStream()
+        let observedStatesTask = Task {
+            await firstPhase2States(from: stateStream, count: 2)
+        }
+        let state = try await application.connect(
             to: phase2Host(),
             credentials: phase2Credentials(),
             hostKeyDecision: { _ in .accept }
         )
 
+        let observedStates = await observedStatesTask.value
         XCTAssertEqual(state, .connected)
-        let stateHistory = await application.stateHistory()
-        XCTAssertEqual(stateHistory, [.connecting, .connected])
+        XCTAssertEqual(observedStates, [.connecting, .connected])
         let currentState = await application.connectionState()
         XCTAssertEqual(currentState, .connected)
     }
@@ -124,33 +130,37 @@ final class Phase2ConnectionTests: XCTestCase {
         )
         let application = makeMissingPhase2Application(client: client)
 
-        _ = try? await application.connect(
-            to: phase2Host(),
-            credentials: phase2Credentials(),
-            hostKeyDecision: { _ in .accept }
-        )
+        do {
+            _ = try await application.connect(
+                to: phase2Host(),
+                credentials: phase2Credentials(),
+                hostKeyDecision: { _ in .accept }
+            )
+            XCTFail("Expected the configured SSH connection to fail")
+        } catch let error as Phase2ConnectionError {
+            XCTAssertEqual(error, .connectionFailed)
+        } catch {
+            XCTFail("Expected a connection failure, got: \(error)")
+        }
 
         let currentState = await application.connectionState()
         XCTAssertEqual(currentState, .failed)
-        let stateHistory = await application.stateHistory()
-        XCTAssertEqual(stateHistory, [.connecting, .failed])
     }
 
     func testDisconnectIsVisibleAsDisconnectedState() async throws {
         let client = Phase2SSHClient(presentedFingerprint: "SHA256:known-key")
         let application = makeMissingPhase2Application(client: client)
 
-        _ = try? await application.connect(
+        let connectedState = try await application.connect(
             to: phase2Host(),
             credentials: phase2Credentials(),
             hostKeyDecision: { _ in .accept }
         )
+        XCTAssertEqual(connectedState, .connected)
         await application.disconnect()
 
         let currentState = await application.connectionState()
         XCTAssertEqual(currentState, .disconnected)
-        let stateHistory = await application.stateHistory()
-        XCTAssertEqual(stateHistory, [.connecting, .connected, .disconnected])
     }
 
     func testManualReconnectAfterDisconnectCallsConnectAgain() async throws {
@@ -160,13 +170,14 @@ final class Phase2ConnectionTests: XCTestCase {
         )
         let application = makeMissingPhase2Application(client: client)
 
-        _ = try? await application.connect(
+        let connectedState = try await application.connect(
             to: phase2Host(),
             credentials: phase2Credentials(),
             hostKeyDecision: { _ in .accept }
         )
+        XCTAssertEqual(connectedState, .connected)
         await application.disconnect()
-        let reconnectedState = try? await application.reconnect()
+        let reconnectedState = try await application.reconnect()
 
         XCTAssertEqual(reconnectedState, .connected)
         let attempts = await client.connectionAttempts()
@@ -180,12 +191,19 @@ final class Phase2ConnectionTests: XCTestCase {
         )
         let application = makeMissingPhase2Application(client: client)
 
-        _ = try? await application.connect(
-            to: phase2Host(),
-            credentials: phase2Credentials(),
-            hostKeyDecision: { _ in .accept }
-        )
-        let reconnectedState = try? await application.reconnect()
+        do {
+            _ = try await application.connect(
+                to: phase2Host(),
+                credentials: phase2Credentials(),
+                hostKeyDecision: { _ in .accept }
+            )
+            XCTFail("Expected the first SSH connection to fail")
+        } catch let error as Phase2ConnectionError {
+            XCTAssertEqual(error, .connectionFailed)
+        } catch {
+            XCTFail("Expected a connection failure, got: \(error)")
+        }
+        let reconnectedState = try await application.reconnect()
 
         XCTAssertEqual(reconnectedState, .connected)
         let attempts = await client.connectionAttempts()

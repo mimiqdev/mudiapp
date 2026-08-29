@@ -18,12 +18,15 @@ final class Phase2PersistenceTests: XCTestCase {
         XCTAssertEqual(loadedHosts, [host])
 
         if let persistedData {
-            let object = try XCTUnwrap(
-                JSONSerialization.jsonObject(with: persistedData) as? [[String: Any]]
-            )
-            let fields = try XCTUnwrap(object.first?.keys)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: persistedData))
             let secretFields = ["password", "pem", "pemPrivateKey", "privateKey"]
-            XCTAssertTrue(secretFields.allSatisfy { !fields.contains($0) })
+            XCTAssertFalse(containsAnyKey(object, names: secretFields))
+            XCTAssertFalse(
+                dataContainsAny(
+                    persistedData,
+                    markers: ["phase2-test-password", "BEGIN OPENSSH PRIVATE KEY"]
+                )
+            )
         }
     }
 
@@ -86,6 +89,19 @@ final class Phase2PersistenceTests: XCTestCase {
             valueContainsAny($0, markers: markers)
         }
         XCTAssertFalse(defaultsContainsSecret)
+    }
+
+    private func containsAnyKey(_ value: Any, names: [String]) -> Bool {
+        if let dictionary = value as? [String: Any] {
+            if dictionary.keys.contains(where: names.contains) {
+                return true
+            }
+            return dictionary.values.contains { containsAnyKey($0, names: names) }
+        }
+        if let values = value as? [Any] {
+            return values.contains { containsAnyKey($0, names: names) }
+        }
+        return false
     }
 
     private func valueContainsAny(_ value: Any, markers: [String]) -> Bool {
