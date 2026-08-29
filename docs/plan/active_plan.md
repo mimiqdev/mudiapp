@@ -19,6 +19,7 @@
 - Herdr discovery / `terminal session control` / `attach(to:)`（阶段 3）
 - shortcut bar、外接键盘、字体主题（阶段 4）
 - Mosh、Auto transport、GhosttyKit（阶段 5）
+- 首次启动预申请本地网络权限、Connect 前的权限说明（阶段 6）
 - TestFlight、正式 bundle id
 - 重写 Citadel PTY 或 SwiftTerm 接线，除非为接 Keychain / host key 所必需
 
