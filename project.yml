@@ -50,6 +50,8 @@ targets:
         PRODUCT_NAME: Herdr
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Herdr
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: >-
+          Herdr connects to SSH servers on your local network.
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIRequiresFullScreen: NO

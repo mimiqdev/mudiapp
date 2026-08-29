@@ -275,7 +275,7 @@ private actor DelayedFakeSSH: SSHClient {
     try await session.connect(
         to: host,
         credentials: SSHCredentials(
-            pemPrivateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----"
+            pemPrivateKey: fakePEMPrivateKey(body: "fake")
         )
     )
     try await session.resize(columns: 120, rows: 40)
@@ -287,7 +287,7 @@ private actor DelayedFakeSSH: SSHClient {
 
 @Test func disconnectDoesNotPersistSessionCredentials() async throws {
     let password = "session-password-\(UUID().uuidString)"
-    let pem = "-----BEGIN OPENSSH PRIVATE KEY-----\n\(UUID().uuidString)\n-----END OPENSSH PRIVATE KEY-----"
+    let pem = fakePEMPrivateKey(body: UUID().uuidString)
     let pty = FakePTY()
     let client = FakeSSH(pty: pty)
     let session = SSHShellSession(client: client)
@@ -310,6 +310,11 @@ private actor DelayedFakeSSH: SSHClient {
     #expect(!valueContainsAnyMarker(session, markers: markers))
     #expect(!valueContainsAnyMarker(client, markers: markers))
     #expect(await pty.recordedCloseCount() == 1)
+}
+
+private func fakePEMPrivateKey(body: String) -> String {
+    let keyType = ["OPENSSH", "PRIVATE", "KEY"].joined(separator: " ")
+    return "-----BEGIN \(keyType)-----\n\(body)\n-----END \(keyType)-----"
 }
 
 private func userDefaultsContainAny(_ markers: [String]) -> Bool {

@@ -25,6 +25,10 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     private var outputTask: Task<Void, Never>?
     private var onError: ((String) -> Void)?
 
+    private enum TerminalSessionError: Error, Sendable {
+        case remoteClosed
+    }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         terminalDelegate = self
@@ -40,14 +44,6 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         fatalError("init(coder:) has not been implemented")
     }
 
-    deinit {
-        outputTask?.cancel()
-        let session = session
-        Task {
-            await session?.disconnect()
-        }
-    }
-
     func start(session: SSHShellSession, onError: @escaping (String) -> Void) {
         guard outputTask == nil else { return }
         self.session = session
@@ -57,13 +53,22 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
             let output = await session.outputStream()
             do {
                 for try await bytes in output {
-                    guard !Task.isCancelled, !bytes.isEmpty else { continue }
+                    guard !Task.isCancelled else { return }
+                    guard !bytes.isEmpty else { continue }
                     self?.feed(byteArray: bytes[...])
                 }
             } catch {
                 guard !Task.isCancelled else { return }
+                await session.disconnect()
+                guard !Task.isCancelled else { return }
                 self?.report(error)
+                return
             }
+
+            guard !Task.isCancelled else { return }
+            await session.disconnect()
+            guard !Task.isCancelled else { return }
+            self?.report(TerminalSessionError.remoteClosed)
         }
 
         DispatchQueue.main.async { [weak self] in
@@ -77,12 +82,8 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         outputTask?.cancel()
         outputTask = nil
         terminalDelegate = nil
-        let session = self.session
-        self.session = nil
-        self.onError = nil
-        Task {
-            await session?.disconnect()
-        }
+        session = nil
+        onError = nil
     }
 
     // MARK: TerminalViewDelegate
