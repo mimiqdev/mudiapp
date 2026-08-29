@@ -1,5 +1,5 @@
 import XCTest
-@testable import HerdrMobile
+@testable import Mudi
 
 final class RootViewTests: XCTestCase {
     func testApplicationSkeletonLoads() {

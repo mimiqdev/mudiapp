@@ -1,6 +1,6 @@
-# Herdr Mobile Client
+# Mudi
 
-Herdr Mobile Client 是面向 iPhone 和 iPad 的 Herdr 远程终端客户端。产品定义见 [PRD](docs/PRD.md)，当前开发步骤见 [active plan](docs/plan/active_plan.md)。
+Mudi 是面向 iPhone 和 iPad 的远程终端客户端，用来连接开发机上的 Herdr。产品定义见 [PRD](docs/PRD.md)，当前开发步骤见 [active plan](docs/plan/active_plan.md)。
 
 ## 技术栈
 
@@ -23,10 +23,10 @@ eval "$(mise activate zsh)"  # 写入 ~/.zshrc 后可省略
 mise trust
 mise install
 make bootstrap
-open HerdrMobile.xcodeproj
+open Mudi.xcodeproj
 ```
 
-选择 `HerdrMobile` scheme 和任意 iPhone / iPad simulator 运行。首次打开时，Xcode 会通过 Swift Package Manager 拉取依赖。
+选择 `Mudi` scheme 和任意 iPhone / iPad simulator 运行。首次打开时，Xcode 会通过 Swift Package Manager 拉取依赖。
 
 纯 Swift 的领域模型可以独立验证：
 
@@ -34,4 +34,4 @@ open HerdrMobile.xcodeproj
 make test-core
 ```
 
-`dev.herdr.mobile` 是冷启动阶段的临时 bundle identifier，接入签名和发布配置时需要替换。
+bundle identifier 是 `dev.mudi.mobile`。

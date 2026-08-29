@@ -11,7 +11,7 @@ App 使用 SwiftUI 搭建页面和状态驱动的导航，terminal 通过 `UIVie
 ## 模块边界
 
 ```text
-HerdrMobile App
+Mudi App
 ├── App                 应用入口和根导航
 ├── Features
 │   ├── Hosts           Host 选择与配置

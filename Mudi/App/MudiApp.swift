@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct HerdrMobileApp: App {
+struct MudiApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
