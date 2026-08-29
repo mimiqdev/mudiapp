@@ -18,6 +18,14 @@ public protocol PTYChannel: Sendable {
     func close() async
 }
 
+/// A PTY channel that exposes bytes received from the remote shell.
+///
+/// `PTYChannel` remains the small command boundary used by shell callers; this
+/// refinement is only needed by a renderer that consumes the remote output.
+public protocol PTYOutputChannel: PTYChannel {
+    func outputStream() async -> AsyncThrowingStream<[UInt8], Error>
+}
+
 /// Errors that an `SSHClient` reports to the shell session.
 public enum SSHClientError: Error, Equatable, Sendable {
     case authenticationFailed
@@ -107,6 +115,19 @@ public actor SSHShellSession: ShellSession {
         }
     }
 
+    /// Returns the remote output stream for the connected PTY.
+    ///
+    /// A channel that does not provide output is represented by a finished
+    /// stream. This keeps the original shell command seam usable by tests and
+    /// non-rendering clients.
+    public func outputStream() async -> AsyncThrowingStream<[UInt8], Error> {
+        guard let channel, state == .connected,
+              let outputChannel = channel as? any PTYOutputChannel else {
+            return Self.finishedOutputStream()
+        }
+        return await outputChannel.outputStream()
+    }
+
     public func send(_ bytes: [UInt8]) async throws {
         guard let channel, state == .connected else {
             throw SSHShellError.notConnected
@@ -142,5 +163,11 @@ public actor SSHShellSession: ShellSession {
     private func resetConnectionAttempt() {
         state = .idle
         disconnectRequested = false
+    }
+
+    private static func finishedOutputStream() -> AsyncThrowingStream<[UInt8], Error> {
+        AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
     }
 }
