@@ -33,7 +33,7 @@ protocol HerdrTerminalSessionProviding: Sendable {
 }
 
 /// The narrow application boundary used by the root UI and by workflow tests.
-protocol HerdrWorkflowCoordinating: Sendable {
+protocol HerdrWorkflowCoordinating: AnyObject, Sendable {
     func discover(on host: Host) async throws -> HerdrBrowserState
     func selectSession(_ sessionID: HerdrSession.ID) async -> HerdrBrowserState
     func selectPane(_ paneID: Pane.ID) async -> HerdrBrowserState

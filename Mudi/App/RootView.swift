@@ -19,6 +19,7 @@ final class RootViewModel: ObservableObject {
     private var pendingHostKeyPromptID: UUID?
     private var stateTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
+    private var workflowTask: Task<Void, Never>?
     private var connectionGeneration = UUID()
     private var lastHostID: Host.ID?
     private var lastPaneID: Pane.ID?
@@ -39,6 +40,7 @@ final class RootViewModel: ObservableObject {
     deinit {
         stateTask?.cancel()
         connectionTask?.cancel()
+        workflowTask?.cancel()
         pendingHostKeyDecision?.resume(returning: .reject)
     }
 
@@ -253,53 +255,73 @@ final class RootViewModel: ObservableObject {
 
     func selectSession(_ sessionID: HerdrSession.ID) {
         guard let workflow else { return }
-        Task { [weak self, workflow] in
+        cancelWorkflowTask()
+        workflowTask = Task { [weak self, workflow] in
             let state = await workflow.selectSession(sessionID)
+            guard !Task.isCancelled else { return }
             await self?.applyWorkflowState(state, from: workflow)
         }
     }
 
     func showHerdrSessions() {
         guard let workflow else { return }
-        Task { [weak self, workflow] in
+        cancelWorkflowTask()
+        workflowTask = Task { [weak self, workflow] in
             let state = await workflow.showSessions()
+            guard !Task.isCancelled else { return }
             await self?.applyWorkflowState(state, from: workflow)
         }
     }
 
     func selectPane(_ paneID: Pane.ID) {
         guard let workflow else { return }
-        Task { [weak self, workflow] in
+        cancelWorkflowTask()
+        workflowTask = Task { [weak self, workflow] in
             let state = await workflow.selectPane(paneID)
+            guard !Task.isCancelled else { return }
             await self?.applyWorkflowState(state, from: workflow)
         }
     }
 
     func openOrdinaryTerminal() {
         guard let workflow else { return }
-        Task { [weak self, workflow] in
+        cancelWorkflowTask()
+        workflowTask = Task { [weak self, workflow] in
             do {
                 let state = try await workflow.openOrdinaryTerminal()
+                guard !Task.isCancelled else { return }
                 await self?.applyWorkflowState(state, from: workflow)
-                self?.errorMessage = nil
+                guard let self,
+                      !Task.isCancelled,
+                      self.isCurrentWorkflow(workflow)
+                else { return }
+                self.errorMessage = nil
             } catch {
-                self?.errorMessage = error.localizedDescription
+                guard let self,
+                      !Task.isCancelled,
+                      self.isCurrentWorkflow(workflow)
+                else { return }
+                self.errorMessage = error.localizedDescription
             }
         }
     }
 
     func restoreLastPane() {
         guard let workflow else { return }
-        Task { [weak self, workflow] in
+        cancelWorkflowTask()
+        workflowTask = Task { [weak self, workflow] in
             let state = await workflow.restoreLastPane()
+            guard !Task.isCancelled else { return }
             await self?.applyWorkflowState(state, from: workflow)
         }
     }
 
     func returnToHerdrBrowser() {
         guard let workflow else { return }
-        Task { [weak self, workflow] in
+        cancelWorkflowTask()
+        workflowTask = Task { [weak self, workflow] in
             let state = await workflow.returnToBrowser()
+            guard !Task.isCancelled else { return }
             await self?.applyWorkflowState(state, from: workflow)
         }
     }
@@ -379,6 +401,8 @@ final class RootViewModel: ObservableObject {
         connectionGeneration = UUID()
         connectionTask?.cancel()
         connectionTask = nil
+        workflowTask?.cancel()
+        workflowTask = nil
         answerHostKeyPrompt(.reject)
     }
 
@@ -390,33 +414,55 @@ final class RootViewModel: ObservableObject {
         _ state: HerdrBrowserState,
         from workflow: any HerdrWorkflowCoordinating
     ) async {
-        guard self.workflow != nil else { return }
-        herdrState = state
-        hasLastPane = await workflow.hasRememberedPane()
-        hasMultipleHerdrSessions = await workflow.hasMultipleSessions()
+        guard isCurrentWorkflow(workflow), !Task.isCancelled else { return }
 
-        if case let .attached(_, pane) = state {
-            lastPaneID = pane.id
-            lastPaneHostID = activeConnection?.host.id
+        let rememberedPane = await workflow.hasRememberedPane()
+        let multipleSessions = await workflow.hasMultipleSessions()
+        let terminalSession: SSHShellSession?
+        if case .attached = state {
+            terminalSession = await workflow.terminalSession()
+        } else {
+            terminalSession = nil
         }
 
-        guard let activeConnection else { return }
+        guard isCurrentWorkflow(workflow), !Task.isCancelled else { return }
+        hasLastPane = rememberedPane
+        hasMultipleHerdrSessions = multipleSessions
+
         switch state {
-        case .attached:
-            if let terminalSession = await workflow.terminalSession() {
-                self.activeConnection = ActiveSSHConnection(
-                    host: activeConnection.host,
-                    session: terminalSession
-                )
-            }
+        case let .attached(_, pane):
+            guard let activeConnection,
+                  let terminalSession
+            else { return }
+            lastPaneID = pane.id
+            lastPaneHostID = activeConnection.host.id
+            self.activeConnection = ActiveSSHConnection(
+                host: activeConnection.host,
+                session: terminalSession
+            )
+            herdrState = state
         case .empty, .sessions, .panes, .ordinaryTerminal:
-            if let baseSession {
+            if let activeConnection,
+               let baseSession {
                 self.activeConnection = ActiveSSHConnection(
                     host: activeConnection.host,
                     session: baseSession
                 )
             }
+            herdrState = state
         }
+    }
+
+    private func isCurrentWorkflow(
+        _ candidate: any HerdrWorkflowCoordinating
+    ) -> Bool {
+        guard let workflow else { return false }
+        return ObjectIdentifier(workflow) == ObjectIdentifier(candidate)
+    }
+
+    private func cancelWorkflowTask() {
+        workflowTask?.cancel()
+        workflowTask = nil
     }
 
     private func makeWorkflow(

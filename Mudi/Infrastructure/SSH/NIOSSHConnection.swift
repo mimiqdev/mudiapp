@@ -13,6 +13,7 @@ import HerdrKit
 /// retaining Citadel's authentication methods and PTY protocol.
 final class NIOSSHConnection: @unchecked Sendable {
     static let hostKeyDecisionTimeout: TimeAmount = .seconds(60)
+    static let commandTimeout: TimeAmount = .seconds(10)
 
     let channel: Channel
     let sshHandler: NIOLoopBoundBox<NIOSSHHandler>
@@ -119,7 +120,13 @@ final class NIOSSHConnection: @unchecked Sendable {
             throw error
         }
 
+        let timeoutTask = eventLoop.scheduleTask(in: Self.commandTimeout) {
+            responseHandler.timeout()
+            execChannel.close(promise: nil)
+        }
+
         do {
+            defer { timeoutTask.cancel() }
             try await execChannel.triggerUserOutboundEvent(
                 SSHChannelRequestEvent.ExecRequest(command: command, wantReply: true)
             )
@@ -184,6 +191,10 @@ private enum CitadelPTYChannelError: Error {
     case alreadyStarted
     case channelCreationFailed
     case channelFailure
+}
+
+private enum NIOExecCommandError: Error {
+    case timeout
 }
 
 enum SSHInteractiveCommandError: Error, LocalizedError, Sendable {
@@ -294,6 +305,10 @@ private final class NIOExecCommandHandler: ChannelInboundHandler, @unchecked Sen
             }
         }
         context.fireChannelInactive()
+    }
+
+    func timeout() {
+        fail(NIOExecCommandError.timeout)
     }
 
     func handlerRemoved(context: ChannelHandlerContext) {

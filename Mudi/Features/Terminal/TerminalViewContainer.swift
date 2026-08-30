@@ -12,7 +12,9 @@ struct TerminalViewContainer: UIViewRepresentable {
         return terminalView
     }
 
-    func updateUIView(_ terminalView: ShellTerminalView, context: Context) {}
+    func updateUIView(_ terminalView: ShellTerminalView, context: Context) {
+        terminalView.updateSession(session: session, onError: onError)
+    }
 
     static func dismantleUIView(_ terminalView: ShellTerminalView, coordinator: ()) {
         terminalView.stop()
@@ -22,6 +24,7 @@ struct TerminalViewContainer: UIViewRepresentable {
 @MainActor
 final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegate {
     private var session: SSHShellSession?
+    private var sessionIdentity: ObjectIdentifier?
     private var outputTask: Task<Void, Never>?
     private var onError: ((String) -> Void)?
 
@@ -47,35 +50,63 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     func start(session: SSHShellSession, onError: @escaping (String) -> Void) {
         guard outputTask == nil else { return }
         self.session = session
+        sessionIdentity = ObjectIdentifier(session)
         self.onError = onError
+        terminalDelegate = self
+        let sessionIdentity = ObjectIdentifier(session)
 
-        outputTask = Task { [weak self, session] in
+        outputTask = Task { [weak self, session, sessionIdentity] in
             let output = await session.outputStream()
             do {
                 for try await bytes in output {
                     guard !Task.isCancelled else { return }
+                    guard let self,
+                          self.sessionIdentity == sessionIdentity
+                    else { return }
                     guard !bytes.isEmpty else { continue }
-                    self?.feed(byteArray: bytes[...])
+                    self.feed(byteArray: bytes[...])
                 }
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled,
+                      let self,
+                      self.sessionIdentity == sessionIdentity
+                else { return }
                 await session.disconnect()
-                guard !Task.isCancelled else { return }
-                self?.report(error)
+                guard !Task.isCancelled,
+                      self.sessionIdentity == sessionIdentity
+                else { return }
+                self.report(error)
                 return
             }
 
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  let self,
+                  self.sessionIdentity == sessionIdentity
+            else { return }
             await session.disconnect()
-            guard !Task.isCancelled else { return }
-            self?.report(TerminalSessionError.remoteClosed)
+            guard !Task.isCancelled,
+                  self.sessionIdentity == sessionIdentity
+            else { return }
+            self.report(TerminalSessionError.remoteClosed)
         }
 
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self,
+                  self.sessionIdentity == sessionIdentity
+            else { return }
             _ = becomeFirstResponder()
             sendCurrentSize()
         }
+    }
+
+    func updateSession(
+        session: SSHShellSession,
+        onError: @escaping (String) -> Void
+    ) {
+        self.onError = onError
+        guard sessionIdentity != ObjectIdentifier(session) else { return }
+        stop()
+        start(session: session, onError: onError)
     }
 
     func stop() {
@@ -83,6 +114,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         outputTask = nil
         terminalDelegate = nil
         session = nil
+        sessionIdentity = nil
         onError = nil
     }
 
