@@ -252,7 +252,7 @@ Terminal 是主要交互界面，并保留原始的终端体验，不转换成 C
 
 App 仅在用户选择 pane，或明确触发“恢复上次 pane”时建立 terminal attach。单个 Herdr session 只会跳过 session 选择，不会自动选择或 attach 其中的 pane。
 
-恢复上次 pane 时不抢占已有的 writable controller。目标当前被其他客户端控制时，App 先进入 observe 状态，再由用户确认是否 takeover。
+用户主动选择 pane 或明确恢复上次 pane 时，直接进入可交互 terminal。不再先观察再确认是否接管。
 
 ---
 
