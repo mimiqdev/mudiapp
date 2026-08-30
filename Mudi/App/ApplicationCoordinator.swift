@@ -19,6 +19,7 @@ actor ApplicationCoordinator: Sendable {
     private var hostKeyError: (attemptID: UUID, error: ConnectionError)?
     private var inFlightConnectID: UUID?
     private var disconnectRequestedFor: UUID?
+    private var attemptWaiters: [UUID: [CheckedContinuation<Void, Never>]] = [:]
     private var stateContinuations: [UUID: AsyncStream<ConnectionState>.Continuation] = [:]
 
     init(
@@ -181,7 +182,21 @@ actor ApplicationCoordinator: Sendable {
     func disconnect() async {
         if let attemptID = inFlightConnectID {
             disconnectRequestedFor = attemptID
+            return
+        }
+        await disconnectCurrentSession()
+        if state != .disconnected {
             setState(.disconnected)
+        }
+    }
+
+    /// Requests a disconnect and does not return until a pending handshake or
+    /// connected shell has fully torn down. UI callers use this boundary when
+    /// another connection may be started immediately afterwards.
+    func disconnectAndWait() async {
+        if let attemptID = inFlightConnectID {
+            disconnectRequestedFor = attemptID
+            await waitForAttemptCompletion(attemptID)
             return
         }
         await disconnectCurrentSession()
@@ -316,6 +331,19 @@ actor ApplicationCoordinator: Sendable {
         hostKeyError = nil
         session = nil
         setState(state)
+        let waiters = attemptWaiters.removeValue(forKey: attemptID) ?? []
+        waiters.forEach { $0.resume() }
+    }
+
+    private func waitForAttemptCompletion(_ attemptID: UUID) async {
+        guard inFlightConnectID == attemptID else { return }
+        await withCheckedContinuation { continuation in
+            guard inFlightConnectID == attemptID else {
+                continuation.resume()
+                return
+            }
+            attemptWaiters[attemptID, default: []].append(continuation)
+        }
     }
 
     private func setState(_ newState: ConnectionState) {

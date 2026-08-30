@@ -22,6 +22,7 @@ final class RootViewModel: ObservableObject {
     private var pendingHostKeyPromptID: UUID?
     private var stateTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
+    private var teardownTask: Task<Void, Never>?
     private var workflowTask: Task<Void, Never>?
     private var connectionGeneration = UUID()
     private var lastHostID: Host.ID?
@@ -158,8 +159,13 @@ extension RootViewModel {
         errorMessage = nil
         connectionState = .connecting
         let coordinator = self.coordinator
-        connectionTask = Task { [weak self, coordinator] in
+        let pendingTeardown = teardownTask
+        connectionTask = Task { [weak self, coordinator, pendingTeardown] in
             do {
+                await pendingTeardown?.value
+                guard self?.isCurrentConnection(generation) == true,
+                      !Task.isCancelled
+                else { return }
                 guard let credentials = try await coordinator.credentials(for: host) else {
                     throw MissingCredentialsError()
                 }
@@ -230,8 +236,13 @@ extension RootViewModel {
         errorMessage = nil
         connectionState = .connecting
         let coordinator = self.coordinator
-        connectionTask = Task { [weak self, coordinator] in
+        let pendingTeardown = teardownTask
+        connectionTask = Task { [weak self, coordinator, pendingTeardown] in
             do {
+                await pendingTeardown?.value
+                guard self?.isCurrentConnection(generation) == true,
+                      !Task.isCancelled
+                else { return }
                 let refreshedHosts = try await coordinator.loadHosts()
                 guard let self,
                       self.isCurrentConnection(generation),
@@ -378,17 +389,7 @@ extension RootViewModel {
         hasMultipleHerdrSessions = false
         baseSession = nil
         activeConnection = nil
-        connectionState = .disconnected
-        let generation = connectionGeneration
-        let coordinator = self.coordinator
-        Task { [weak self, workflow, coordinator] in
-            if let workflow {
-                _ = await workflow.returnToBrowser()
-            }
-            await coordinator.disconnect()
-            guard let self, self.connectionGeneration == generation else { return }
-            self.connectionState = await coordinator.connectionState()
-        }
+        scheduleTeardown(workflow: workflow)
     }
 
     func disconnect() {
@@ -400,17 +401,7 @@ extension RootViewModel {
         hasMultipleHerdrSessions = false
         baseSession = nil
         activeConnection = nil
-        connectionState = .disconnected
-        let generation = connectionGeneration
-        let coordinator = self.coordinator
-        Task { [weak self, workflow, coordinator] in
-            if let workflow {
-                _ = await workflow.returnToBrowser()
-            }
-            await coordinator.disconnect()
-            guard let self, self.connectionGeneration == generation else { return }
-            self.connectionState = await coordinator.connectionState()
-        }
+        scheduleTeardown(workflow: workflow)
     }
 
 }
@@ -541,6 +532,25 @@ extension RootViewModel {
     private func cancelWorkflowTask() {
         workflowTask?.cancel()
         workflowTask = nil
+    }
+
+    private func scheduleTeardown(
+        workflow: (any HerdrWorkflowCoordinating)?
+    ) {
+        let previousTeardown = teardownTask
+        let generation = connectionGeneration
+        let coordinator = self.coordinator
+        let task = Task { [weak self, previousTeardown, workflow, coordinator] in
+            await previousTeardown?.value
+            if let workflow {
+                _ = await workflow.returnToBrowser()
+            }
+            await coordinator.disconnectAndWait()
+            guard let self, self.connectionGeneration == generation else { return }
+            self.connectionState = await coordinator.connectionState()
+            self.teardownTask = nil
+        }
+        teardownTask = task
     }
 
     private func makeWorkflow(

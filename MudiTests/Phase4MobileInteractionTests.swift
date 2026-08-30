@@ -23,6 +23,11 @@ final class Phase4MobileInteractionTests: XCTestCase {
         XCTAssertTrue(connected)
 
         application.model.returnToHosts()
+        let coordinatorDisconnected = await waitForCoordinatorState(
+            application.coordinator,
+            expected: .disconnected
+        )
+        XCTAssertTrue(coordinatorDisconnected)
         let returned = await waitForRootViewCondition {
             application.model.herdrState == nil
                 && application.model.activeConnection == nil
@@ -30,8 +35,22 @@ final class Phase4MobileInteractionTests: XCTestCase {
         }
         XCTAssertTrue(returned)
         XCTAssertEqual(application.model.hosts, [host])
-        let connectionState = await application.coordinator.connectionState()
-        XCTAssertEqual(connectionState, .disconnected)
+
+        application.model.connect(to: host)
+        let reconnected = await waitForRootViewCondition {
+            guard case .panes = application.model.herdrState else { return false }
+            return application.model.connectionState == .connected
+        }
+        XCTAssertTrue(reconnected)
+        let reconnectedState = await application.coordinator.connectionState()
+        XCTAssertEqual(reconnectedState, .connected)
+
+        application.model.disconnect()
+        let disconnectedAgain = await waitForCoordinatorState(
+            application.coordinator,
+            expected: .disconnected
+        )
+        XCTAssertTrue(disconnectedAgain)
     }
 
     func testAttachedTerminalTitleUsesPaneOrAgentNameInsteadOfHostAddress() async throws {
@@ -139,5 +158,16 @@ final class Phase4MobileInteractionTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
         return condition()
+    }
+
+    private func waitForCoordinatorState(
+        _ coordinator: ApplicationCoordinator,
+        expected: ConnectionState
+    ) async -> Bool {
+        for _ in 0..<200 {
+            if await coordinator.connectionState() == expected { return true }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        return await coordinator.connectionState() == expected
     }
 }
