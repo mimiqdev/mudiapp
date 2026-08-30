@@ -24,17 +24,19 @@ protocol Phase3Application: Sendable {
 extension HerdrWorkflowCoordinator: Phase3Application
 where Discovery == Phase3HerdrDiscovery, Transport == Phase3TerminalTransport {}
 
+/// A fake discovery boundary fed by decoded command transcripts. It keeps the
+/// coordinator tests independent of SSH while preserving real Herdr IDs.
 actor Phase3HerdrDiscovery: HerdrDiscovering {
-    private let snapshotValue: HerdrSnapshot
+    private let fixture: Phase3HerdrFixture
     private var requestedHosts: [Host] = []
 
-    init(snapshot: HerdrSnapshot) {
-        snapshotValue = snapshot
+    init(fixture: Phase3HerdrFixture) {
+        self.fixture = fixture
     }
 
     func snapshot(for host: Host) async throws -> HerdrSnapshot {
         requestedHosts.append(host)
-        return snapshotValue
+        return HerdrSnapshot(sessions: fixture.sessions)
     }
 
     func requests() -> [Host] {
@@ -58,6 +60,7 @@ actor Phase3TerminalTransport: TerminalTransport {
     private let missingPaneIDs: Set<Pane.ID>
     private var connectedHosts: [Host] = []
     private var attachedPanes: [Pane] = []
+    private var attachedPaneIDs: [Pane.ID] = []
 
     init(missingPaneIDs: Set<Pane.ID> = []) {
         self.missingPaneIDs = missingPaneIDs
@@ -69,6 +72,7 @@ actor Phase3TerminalTransport: TerminalTransport {
 
     func attach(to pane: Pane) async throws {
         attachedPanes.append(pane)
+        attachedPaneIDs.append(pane.id)
         if missingPaneIDs.contains(pane.id) {
             throw Phase3TransportError.paneUnavailable
         }
@@ -87,15 +91,19 @@ actor Phase3TerminalTransport: TerminalTransport {
     func attachments() -> [Pane] {
         attachedPanes
     }
+
+    func attachmentTargets() -> [Pane.ID] {
+        attachedPaneIDs
+    }
 }
 
-func makeMissingPhase3Application(
-    snapshot: HerdrSnapshot,
+func makePhase3Application(
+    fixture: Phase3HerdrFixture,
     transport: Phase3TerminalTransport = Phase3TerminalTransport(),
     lastPaneID: Pane.ID? = nil
 ) -> Phase3TestApplication {
     HerdrWorkflowCoordinator(
-        discovery: Phase3HerdrDiscovery(snapshot: snapshot),
+        discovery: Phase3HerdrDiscovery(fixture: fixture),
         transport: transport,
         lastPaneID: lastPaneID
     )
@@ -110,40 +118,6 @@ func phase3Host(id: UUID = UUID()) -> Host {
         username: "developer",
         preferredTransport: .ssh
     )
-}
-
-func phase3Session(
-    id: String,
-    name: String,
-    panes: [Pane],
-    isDefault: Bool = false
-) -> HerdrSession {
-    let tab = Tab(
-        id: "\(id)-tab",
-        name: "main",
-        panes: panes
-    )
-    let workspace = Workspace(
-        id: "\(id)-workspace",
-        name: "workspace",
-        tabs: [tab]
-    )
-    return HerdrSession(
-        id: id,
-        name: name,
-        isDefault: isDefault,
-        workspaces: [workspace]
-    )
-}
-
-func phase3Pane(
-    id: String,
-    title: String,
-    agentName: String? = nil,
-    agentState: AgentState = .unknown
-) -> Pane {
-    let agent = agentName.map { Agent(name: $0, state: agentState) }
-    return Pane(id: id, title: title, agent: agent)
 }
 
 func phase3Panes(in session: HerdrSession) -> [Pane] {
