@@ -8,6 +8,7 @@ final class RootViewModel: ObservableObject {
     @Published private(set) var herdrState: HerdrBrowserState?
     @Published private(set) var hasLastPane = false
     @Published private(set) var hasMultipleHerdrSessions = false
+    @Published private(set) var isTearingDown = false
     @Published private(set) var connectionState: ConnectionState = .idle
     @Published private(set) var preferences = TerminalPreferences()
     @Published var errorMessage: String?
@@ -23,6 +24,7 @@ final class RootViewModel: ObservableObject {
     private var stateTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
     private var teardownTask: Task<Void, Never>?
+    private var teardownID: UUID?
     private var workflowTask: Task<Void, Never>?
     private var connectionGeneration = UUID()
     private var lastHostID: Host.ID?
@@ -153,7 +155,10 @@ extension RootViewModel {
 
 extension RootViewModel {
     func connect(to host: Host) {
-        guard connectionState != .connecting, connectionState != .connected else { return }
+        guard connectionTask == nil,
+              teardownTask != nil
+                || (connectionState != .connecting && connectionState != .connected)
+        else { return }
 
         let generation = beginConnection(for: host.id)
         errorMessage = nil
@@ -227,8 +232,9 @@ extension RootViewModel {
     }
 
     func reconnect() {
-        guard connectionState != .connecting,
-              connectionState != .connected,
+        guard connectionTask == nil,
+              teardownTask != nil
+                || (connectionState != .connecting && connectionState != .connected),
               let hostID = lastHostID
         else { return }
 
@@ -537,18 +543,25 @@ extension RootViewModel {
     private func scheduleTeardown(
         workflow: (any HerdrWorkflowCoordinating)?
     ) {
+        isTearingDown = true
+        let teardownID = UUID()
+        self.teardownID = teardownID
         let previousTeardown = teardownTask
         let generation = connectionGeneration
         let coordinator = self.coordinator
-        let task = Task { [weak self, previousTeardown, workflow, coordinator] in
+        let task = Task { [weak self, previousTeardown, workflow, coordinator, teardownID] in
             await previousTeardown?.value
             if let workflow {
                 _ = await workflow.returnToBrowser()
             }
             await coordinator.disconnectAndWait()
-            guard let self, self.connectionGeneration == generation else { return }
-            self.connectionState = await coordinator.connectionState()
+            guard let self, self.teardownID == teardownID else { return }
+            if self.connectionGeneration == generation {
+                self.connectionState = await coordinator.connectionState()
+            }
+            self.isTearingDown = false
             self.teardownTask = nil
+            self.teardownID = nil
         }
         teardownTask = task
     }
@@ -643,6 +656,8 @@ struct RootView: View {
                             onRestoreLastPane: model.restoreLastPane
                         )
                     }
+                } else if model.isTearingDown {
+                    ProgressView("Disconnecting…")
                 } else if model.activeConnection != nil {
                     ProgressView("Discovering Herdr…")
                 } else {

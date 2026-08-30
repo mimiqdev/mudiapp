@@ -22,21 +22,26 @@ final class Phase4MobileInteractionTests: XCTestCase {
         }
         XCTAssertTrue(connected)
 
+        let stateStream = await application.coordinator.connectionStateStream()
+        let disconnectObserved = Task {
+            await waitForCoordinatorDisconnect(on: stateStream)
+        }
         application.model.returnToHosts()
-        let coordinatorDisconnected = await waitForCoordinatorState(
-            application.coordinator,
-            expected: .disconnected
-        )
-        XCTAssertTrue(coordinatorDisconnected)
+        XCTAssertTrue(application.model.isTearingDown)
         let returned = await waitForRootViewCondition {
             application.model.herdrState == nil
                 && application.model.activeConnection == nil
-                && application.model.connectionState == .disconnected
+                && application.model.isTearingDown
         }
         XCTAssertTrue(returned)
         XCTAssertEqual(application.model.hosts, [host])
 
+        // A host tap can arrive while the Hosts screen is being presented.
+        // It must queue behind the real SSH teardown rather than being dropped
+        // because the previous connection is still marked connected.
         application.model.connect(to: host)
+        let coordinatorDisconnected = await disconnectObserved.value
+        XCTAssertTrue(coordinatorDisconnected)
         let reconnected = await waitForRootViewCondition {
             guard case .panes = application.model.herdrState else { return false }
             return application.model.connectionState == .connected
@@ -169,5 +174,25 @@ final class Phase4MobileInteractionTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
         return await coordinator.connectionState() == expected
+    }
+
+    private func waitForCoordinatorDisconnect(
+        on stream: AsyncStream<ConnectionState>
+    ) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await state in stream {
+                    if state == .disconnected { return true }
+                }
+                return false
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                return false
+            }
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
     }
 }
