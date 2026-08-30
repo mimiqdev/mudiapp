@@ -12,7 +12,9 @@
 - shortcut bar、modifier、选择、复制、粘贴
 - 记住并恢复 Host、上次 pane、界面位置
 - 外接键盘、鼠标、触控板的基础行为
-- 字体、主题、Dynamic Type、基础无障碍
+- 可切换主题：System / Light / Dark，默认跟随系统，并记住选择
+- 可调 terminal 字号；自带一款 Nerd Font 等宽（不做字体文件导入、不做成套 palette）
+- Dynamic Type、基础无障碍
 - 涉及 Herdr 的帧仍以真实 CLI 为准。回看若走 `herdr terminal session control` 的 `terminal.scroll`，必须对照本机真实命令，禁止自编 JSON
 
 ## 不在本步
@@ -32,6 +34,8 @@
 - 从 Herdr 列表返回后回到 Host 列表；当前连接已断开，不再展示 pane 列表
 - attached terminal 的标题来自 pane 或 agent，不是 Host.hostname
 - 冷启动后 Host 仍在；「恢复上次 pane」仍只在显式调用时 attach
+- 主题选择为 System / Light / Dark，默认 System；保存后再读仍是上次的选择
+- terminal 字号可读写，保存后再读仍是上次的字号
 - 若本步发送或解码 `terminal.scroll` / `terminal.frame`，测试必须用录下的真实 CLI 帧，不许编
 - `make test-core` 通过
 
@@ -43,6 +47,7 @@
 - 能选择、复制、粘贴
 - shortcut bar 能发出常用键
 - 外接键盘能输入
+- 能改主题和字号，terminal 仍可读
 
 ## 切片
 
