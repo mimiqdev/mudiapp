@@ -1,0 +1,206 @@
+import Foundation
+import HerdrKit
+
+/// The browser states required by the phase-3 workflow contract.
+///
+/// This is test-only scaffolding until the app owns a production workflow
+/// model. A session list deliberately contains summaries rather than panes so
+/// callers cannot display another session's panes before selecting a session.
+enum Phase3BrowserState: Equatable, Sendable {
+    case empty
+    case sessions([Phase3SessionSummary])
+    case panes(session: HerdrSession, message: String?)
+    case ordinaryTerminal
+    case attached(session: HerdrSession, pane: Pane)
+}
+
+struct Phase3SessionSummary: Equatable, Sendable {
+    let id: HerdrSession.ID
+    let name: String
+    let isDefault: Bool
+
+    init(session: HerdrSession) {
+        id = session.id
+        name = session.name
+        isDefault = session.isDefault
+    }
+}
+
+/// Contract used by the phase-3 tests. The implementation phase will replace
+/// `MissingPhase3Application` with the real discovery/browser coordinator.
+protocol Phase3Application: Sendable {
+    func discover(on host: Host) async throws -> Phase3BrowserState
+    func selectSession(_ sessionID: HerdrSession.ID) async -> Phase3BrowserState
+    func selectPane(_ paneID: Pane.ID) async -> Phase3BrowserState
+    func openOrdinaryTerminal() async throws -> Phase3BrowserState
+    func restoreLastPane() async -> Phase3BrowserState
+}
+
+actor Phase3HerdrDiscovery: HerdrDiscovering {
+    private let snapshotValue: HerdrSnapshot
+    private var requestedHosts: [Host] = []
+
+    init(snapshot: HerdrSnapshot) {
+        snapshotValue = snapshot
+    }
+
+    func snapshot(for host: Host) async throws -> HerdrSnapshot {
+        requestedHosts.append(host)
+        return snapshotValue
+    }
+
+    func requests() -> [Host] {
+        requestedHosts
+    }
+}
+
+enum Phase3TransportError: Error, Equatable, LocalizedError, Sendable {
+    case paneUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .paneUnavailable:
+            "The selected Herdr pane is no longer available."
+        }
+    }
+}
+
+actor Phase3TerminalTransport: TerminalTransport {
+    nonisolated let kind: ActiveTransport = .ssh
+    private let missingPaneIDs: Set<Pane.ID>
+    private var connectedHosts: [Host] = []
+    private var attachedPanes: [Pane] = []
+
+    init(missingPaneIDs: Set<Pane.ID> = []) {
+        self.missingPaneIDs = missingPaneIDs
+    }
+
+    func connect(to host: Host) async throws {
+        connectedHosts.append(host)
+    }
+
+    func attach(to pane: Pane) async throws {
+        attachedPanes.append(pane)
+        if missingPaneIDs.contains(pane.id) {
+            throw Phase3TransportError.paneUnavailable
+        }
+    }
+
+    func send(_: [UInt8]) async throws {}
+
+    func resize(columns _: Int, rows _: Int) async throws {}
+
+    func disconnect() async {}
+
+    func connections() -> [Host] {
+        connectedHosts
+    }
+
+    func attachments() -> [Pane] {
+        attachedPanes
+    }
+}
+
+/// Compile-only scaffold for the tests-first step. It has no product
+/// behavior by design: phase-3 tests should be red until the real workflow
+/// coordinator is added.
+actor MissingPhase3Application: Phase3Application {
+    let discovery: Phase3HerdrDiscovery
+    let transport: Phase3TerminalTransport
+    private let lastPaneID: Pane.ID?
+
+    init(
+        discovery: Phase3HerdrDiscovery,
+        transport: Phase3TerminalTransport,
+        lastPaneID: Pane.ID? = nil
+    ) {
+        self.discovery = discovery
+        self.transport = transport
+        self.lastPaneID = lastPaneID
+    }
+
+    func discover(on host: Host) async throws -> Phase3BrowserState {
+        _ = try await discovery.snapshot(for: host)
+        return .empty
+    }
+
+    func selectSession(_: HerdrSession.ID) async -> Phase3BrowserState {
+        .empty
+    }
+
+    func selectPane(_: Pane.ID) async -> Phase3BrowserState {
+        .empty
+    }
+
+    func openOrdinaryTerminal() async throws -> Phase3BrowserState {
+        .empty
+    }
+
+    func restoreLastPane() async -> Phase3BrowserState {
+        _ = lastPaneID
+        return .empty
+    }
+}
+
+func makeMissingPhase3Application(
+    snapshot: HerdrSnapshot,
+    transport: Phase3TerminalTransport = Phase3TerminalTransport(),
+    lastPaneID: Pane.ID? = nil
+) -> MissingPhase3Application {
+    MissingPhase3Application(
+        discovery: Phase3HerdrDiscovery(snapshot: snapshot),
+        transport: transport,
+        lastPaneID: lastPaneID
+    )
+}
+
+func phase3Host(id: UUID = UUID()) -> Host {
+    Host(
+        id: id,
+        displayName: "Phase 3 Host",
+        hostname: "phase3.example.test",
+        port: 2222,
+        username: "developer",
+        preferredTransport: .ssh
+    )
+}
+
+func phase3Session(
+    id: String,
+    name: String,
+    panes: [Pane],
+    isDefault: Bool = false
+) -> HerdrSession {
+    let tab = Tab(
+        id: "\(id)-tab",
+        name: "main",
+        panes: panes
+    )
+    let workspace = Workspace(
+        id: "\(id)-workspace",
+        name: "workspace",
+        tabs: [tab]
+    )
+    return HerdrSession(
+        id: id,
+        name: name,
+        isDefault: isDefault,
+        workspaces: [workspace]
+    )
+}
+
+func phase3Pane(
+    id: String,
+    title: String,
+    agentName: String? = nil,
+    agentState: AgentState = .unknown
+) -> Pane {
+    let agent = agentName.map { Agent(name: $0, state: agentState) }
+    return Pane(id: id, title: title, agent: agent)
+}
+
+func phase3Panes(in session: HerdrSession) -> [Pane] {
+    session.workspaces.flatMap { workspace in
+        workspace.tabs.flatMap(\.panes)
+    }
+}
