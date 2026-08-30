@@ -1,45 +1,15 @@
 import Foundation
 import HerdrKit
+@testable import Mudi
 
-/// The connection states required by the phase-2 contract.
-///
-/// This is test-only scaffolding until the app's connection coordinator has a
-/// production state model.
-enum Phase2ConnectionState: Equatable, Sendable {
-    case idle
-    case connecting
-    case connected
-    case failed
-    case disconnected
-}
+/// Compatibility names for the phase-2 contract. The tests exercise the
+/// production coordinator and production lifecycle/error types directly.
+typealias Phase2ConnectionState = ConnectionState
+typealias Phase2HostKeyDecision = HostKeyDecision
+typealias Phase2ConnectionError = ConnectionError
 
-enum Phase2HostKeyDecision: Equatable, Sendable {
-    case accept
-    case reject
-}
-
-enum Phase2ConnectionError: Error, Equatable, LocalizedError, Sendable {
-    case notImplemented
-    case connectionFailed
-    case hostKeyRejected
-    case hostKeyMismatch(expected: String, actual: String)
-
-    var errorDescription: String? {
-        switch self {
-        case .notImplemented:
-            "The phase-2 SSH connection is not implemented."
-        case .connectionFailed:
-            "Unable to connect to the SSH host."
-        case .hostKeyRejected:
-            "The SSH host key was rejected."
-        case let .hostKeyMismatch(expected, actual):
-            "The SSH host key does not match the remembered fingerprint (expected \(expected), received \(actual))."
-        }
-    }
-}
-
-/// Contract used by the phase-2 tests. The implementation phase will replace
-/// `MissingPhase2Application` with the real app coordinator.
+/// Contract used by the phase-2 tests. The implementation is the same
+/// coordinator used by the app, with test doubles injected at its boundaries.
 protocol Phase2Application: Sendable {
     func loadHosts() async throws -> [Host]
     func save(_ host: Host) async throws
@@ -57,6 +27,8 @@ protocol Phase2Application: Sendable {
     func disconnect() async
     func reconnect() async throws -> Phase2ConnectionState
 }
+
+extension ApplicationCoordinator: Phase2Application {}
 
 actor Phase2HostFile {
     private var contents: Data?
@@ -107,10 +79,9 @@ actor Phase2KnownHostKeys {
     }
 }
 
-/// A deterministic SSH transport double. It is intentionally not wired into
-/// `MissingPhase2Application`; the failing assertions identify the missing
-/// production coordinator rather than making the test double pass the tests.
-actor Phase2SSHClient {
+/// A deterministic SSH transport double injected into the production
+/// coordinator by the test factory below.
+actor Phase2SSHClient: HostKeyAwareSSHClient {
     let presentedFingerprint: String
     private var outcomes: [Bool]
     private var attempts = 0
@@ -121,8 +92,10 @@ actor Phase2SSHClient {
     }
 
     func connect(
+        to _: Host,
+        credentials _: SSHCredentials,
         hostKeyDecision: @escaping @Sendable (String) async -> Phase2HostKeyDecision
-    ) async throws {
+    ) async throws -> any PTYChannel {
         attempts += 1
         let decision = await hostKeyDecision(presentedFingerprint)
         guard decision == .accept else {
@@ -133,6 +106,7 @@ actor Phase2SSHClient {
         if shouldFail {
             throw Phase2ConnectionError.connectionFailed
         }
+        return Phase2PTY()
     }
 
     func connectionAttempts() -> Int {
@@ -158,62 +132,66 @@ actor Phase2HostKeyPrompt {
     }
 }
 
-/// Compile-only scaffold for the tests-first step. It has no product behavior
-/// by design: phase-2 tests should be red until the real slices are added.
-actor MissingPhase2Application: Phase2Application {
-    let hostFile: Phase2HostFile
-    let keychain: Phase2Keychain
-    let knownHostKeys: Phase2KnownHostKeys
-    let client: Phase2SSHClient
+private struct Phase2PTY: PTYChannel {
+    func send(_: [UInt8]) async throws {}
 
-    init(
-        hostFile: Phase2HostFile,
-        keychain: Phase2Keychain,
-        knownHostKeys: Phase2KnownHostKeys,
-        client: Phase2SSHClient
-    ) {
-        self.hostFile = hostFile
-        self.keychain = keychain
-        self.knownHostKeys = knownHostKeys
-        self.client = client
-    }
+    func resize(columns _: Int, rows _: Int) async throws {}
+
+    func close() async {}
+}
+
+private struct Phase2HostStore: HostStore {
+    let file: Phase2HostFile
 
     func loadHosts() async throws -> [Host] {
-        []
+        try await file.hosts()
     }
 
-    func save(_: Host) async throws {}
-
-    func save(_: SSHCredentials, for _: Host) async throws {}
-
-    func credentials(for _: Host) async throws -> SSHCredentials? {
-        nil
-    }
-
-    func delete(_: Host) async throws {}
-
-    func connect(
-        to _: Host,
-        credentials _: SSHCredentials,
-        hostKeyDecision _: @escaping @Sendable (String) async -> Phase2HostKeyDecision
-    ) async throws -> Phase2ConnectionState {
-        throw Phase2ConnectionError.notImplemented
-    }
-
-    func connectionState() async -> Phase2ConnectionState {
-        .idle
-    }
-
-    func connectionStateStream() async -> AsyncStream<Phase2ConnectionState> {
-        AsyncStream { continuation in
-            continuation.finish()
+    func save(_ host: Host) async throws {
+        var hosts = try await file.hosts()
+        if let index = hosts.firstIndex(where: { $0.id == host.id }) {
+            hosts[index] = host
+        } else {
+            hosts.append(host)
         }
+        try await file.write(hosts: hosts)
     }
 
-    func disconnect() async {}
+    func delete(_ host: Host) async throws {
+        let hosts = try await file.hosts().filter { $0.id != host.id }
+        try await file.write(hosts: hosts)
+    }
+}
 
-    func reconnect() async throws -> Phase2ConnectionState {
-        throw Phase2ConnectionError.notImplemented
+private struct Phase2CredentialStore: CredentialStore {
+    let keychain: Phase2Keychain
+
+    func save(_ credentials: SSHCredentials, for host: Host) async throws {
+        await keychain.put(credentials, for: host)
+    }
+
+    func credentials(for host: Host) async throws -> SSHCredentials? {
+        await keychain.credentials(for: host)
+    }
+
+    func delete(for host: Host) async throws {
+        await keychain.remove(for: host)
+    }
+}
+
+private struct Phase2KnownHostKeyStore: KnownHostKeyStore {
+    let knownHostKeys: Phase2KnownHostKeys
+
+    func remember(_ fingerprint: String, for host: Host) async throws {
+        await knownHostKeys.remember(fingerprint, for: host)
+    }
+
+    func fingerprint(for host: Host) async throws -> String? {
+        await knownHostKeys.fingerprint(for: host)
+    }
+
+    func delete(for host: Host) async throws {
+        await knownHostKeys.remove(for: host)
     }
 }
 
@@ -222,11 +200,11 @@ func makeMissingPhase2Application(
     keychain: Phase2Keychain = Phase2Keychain(),
     knownHostKeys: Phase2KnownHostKeys = Phase2KnownHostKeys(),
     client: Phase2SSHClient = Phase2SSHClient(presentedFingerprint: "SHA256:test")
-) -> MissingPhase2Application {
-    MissingPhase2Application(
-        hostFile: hostFile,
-        keychain: keychain,
-        knownHostKeys: knownHostKeys,
+) -> ApplicationCoordinator {
+    ApplicationCoordinator(
+        hostStore: Phase2HostStore(file: hostFile),
+        credentialStore: Phase2CredentialStore(keychain: keychain),
+        knownHostKeyStore: Phase2KnownHostKeyStore(knownHostKeys: knownHostKeys),
         client: client
     )
 }
@@ -243,9 +221,14 @@ func phase2Host(id: UUID = UUID()) -> Host {
 }
 
 func phase2Credentials() -> SSHCredentials {
-    SSHCredentials(
+    let pemPrivateKey = """
+    -----BEGIN OPENSSH PRIVATE KEY-----
+    phase2-\(UUID().uuidString)
+    -----END OPENSSH PRIVATE KEY-----
+    """
+    return SSHCredentials(
         password: "phase2-password-\(UUID().uuidString)",
-        pemPrivateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nphase2-\(UUID().uuidString)\n-----END OPENSSH PRIVATE KEY-----"
+        pemPrivateKey: pemPrivateKey
     )
 }
 

@@ -75,7 +75,7 @@ public actor SSHShellSession: ShellSession {
         case disconnecting
     }
 
-    private let client: any SSHClient
+    private let client: (any SSHClient)?
     private var channel: (any PTYChannel)?
     private var state = State.idle
     private var disconnectRequested = false
@@ -84,8 +84,21 @@ public actor SSHShellSession: ShellSession {
         self.client = client
     }
 
+    /// Creates a shell session around a channel that has already completed its
+    /// SSH handshake. This lets a host-key-aware connection coordinator keep
+    /// the accepted connection instead of opening a second connection for the
+    /// terminal.
+    public init(connectedChannel: any PTYChannel) {
+        self.client = nil
+        self.channel = connectedChannel
+        self.state = .connected
+    }
+
     public func connect(to host: Host, credentials: SSHCredentials) async throws {
         guard state == .idle else {
+            throw SSHShellError.alreadyConnected
+        }
+        guard let client else {
             throw SSHShellError.alreadyConnected
         }
         state = .connecting

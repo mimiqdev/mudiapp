@@ -3,22 +3,125 @@ import SwiftUI
 
 struct HostListView: View {
     let hosts: [Host]
-    @Binding var selection: Host.ID?
+    let connectionState: ConnectionState
+    let errorMessage: String?
+    let onConnect: (Host) -> Void
+    let onReconnect: () -> Void
+    let onAdd: () -> Void
+    let onEdit: (Host) -> Void
+    let onDelete: (Host) -> Void
 
     var body: some View {
-        List(hosts, selection: $selection) { host in
-            VStack(alignment: .leading, spacing: 3) {
-                Text(host.displayName)
-                    .font(.headline)
-                Text(host.hostname)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        Group {
+            if hosts.isEmpty {
+                ContentUnavailableView {
+                    Label("No Saved Hosts", systemImage: "externaldrive")
+                } description: {
+                    Text("Save an SSH host to connect without filling in the form again.")
+                } actions: {
+                    Button("Add Host", systemImage: "plus", action: onAdd)
+                }
+            } else {
+                List {
+                    if connectionState != .idle {
+                        Section {
+                            HStack {
+                                connectionStateLabel
+                                Spacer()
+                                if connectionState == .failed || connectionState == .disconnected {
+                                    Button("Reconnect", action: onReconnect)
+                                        .buttonStyle(.bordered)
+                                }
+                            }
+                        }
+                    }
+
+                    ForEach(hosts) { host in
+                        Button {
+                            onConnect(host)
+                        } label: {
+                            HostRow(host: host)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("host-connect-\(host.id.uuidString)")
+                        .contextMenu {
+                            Button("Edit", systemImage: "pencil") {
+                                onEdit(host)
+                            }
+                            Button("Delete", systemImage: "trash", role: .destructive) {
+                                onDelete(host)
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button("Delete", systemImage: "trash", role: .destructive) {
+                                onDelete(host)
+                            }
+                        }
+                    }
+                }
             }
-            .tag(host.id)
         }
         .navigationTitle("Hosts")
         .toolbar {
-            Button("Add Host", systemImage: "plus") {}
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Add Host", systemImage: "plus", action: onAdd)
+            }
         }
+        .safeAreaInset(edge: .bottom) {
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                    .background(.thinMaterial)
+                    .accessibilityIdentifier("ssh-connection-error")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var connectionStateLabel: some View {
+        switch connectionState {
+        case .idle:
+            EmptyView()
+        case .connecting:
+            Label("Connecting…", systemImage: "arrow.triangle.2.circlepath")
+        case .connected:
+            Label("Connected", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .failed:
+            Label("Connection failed", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+        case .disconnected:
+            Label("Disconnected", systemImage: "wifi.slash")
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct HostRow: View {
+    let host: Host
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "server.rack")
+                .foregroundStyle(.tint)
+                .imageScale(.large)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(host.displayName)
+                    .font(.headline)
+                Text("\(host.username)@\(host.hostname):\(host.port)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+            Image(systemName: "arrow.right")
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 5)
     }
 }
