@@ -5,12 +5,15 @@ import SwiftUI
 final class RootViewModel: ObservableObject {
     @Published private(set) var hosts: [Host] = []
     @Published private(set) var activeConnection: ActiveSSHConnection?
+    @Published private(set) var herdrState: HerdrBrowserState?
+    @Published private(set) var hasLastPane = false
     @Published private(set) var connectionState: ConnectionState = .idle
     @Published var errorMessage: String?
     @Published var editor: HostEditorContext?
     @Published var hostKeyPrompt: HostKeyPrompt?
 
     let coordinator: ApplicationCoordinator
+    private var workflow: (any HerdrWorkflowCoordinating)?
     private var pendingHostKeyDecision: CheckedContinuation<HostKeyDecision, Never>?
     private var pendingHostKeyPromptID: UUID?
     private var stateTask: Task<Void, Never>?
@@ -83,6 +86,9 @@ final class RootViewModel: ObservableObject {
             || activeConnection?.host.id == host.id
         if deletesActiveConnection {
             invalidateConnectionAttempt()
+            workflow = nil
+            herdrState = nil
+            hasLastPane = false
             activeConnection = nil
             lastHostID = nil
         }
@@ -133,12 +139,29 @@ final class RootViewModel: ObservableObject {
                 else {
                     throw ConnectionError.connectionFailed
                 }
+                let workflow = self.makeWorkflow(for: session)
+                let browserState: HerdrBrowserState
+                do {
+                    browserState = try await workflow.discover(on: host)
+                } catch {
+                    // A missing or incompatible Herdr installation must not
+                    // take away the ordinary SSH terminal.
+                    browserState = .empty
+                }
+                guard self.isCurrentConnection(generation), !Task.isCancelled else {
+                    await coordinator.disconnect()
+                    return
+                }
+                self.workflow = workflow
+                self.herdrState = browserState
                 self.activeConnection = ActiveSSHConnection(host: host, session: session)
                 self.connectionState = state
                 self.connectionTask = nil
             } catch {
                 guard let self, self.isCurrentConnection(generation) else { return }
                 self.answerHostKeyPrompt(.reject)
+                self.workflow = nil
+                self.herdrState = nil
                 self.activeConnection = nil
                 self.connectionTask = nil
                 self.connectionState = await coordinator.connectionState()
@@ -185,12 +208,27 @@ final class RootViewModel: ObservableObject {
                     await coordinator.disconnect()
                     return
                 }
+                let workflow = self.makeWorkflow(for: session)
+                let browserState: HerdrBrowserState
+                do {
+                    browserState = try await workflow.discover(on: host)
+                } catch {
+                    browserState = .empty
+                }
+                guard self.isCurrentConnection(generation), !Task.isCancelled else {
+                    await coordinator.disconnect()
+                    return
+                }
+                self.workflow = workflow
+                self.herdrState = browserState
                 self.activeConnection = ActiveSSHConnection(host: host, session: session)
                 self.connectionState = state
                 self.connectionTask = nil
             } catch {
                 guard let self, self.isCurrentConnection(generation) else { return }
                 self.answerHostKeyPrompt(.reject)
+                self.workflow = nil
+                self.herdrState = nil
                 self.activeConnection = nil
                 self.connectionTask = nil
                 self.connectionState = await coordinator.connectionState()
@@ -199,8 +237,58 @@ final class RootViewModel: ObservableObject {
         }
     }
 
+    func selectSession(_ sessionID: HerdrSession.ID) {
+        guard let workflow else { return }
+        Task { [weak self, workflow] in
+            let state = await workflow.selectSession(sessionID)
+            guard let self, self.workflow != nil else { return }
+            self.herdrState = state
+        }
+    }
+
+    func selectPane(_ paneID: Pane.ID) {
+        guard let workflow else { return }
+        Task { [weak self, workflow] in
+            let state = await workflow.selectPane(paneID)
+            guard let self, self.workflow != nil else { return }
+            self.herdrState = state
+            if case .attached = state {
+                self.hasLastPane = true
+            }
+        }
+    }
+
+    func openOrdinaryTerminal() {
+        guard let workflow else { return }
+        Task { [weak self, workflow] in
+            do {
+                let state = try await workflow.openOrdinaryTerminal()
+                guard let self, self.workflow != nil else { return }
+                self.herdrState = state
+                self.errorMessage = nil
+            } catch {
+                self?.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func restoreLastPane() {
+        guard let workflow else { return }
+        Task { [weak self, workflow] in
+            let state = await workflow.restoreLastPane()
+            guard let self, self.workflow != nil else { return }
+            self.herdrState = state
+            if case .attached = state {
+                self.hasLastPane = true
+            }
+        }
+    }
+
     func disconnect() {
         invalidateConnectionAttempt()
+        workflow = nil
+        herdrState = nil
+        hasLastPane = false
         activeConnection = nil
         let generation = connectionGeneration
         Task {
@@ -251,6 +339,9 @@ final class RootViewModel: ObservableObject {
     private func beginConnection(for hostID: Host.ID) -> UUID {
         invalidateConnectionAttempt()
         lastHostID = hostID
+        workflow = nil
+        herdrState = nil
+        hasLastPane = false
         activeConnection = nil
         connectionGeneration = UUID()
         return connectionGeneration
@@ -265,6 +356,13 @@ final class RootViewModel: ObservableObject {
 
     private func isCurrentConnection(_ generation: UUID) -> Bool {
         connectionGeneration == generation
+    }
+
+    private func makeWorkflow(for session: SSHShellSession) -> any HerdrWorkflowCoordinating {
+        HerdrWorkflowCoordinator(
+            discovery: SSHHerdrDiscovery(session: session),
+            transport: SSHHerdrTerminalTransport(session: session)
+        )
     }
 
     private struct MissingCredentialsError: LocalizedError {
@@ -301,12 +399,27 @@ struct RootView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let activeConnection = model.activeConnection {
-                    TerminalScreen(
-                        host: activeConnection.host,
-                        session: activeConnection.session,
-                        onDisconnect: model.disconnect
-                    )
+                if let activeConnection = model.activeConnection,
+                   let herdrState = model.herdrState {
+                    switch herdrState {
+                    case .ordinaryTerminal, .attached:
+                        TerminalScreen(
+                            host: activeConnection.host,
+                            session: activeConnection.session,
+                            onDisconnect: model.disconnect
+                        )
+                    case .empty, .sessions, .panes:
+                        HerdrBrowserView(
+                            state: herdrState,
+                            hasLastPane: model.hasLastPane,
+                            onSelectSession: model.selectSession,
+                            onSelectPane: model.selectPane,
+                            onOpenOrdinaryTerminal: model.openOrdinaryTerminal,
+                            onRestoreLastPane: model.restoreLastPane
+                        )
+                    }
+                } else if model.activeConnection != nil {
+                    ProgressView("Discovering Herdr…")
                 } else {
                     HostListView(
                         hosts: model.hosts,

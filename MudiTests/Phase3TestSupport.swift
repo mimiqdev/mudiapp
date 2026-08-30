@@ -1,33 +1,18 @@
 import Foundation
 import HerdrKit
+@testable import Mudi
 
-/// The browser states required by the phase-3 workflow contract.
-///
-/// This is test-only scaffolding until the app owns a production workflow
-/// model. A session list deliberately contains summaries rather than panes so
-/// callers cannot display another session's panes before selecting a session.
-enum Phase3BrowserState: Equatable, Sendable {
-    case empty
-    case sessions([Phase3SessionSummary])
-    case panes(session: HerdrSession, message: String?)
-    case ordinaryTerminal
-    case attached(session: HerdrSession, pane: Pane)
-}
+/// The phase-3 contracts exercise the production browser state and
+/// coordinator. These aliases keep the contract names short without defining
+/// a second test-only workflow model.
+typealias Phase3BrowserState = HerdrBrowserState
+typealias Phase3SessionSummary = HerdrSessionSummary
 
-struct Phase3SessionSummary: Equatable, Sendable {
-    let id: HerdrSession.ID
-    let name: String
-    let isDefault: Bool
+typealias Phase3TestApplication = HerdrWorkflowCoordinator<
+    Phase3HerdrDiscovery,
+    Phase3TerminalTransport
+>
 
-    init(session: HerdrSession) {
-        id = session.id
-        name = session.name
-        isDefault = session.isDefault
-    }
-}
-
-/// Contract used by the phase-3 tests. The implementation phase will replace
-/// `MissingPhase3Application` with the real discovery/browser coordinator.
 protocol Phase3Application: Sendable {
     func discover(on host: Host) async throws -> Phase3BrowserState
     func selectSession(_ sessionID: HerdrSession.ID) async -> Phase3BrowserState
@@ -35,6 +20,9 @@ protocol Phase3Application: Sendable {
     func openOrdinaryTerminal() async throws -> Phase3BrowserState
     func restoreLastPane() async -> Phase3BrowserState
 }
+
+extension HerdrWorkflowCoordinator: Phase3Application
+where Discovery == Phase3HerdrDiscovery, Transport == Phase3TerminalTransport {}
 
 actor Phase3HerdrDiscovery: HerdrDiscovering {
     private let snapshotValue: HerdrSnapshot
@@ -101,53 +89,12 @@ actor Phase3TerminalTransport: TerminalTransport {
     }
 }
 
-/// Compile-only scaffold for the tests-first step. It has no product
-/// behavior by design: phase-3 tests should be red until the real workflow
-/// coordinator is added.
-actor MissingPhase3Application: Phase3Application {
-    let discovery: Phase3HerdrDiscovery
-    let transport: Phase3TerminalTransport
-    private let lastPaneID: Pane.ID?
-
-    init(
-        discovery: Phase3HerdrDiscovery,
-        transport: Phase3TerminalTransport,
-        lastPaneID: Pane.ID? = nil
-    ) {
-        self.discovery = discovery
-        self.transport = transport
-        self.lastPaneID = lastPaneID
-    }
-
-    func discover(on host: Host) async throws -> Phase3BrowserState {
-        _ = try await discovery.snapshot(for: host)
-        return .empty
-    }
-
-    func selectSession(_: HerdrSession.ID) async -> Phase3BrowserState {
-        .empty
-    }
-
-    func selectPane(_: Pane.ID) async -> Phase3BrowserState {
-        .empty
-    }
-
-    func openOrdinaryTerminal() async throws -> Phase3BrowserState {
-        .empty
-    }
-
-    func restoreLastPane() async -> Phase3BrowserState {
-        _ = lastPaneID
-        return .empty
-    }
-}
-
 func makeMissingPhase3Application(
     snapshot: HerdrSnapshot,
     transport: Phase3TerminalTransport = Phase3TerminalTransport(),
     lastPaneID: Pane.ID? = nil
-) -> MissingPhase3Application {
-    MissingPhase3Application(
+) -> Phase3TestApplication {
+    HerdrWorkflowCoordinator(
         discovery: Phase3HerdrDiscovery(snapshot: snapshot),
         transport: transport,
         lastPaneID: lastPaneID

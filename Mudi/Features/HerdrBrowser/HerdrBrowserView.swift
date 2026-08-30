@@ -2,60 +2,140 @@ import HerdrKit
 import SwiftUI
 
 struct HerdrBrowserView: View {
-    let snapshot: HerdrSnapshot
-    @Binding var selection: Pane.ID?
-    @State private var selectedSessionID: HerdrSession.ID?
+    let state: HerdrBrowserState
+    let hasLastPane: Bool
+    let onSelectSession: (HerdrSession.ID) -> Void
+    let onSelectPane: (Pane.ID) -> Void
+    let onOpenOrdinaryTerminal: () -> Void
+    let onRestoreLastPane: () -> Void
+
+    init(
+        state: HerdrBrowserState,
+        hasLastPane: Bool = false,
+        onSelectSession: @escaping (HerdrSession.ID) -> Void,
+        onSelectPane: @escaping (Pane.ID) -> Void,
+        onOpenOrdinaryTerminal: @escaping () -> Void,
+        onRestoreLastPane: @escaping () -> Void
+    ) {
+        self.state = state
+        self.hasLastPane = hasLastPane
+        self.onSelectSession = onSelectSession
+        self.onSelectPane = onSelectPane
+        self.onOpenOrdinaryTerminal = onOpenOrdinaryTerminal
+        self.onRestoreLastPane = onRestoreLastPane
+    }
+
+    /// Compatibility initializer for previews that only have a snapshot. The
+    /// coordinator-backed initializer above is used by the connected app.
+    init(snapshot: HerdrSnapshot, selection _: Binding<Pane.ID?>) {
+        self.init(
+            state: Self.initialState(for: snapshot),
+            onSelectSession: { _ in },
+            onSelectPane: { _ in },
+            onOpenOrdinaryTerminal: {},
+            onRestoreLastPane: {}
+        )
+    }
 
     @ViewBuilder
     var body: some View {
-        if let session = displayedSession {
-            PaneList(session: session, selection: $selection)
-                .toolbar {
-                    if snapshot.sessions.count > 1 {
-                        Button("Sessions", systemImage: "chevron.backward") {
-                            selectedSessionID = nil
-                        }
-                    }
-                }
-        } else {
-            List(snapshot.sessions) { session in
+        switch state {
+        case .empty:
+            ContentUnavailableView {
+                Label("No Herdr Sessions", systemImage: "rectangle.stack")
+            } description: {
+                Text("No active Herdr session was found on this host.")
+            } actions: {
+                Button("Open SSH Terminal", systemImage: "terminal", action: onOpenOrdinaryTerminal)
+            }
+            .navigationTitle("Herdr")
+
+        case let .sessions(summaries):
+            List(summaries, id: \.id) { summary in
                 Button {
-                    selectedSessionID = session.id
+                    onSelectSession(summary.id)
                 } label: {
                     HStack {
-                        Text(session.name)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(summary.name)
+                            if summary.isDefault {
+                                Text("Default session")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                         Spacer()
                         Image(systemName: "chevron.forward")
                             .foregroundStyle(.tertiary)
                     }
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("herdr-session-\(summary.id)")
             }
             .navigationTitle("Herdr Sessions")
+
+        case let .panes(session, message):
+            PaneList(
+                session: session,
+                message: message,
+                onSelectPane: onSelectPane
+            )
+            .safeAreaInset(edge: .bottom) {
+                if hasLastPane {
+                    Button("Restore Last Pane", systemImage: "arrow.counterclockwise", action: onRestoreLastPane)
+                        .buttonStyle(.borderedProminent)
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity)
+                        .background(.thinMaterial)
+                }
+            }
+
+        case .ordinaryTerminal, .attached:
+            EmptyView()
         }
     }
 
-    private var displayedSession: HerdrSession? {
-        if snapshot.sessions.count == 1 {
-            return snapshot.sessions.first
+    private static func initialState(for snapshot: HerdrSnapshot) -> HerdrBrowserState {
+        switch snapshot.sessions.count {
+        case 0:
+            return .empty
+        case 1:
+            return .panes(session: snapshot.sessions[0], message: nil)
+        default:
+            return .sessions(snapshot.sessions.map(HerdrSessionSummary.init(session:)))
         }
-        return snapshot.sessions.first { $0.id == selectedSessionID }
     }
 }
 
 private struct PaneList: View {
     let session: HerdrSession
-    @Binding var selection: Pane.ID?
+    let message: String?
+    let onSelectPane: (Pane.ID) -> Void
 
     var body: some View {
-        List(selection: $selection) {
+        List {
+            if let message {
+                Section {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
+            }
+
             ForEach(session.workspaces) { workspace in
-                Section(workspace.name) {
-                    ForEach(workspace.tabs) { tab in
+                ForEach(workspace.tabs) { tab in
+                    Section {
                         ForEach(tab.panes) { pane in
-                            PaneRow(pane: pane)
-                                .tag(pane.id)
+                            Button {
+                                onSelectPane(pane.id)
+                            } label: {
+                                PaneRow(pane: pane)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("herdr-pane-\(pane.id)")
                         }
+                    } header: {
+                        Text("\(workspace.name) / \(tab.name)")
                     }
                 }
             }
@@ -84,6 +164,7 @@ private struct PaneRow: View {
                     .foregroundStyle(state.color)
             }
         }
+        .contentShape(Rectangle())
     }
 }
 
