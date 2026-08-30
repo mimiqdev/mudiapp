@@ -2,192 +2,218 @@ import Foundation
 import HerdrKit
 @testable import Mudi
 
-/// Navigation contract for the phase-4 tests. The implementation step can
-/// replace this test-only seam with the root model and its real coordinators.
-enum Phase4NavigationState: Equatable, Sendable {
-    case hosts([Host])
-    case herdr(HerdrBrowserState)
-    case terminal(Phase4AttachedTerminal)
-}
+/// A deterministic credential boundary for a production ApplicationCoordinator
+/// while keeping test secrets out of the real Keychain.
+actor Phase4CredentialVault {
+    private var values: [Host.ID: SSHCredentials] = [:]
 
-struct Phase4AttachedTerminal: Equatable, Sendable {
-    let host: Host
-    let pane: Pane
-    let title: String
-}
-
-protocol Phase4NavigationApplication: Sendable {
-    func coldStart() async -> Phase4NavigationState
-    func loadHosts() async throws -> [Host]
-    func save(_ host: Host) async throws
-    func connect(to host: Host) async throws -> Phase4NavigationState
-    func selectPane(_ paneID: Pane.ID) async -> Phase4NavigationState
-    func returnToHosts() async -> Phase4NavigationState
-    func restoreLastPane() async -> Phase4NavigationState
-    func isConnected() async -> Bool
-}
-
-/// A file-shaped host store used to exercise a second application instance.
-/// It stores only the same Codable Host values as the production host store.
-actor Phase4HostFile {
-    private var contents: Data?
-
-    func write(hosts: [Host]) throws {
-        contents = try JSONEncoder().encode(hosts)
+    func save(_ credentials: SSHCredentials, for host: Host) {
+        values[host.id] = credentials
     }
 
-    func hosts() throws -> [Host] {
-        guard let contents else { return [] }
-        return try JSONDecoder().decode([Host].self, from: contents)
+    func credentials(for host: Host) -> SSHCredentials? {
+        values[host.id]
+    }
+
+    func delete(for host: Host) {
+        values[host.id] = nil
     }
 }
 
-actor Phase4TerminalTransport {
-    private var connected = false
+struct Phase4CredentialStore: CredentialStore {
+    let vault: Phase4CredentialVault
+
+    func save(_ credentials: SSHCredentials, for host: Host) async throws {
+        await vault.save(credentials, for: host)
+    }
+
+    func credentials(for host: Host) async throws -> SSHCredentials? {
+        await vault.credentials(for: host)
+    }
+
+    func delete(for host: Host) async throws {
+        await vault.delete(for: host)
+    }
+}
+
+actor Phase4KnownHostKeys {
+    private var values: [Host.ID: String] = [:]
+
+    func remember(_ fingerprint: String, for host: Host) {
+        values[host.id] = fingerprint
+    }
+
+    func fingerprint(for host: Host) -> String? {
+        values[host.id]
+    }
+
+    func delete(for host: Host) {
+        values[host.id] = nil
+    }
+}
+
+struct Phase4KnownHostKeyStore: KnownHostKeyStore {
+    let knownHostKeys: Phase4KnownHostKeys
+
+    func remember(_ fingerprint: String, for host: Host) async throws {
+        await knownHostKeys.remember(fingerprint, for: host)
+    }
+
+    func fingerprint(for host: Host) async throws -> String? {
+        await knownHostKeys.fingerprint(for: host)
+    }
+
+    func delete(for host: Host) async throws {
+        await knownHostKeys.delete(for: host)
+    }
+}
+
+/// A terminal transport used by a production HerdrWorkflowCoordinator. The
+/// base SSH session is supplied by the RootViewModel's application coordinator
+/// and is returned for the attached terminal just like the real transport's
+/// dedicated control session.
+actor Phase4TerminalTransport: TerminalTransport, HerdrTerminalSessionProviding {
+    nonisolated let kind: ActiveTransport = .ssh
+
+    private var terminalSessionValue: SSHShellSession?
+    private var connectedHosts: [Host] = []
     private var attachedPanes: [Pane] = []
-    private var disconnectCount = 0
 
-    func connect(to _: Host) {
-        connected = true
+    func setTerminalSession(_ session: SSHShellSession) {
+        terminalSessionValue = session
     }
 
-    func attach(to pane: Pane) {
+    func connect(to host: Host) async throws {
+        connectedHosts.append(host)
+    }
+
+    func attach(to pane: Pane) async throws {
         attachedPanes.append(pane)
     }
 
-    func disconnect() {
-        connected = false
-        disconnectCount += 1
+    func send(_: [UInt8]) async throws {}
+
+    func resize(columns _: Int, rows _: Int) async throws {}
+
+    func disconnect() async {
+        terminalSessionValue = nil
     }
 
-    func isConnected() -> Bool {
-        connected
+    func terminalSession() async -> SSHShellSession? {
+        terminalSessionValue
+    }
+
+    func releaseTerminalSession() async {
+        terminalSessionValue = nil
     }
 
     func attachments() -> [Pane] {
         attachedPanes
     }
 
-    func disconnections() -> Int {
-        disconnectCount
+    func connections() -> [Host] {
+        connectedHosts
     }
 }
 
-/// Compile-only scaffold for the tests-first step. It deliberately leaves the
-/// phase-4 navigation behavior incomplete so the new tests are red until the
-/// production root/navigation model is implemented.
-actor MissingPhase4NavigationApplication: Phase4NavigationApplication {
-    let hostFile: Phase4HostFile
-    let transport: Phase4TerminalTransport
+struct Phase4WorkflowFactory: HerdrWorkflowFactory {
     let fixture: Phase3HerdrFixture
-    private let rememberedPaneID: Pane.ID?
-    private var currentHost: Host?
-    private var currentState: Phase4NavigationState = .hosts([])
+    let transport: Phase4TerminalTransport
+
+    func makeWorkflow(
+        for session: SSHShellSession,
+        rememberedPaneID: Pane.ID?
+    ) async -> any HerdrWorkflowCoordinating {
+        await transport.setTerminalSession(session)
+        return HerdrWorkflowCoordinator(
+            discovery: Phase3HerdrDiscovery(fixture: fixture),
+            transport: transport,
+            lastPaneID: rememberedPaneID
+        )
+    }
+}
+
+/// A test harness around the production RootViewModel, application
+/// coordinator, Herdr workflow coordinator, and JSON host store.
+@MainActor
+final class Phase4NavigationApplication {
+    let model: RootViewModel
+    let coordinator: ApplicationCoordinator
+    let transport: Phase4TerminalTransport
+
+    private let knownHostKeys: Phase4KnownHostKeys
+    private let hostKeyFingerprint = "SHA256:phase4-test-key"
 
     init(
-        hostFile: Phase4HostFile,
-        transport: Phase4TerminalTransport,
+        hostFileURL: URL,
         fixture: Phase3HerdrFixture,
-        rememberedPaneID: Pane.ID? = nil
+        transport: Phase4TerminalTransport = Phase4TerminalTransport(),
+        credentialVault: Phase4CredentialVault = Phase4CredentialVault(),
+        knownHostKeys: Phase4KnownHostKeys = Phase4KnownHostKeys(),
+        client: Phase2SSHClient = Phase2SSHClient(
+            presentedFingerprint: "SHA256:phase4-test-key"
+        ),
+        preferencesStore: (any PreferencesStore)? = nil,
+        rememberedPaneID: Pane.ID? = nil,
+        rememberedPaneHostID: Host.ID? = nil
     ) {
-        self.hostFile = hostFile
         self.transport = transport
-        self.fixture = fixture
-        self.rememberedPaneID = rememberedPaneID
+        self.knownHostKeys = knownHostKeys
+        coordinator = ApplicationCoordinator(
+            hostStore: JSONHostStore(fileURL: hostFileURL),
+            credentialStore: Phase4CredentialStore(vault: credentialVault),
+            knownHostKeyStore: Phase4KnownHostKeyStore(knownHostKeys: knownHostKeys),
+            client: client
+        )
+        model = RootViewModel(
+            coordinator: coordinator,
+            workflowFactory: Phase4WorkflowFactory(
+                fixture: fixture,
+                transport: transport
+            ),
+            preferencesStore: preferencesStore ?? UserDefaultsPreferencesStore(),
+            rememberedPaneID: rememberedPaneID,
+            rememberedPaneHostID: rememberedPaneHostID
+        )
     }
 
-    func coldStart() async -> Phase4NavigationState {
-        // Hosts can be read, but there is no production launch/navigation
-        // state here yet. In particular, this does not restore a pane.
-        currentState = .herdr(.empty)
-        return currentState
-    }
-
-    func loadHosts() async throws -> [Host] {
-        try await hostFile.hosts()
+    func coldStart() async {
+        await model.loadHosts()
+        await model.loadPreferences()
     }
 
     func save(_ host: Host) async throws {
-        var hosts = try await hostFile.hosts()
-        if let index = hosts.firstIndex(where: { $0.id == host.id }) {
-            hosts[index] = host
-        } else {
-            hosts.append(host)
-        }
-        try await hostFile.write(hosts: hosts)
-    }
-
-    func connect(to host: Host) async throws -> Phase4NavigationState {
-        currentHost = host
-        await transport.connect(to: host)
-        guard let session = fixture.sessions.first else {
-            currentState = .herdr(.empty)
-            return currentState
-        }
-        currentState = .herdr(.panes(session: session, message: nil))
-        return currentState
-    }
-
-    func selectPane(_ paneID: Pane.ID) async -> Phase4NavigationState {
-        guard let host = currentHost,
-              let pane = allPanes().first(where: { $0.id == paneID })
-        else {
-            return currentState
-        }
-
-        await transport.attach(to: pane)
-        // This is the intentionally incomplete behavior under test: the
-        // host/IP is used until the terminal title contract is implemented.
-        currentState = .terminal(
-            Phase4AttachedTerminal(host: host, pane: pane, title: host.hostname)
-        )
-        return currentState
-    }
-
-    func returnToHosts() async -> Phase4NavigationState {
-        // Deliberately does not disconnect or clear the Herdr browser yet.
-        return currentState
-    }
-
-    func restoreLastPane() async -> Phase4NavigationState {
-        guard let rememberedPaneID,
-              let pane = allPanes().first(where: { $0.id == rememberedPaneID }),
-              let host = currentHost
-        else {
-            return currentState
-        }
-
-        await transport.attach(to: pane)
-        currentState = .terminal(
-            Phase4AttachedTerminal(host: host, pane: pane, title: host.hostname)
-        )
-        return currentState
-    }
-
-    func isConnected() async -> Bool {
-        await transport.isConnected()
-    }
-
-    private func allPanes() -> [Pane] {
-        fixture.sessions.flatMap { session in
-            session.workspaces.flatMap { workspace in
-                workspace.tabs.flatMap(\.panes)
-            }
-        }
+        try await coordinator.save(host)
+        try await coordinator.save(phase2Credentials(), for: host)
+        await knownHostKeys.remember(hostKeyFingerprint, for: host)
+        await model.loadHosts()
     }
 }
 
-func makeMissingPhase4NavigationApplication(
-    hostFile: Phase4HostFile = Phase4HostFile(),
-    transport: Phase4TerminalTransport = Phase4TerminalTransport(),
+@MainActor
+func makePhase4NavigationApplication(
+    hostFileURL: URL = phase4HostFileURL(),
     fixture: Phase3HerdrFixture,
-    rememberedPaneID: Pane.ID? = nil
-) -> MissingPhase4NavigationApplication {
-    MissingPhase4NavigationApplication(
-        hostFile: hostFile,
-        transport: transport,
+    transport: Phase4TerminalTransport = Phase4TerminalTransport(),
+    credentialVault: Phase4CredentialVault = Phase4CredentialVault(),
+    knownHostKeys: Phase4KnownHostKeys = Phase4KnownHostKeys(),
+    client: Phase2SSHClient = Phase2SSHClient(
+        presentedFingerprint: "SHA256:phase4-test-key"
+    ),
+    preferencesStore: (any PreferencesStore)? = nil,
+    rememberedPaneID: Pane.ID? = nil,
+    rememberedPaneHostID: Host.ID? = nil
+) -> Phase4NavigationApplication {
+    Phase4NavigationApplication(
+        hostFileURL: hostFileURL,
         fixture: fixture,
-        rememberedPaneID: rememberedPaneID
+        transport: transport,
+        credentialVault: credentialVault,
+        knownHostKeys: knownHostKeys,
+        client: client,
+        preferencesStore: preferencesStore,
+        rememberedPaneID: rememberedPaneID,
+        rememberedPaneHostID: rememberedPaneHostID
     )
 }
 
@@ -202,39 +228,10 @@ func phase4Host(id: UUID = UUID(), hostname: String = "192.0.2.44") -> Host {
     )
 }
 
-enum Phase4Appearance: String, CaseIterable, Codable, Equatable, Sendable {
-    case system
-    case light
-    case dark
-}
-
-struct Phase4TerminalPreferences: Codable, Equatable, Sendable {
-    var appearance: Phase4Appearance
-    var fontSize: Double
-
-    init(
-        appearance: Phase4Appearance = .system,
-        fontSize: Double = 14
-    ) {
-        self.appearance = appearance
-        self.fontSize = fontSize
-    }
-}
-
-protocol Phase4PreferencesStore: Sendable {
-    func load() async throws -> Phase4TerminalPreferences
-    func save(_ preferences: Phase4TerminalPreferences) async throws
-}
-
-/// Compile-only settings seam. It returns an incorrect non-default value
-/// and saving is a no-op so the tests identify the missing product
-/// implementation.
-actor MissingPhase4PreferencesStore: Phase4PreferencesStore {
-    func load() async throws -> Phase4TerminalPreferences {
-        Phase4TerminalPreferences(appearance: .light, fontSize: 12)
-    }
-
-    func save(_: Phase4TerminalPreferences) async throws {}
+func phase4HostFileURL() -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("mudi-phase4-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("hosts.json")
 }
 
 func phase4Panes(in fixture: Phase3HerdrFixture) -> [Pane] {

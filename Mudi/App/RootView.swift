@@ -9,11 +9,14 @@ final class RootViewModel: ObservableObject {
     @Published private(set) var hasLastPane = false
     @Published private(set) var hasMultipleHerdrSessions = false
     @Published private(set) var connectionState: ConnectionState = .idle
+    @Published private(set) var preferences = TerminalPreferences()
     @Published var errorMessage: String?
     @Published var editor: HostEditorContext?
     @Published var hostKeyPrompt: HostKeyPrompt?
 
     let coordinator: ApplicationCoordinator
+    let preferencesStore: any PreferencesStore
+    private let workflowFactory: any HerdrWorkflowFactory
     private var workflow: (any HerdrWorkflowCoordinating)?
     private var pendingHostKeyDecision: CheckedContinuation<HostKeyDecision, Never>?
     private var pendingHostKeyPromptID: UUID?
@@ -26,8 +29,18 @@ final class RootViewModel: ObservableObject {
     private var lastPaneHostID: Host.ID?
     private var baseSession: SSHShellSession?
 
-    init(coordinator: ApplicationCoordinator = ApplicationCoordinator()) {
+    init(
+        coordinator: ApplicationCoordinator = ApplicationCoordinator(),
+        workflowFactory: any HerdrWorkflowFactory = SSHHerdrWorkflowFactory(),
+        preferencesStore: any PreferencesStore = UserDefaultsPreferencesStore(),
+        rememberedPaneID: Pane.ID? = nil,
+        rememberedPaneHostID: Host.ID? = nil
+    ) {
         self.coordinator = coordinator
+        self.workflowFactory = workflowFactory
+        self.preferencesStore = preferencesStore
+        self.lastPaneID = rememberedPaneID
+        self.lastPaneHostID = rememberedPaneHostID
         stateTask = Task { [weak self, coordinator] in
             let stream = await coordinator.connectionStateStream()
             for await state in stream {
@@ -44,12 +57,33 @@ final class RootViewModel: ObservableObject {
         pendingHostKeyDecision?.resume(returning: .reject)
     }
 
+}
+
+extension RootViewModel {
     func loadHosts() async {
         do {
             hosts = try await coordinator.loadHosts()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func loadPreferences() async {
+        do {
+            preferences = try await preferencesStore.load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func updateAppearance(_ appearance: AppearancePreference) {
+        preferences.appearance = appearance
+        persistPreferences()
+    }
+
+    func updateFontSize(_ fontSize: Double) {
+        preferences.fontSize = fontSize
+        persistPreferences()
     }
 
     func addHost() {
@@ -114,6 +148,9 @@ final class RootViewModel: ObservableObject {
         }
     }
 
+}
+
+extension RootViewModel {
     func connect(to host: Host) {
         guard connectionState != .connecting, connectionState != .connected else { return }
 
@@ -149,7 +186,7 @@ final class RootViewModel: ObservableObject {
                 else {
                     throw ConnectionError.connectionFailed
                 }
-                let workflow = self.makeWorkflow(for: session, hostID: host.id)
+                let workflow = await self.makeWorkflow(for: session, hostID: host.id)
                 let browserState: HerdrBrowserState
                 do {
                     browserState = try await workflow.discover(on: host)
@@ -221,7 +258,7 @@ final class RootViewModel: ObservableObject {
                     await coordinator.disconnect()
                     return
                 }
-                let workflow = self.makeWorkflow(for: session, hostID: host.id)
+                let workflow = await self.makeWorkflow(for: session, hostID: host.id)
                 let browserState: HerdrBrowserState
                 do {
                     browserState = try await workflow.discover(on: host)
@@ -253,6 +290,9 @@ final class RootViewModel: ObservableObject {
         }
     }
 
+}
+
+extension RootViewModel {
     func selectSession(_ sessionID: HerdrSession.ID) {
         guard let workflow else { return }
         cancelWorkflowTask()
@@ -326,22 +366,56 @@ final class RootViewModel: ObservableObject {
         }
     }
 
-    func disconnect() {
+    /// Leaves the Herdr browser and returns to the saved-host list. The
+    /// workflow is released before the SSH shell so an attached control
+    /// session cannot outlive the host connection.
+    func returnToHosts() {
+        let workflow = self.workflow
         invalidateConnectionAttempt()
-        workflow = nil
+        self.workflow = nil
         herdrState = nil
         hasLastPane = false
         hasMultipleHerdrSessions = false
         baseSession = nil
         activeConnection = nil
+        connectionState = .disconnected
         let generation = connectionGeneration
-        Task {
+        let coordinator = self.coordinator
+        Task { [weak self, workflow, coordinator] in
+            if let workflow {
+                _ = await workflow.returnToBrowser()
+            }
             await coordinator.disconnect()
-            guard connectionGeneration == generation else { return }
-            connectionState = await coordinator.connectionState()
+            guard let self, self.connectionGeneration == generation else { return }
+            self.connectionState = await coordinator.connectionState()
         }
     }
 
+    func disconnect() {
+        let workflow = self.workflow
+        invalidateConnectionAttempt()
+        self.workflow = nil
+        herdrState = nil
+        hasLastPane = false
+        hasMultipleHerdrSessions = false
+        baseSession = nil
+        activeConnection = nil
+        connectionState = .disconnected
+        let generation = connectionGeneration
+        let coordinator = self.coordinator
+        Task { [weak self, workflow, coordinator] in
+            if let workflow {
+                _ = await workflow.returnToBrowser()
+            }
+            await coordinator.disconnect()
+            guard let self, self.connectionGeneration == generation else { return }
+            self.connectionState = await coordinator.connectionState()
+        }
+    }
+
+}
+
+extension RootViewModel {
     func requestHostKeyDecision(
         for fingerprint: String,
         generation: UUID
@@ -380,6 +454,9 @@ final class RootViewModel: ObservableObject {
         pendingHostKeyDecision.resume(returning: decision)
     }
 
+}
+
+extension RootViewModel {
     private func beginConnection(for hostID: Host.ID) -> UUID {
         invalidateConnectionAttempt()
         if let lastPaneHostID, lastPaneHostID != hostID {
@@ -438,7 +515,8 @@ final class RootViewModel: ObservableObject {
             lastPaneHostID = activeConnection.host.id
             self.activeConnection = ActiveSSHConnection(
                 host: activeConnection.host,
-                session: terminalSession
+                session: terminalSession,
+                terminalTitle: pane.terminalTitle
             )
             herdrState = state
         case .empty, .sessions, .panes, .ordinaryTerminal:
@@ -468,13 +546,24 @@ final class RootViewModel: ObservableObject {
     private func makeWorkflow(
         for session: SSHShellSession,
         hostID: Host.ID
-    ) -> any HerdrWorkflowCoordinating {
+    ) async -> any HerdrWorkflowCoordinating {
         let rememberedPaneID = lastPaneHostID == hostID ? lastPaneID : nil
-        return HerdrWorkflowCoordinator(
-            discovery: SSHHerdrDiscovery(session: session),
-            transport: SSHHerdrTerminalTransport(session: session),
-            lastPaneID: rememberedPaneID
+        return await workflowFactory.makeWorkflow(
+            for: session,
+            rememberedPaneID: rememberedPaneID
         )
+    }
+
+    private func persistPreferences() {
+        let preferences = self.preferences
+        let preferencesStore = self.preferencesStore
+        Task { [weak self] in
+            do {
+                try await preferencesStore.save(preferences)
+            } catch {
+                self?.errorMessage = error.localizedDescription
+            }
+        }
     }
 
     private struct MissingCredentialsError: LocalizedError {
@@ -503,6 +592,7 @@ struct HostEditorContext: Identifiable {
 
 struct RootView: View {
     @StateObject private var model: RootViewModel
+    @State private var isSettingsPresented = false
 
     init(coordinator: ApplicationCoordinator = ApplicationCoordinator()) {
         _model = StateObject(wrappedValue: RootViewModel(coordinator: coordinator))
@@ -518,20 +608,24 @@ struct RootView: View {
                         TerminalScreen(
                             host: activeConnection.host,
                             session: activeConnection.session,
-                            onDisconnect: model.disconnect
+                            onDisconnect: model.disconnect,
+                            fontSize: model.preferences.fontSize
                         )
-                    case .attached:
+                    case let .attached(_, pane):
                         TerminalScreen(
                             host: activeConnection.host,
                             session: activeConnection.session,
+                            title: activeConnection.terminalTitle ?? pane.terminalTitle,
                             onDisconnect: model.disconnect,
-                            onBackToBrowser: model.returnToHerdrBrowser
+                            onBackToBrowser: model.returnToHerdrBrowser,
+                            fontSize: model.preferences.fontSize
                         )
                     case .empty, .sessions, .panes:
                         HerdrBrowserView(
                             state: herdrState,
                             hasLastPane: model.hasLastPane,
                             canSwitchSessions: model.hasMultipleHerdrSessions,
+                            onReturnToHosts: model.returnToHosts,
                             onSelectSession: model.selectSession,
                             onSelectPane: model.selectPane,
                             onShowSessions: model.showHerdrSessions,
@@ -550,13 +644,21 @@ struct RootView: View {
                         onReconnect: model.reconnect,
                         onAdd: model.addHost,
                         onEdit: model.edit,
-                        onDelete: model.delete
+                        onDelete: model.delete,
+                        onSettings: { isSettingsPresented = true }
                     )
                 }
             }
         }
+        .preferredColorScheme(model.preferences.appearance.colorScheme)
         .task {
             await model.loadHosts()
+            await model.loadPreferences()
+        }
+        .sheet(isPresented: $isSettingsPresented) {
+            NavigationStack {
+                SettingsView(model: model)
+            }
         }
         .sheet(item: $model.editor) { context in
             NavigationStack {
@@ -588,4 +690,24 @@ struct RootView: View {
 struct ActiveSSHConnection {
     let host: Host
     let session: SSHShellSession
+    let terminalTitle: String?
+
+    init(host: Host, session: SSHShellSession, terminalTitle: String? = nil) {
+        self.host = host
+        self.session = session
+        self.terminalTitle = terminalTitle
+    }
+}
+
+private extension AppearancePreference {
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system:
+            nil
+        case .light:
+            .light
+        case .dark:
+            .dark
+        }
+    }
 }

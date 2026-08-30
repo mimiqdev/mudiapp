@@ -10,6 +10,29 @@ struct HostListView: View {
     let onAdd: () -> Void
     let onEdit: (Host) -> Void
     let onDelete: (Host) -> Void
+    let onSettings: () -> Void
+
+    init(
+        hosts: [Host],
+        connectionState: ConnectionState,
+        errorMessage: String?,
+        onConnect: @escaping (Host) -> Void,
+        onReconnect: @escaping () -> Void,
+        onAdd: @escaping () -> Void,
+        onEdit: @escaping (Host) -> Void,
+        onDelete: @escaping (Host) -> Void,
+        onSettings: @escaping () -> Void = {}
+    ) {
+        self.hosts = hosts
+        self.connectionState = connectionState
+        self.errorMessage = errorMessage
+        self.onConnect = onConnect
+        self.onReconnect = onReconnect
+        self.onAdd = onAdd
+        self.onEdit = onEdit
+        self.onDelete = onDelete
+        self.onSettings = onSettings
+    }
 
     var body: some View {
         Group {
@@ -63,7 +86,8 @@ struct HostListView: View {
         }
         .navigationTitle("Hosts")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button("Settings", systemImage: "gearshape", action: onSettings)
                 Button("Add Host", systemImage: "plus", action: onAdd)
             }
         }

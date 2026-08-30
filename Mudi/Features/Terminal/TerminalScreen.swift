@@ -4,26 +4,32 @@ import SwiftUI
 struct TerminalScreen: View {
     let host: Host
     let session: SSHShellSession
+    let title: String
     let onDisconnect: () -> Void
     let onBackToBrowser: (() -> Void)?
+    let fontSize: Double
 
     @State private var errorMessage: String?
 
     init(
         host: Host,
         session: SSHShellSession,
+        title: String? = nil,
         onDisconnect: @escaping () -> Void,
-        onBackToBrowser: (() -> Void)? = nil
+        onBackToBrowser: (() -> Void)? = nil,
+        fontSize: Double = 14
     ) {
         self.host = host
         self.session = session
+        self.title = title ?? host.hostname
         self.onDisconnect = onDisconnect
         self.onBackToBrowser = onBackToBrowser
+        self.fontSize = fontSize
     }
 
     var body: some View {
         ZStack(alignment: .top) {
-            TerminalViewContainer(session: session) { message in
+            TerminalViewContainer(session: session, fontSize: fontSize) { message in
                 errorMessage = message
             }
             .background(.black)
@@ -41,7 +47,7 @@ struct TerminalScreen: View {
             }
         }
         .background(.black)
-        .navigationTitle(host.hostname)
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if let onBackToBrowser {

@@ -52,6 +52,43 @@ protocol HerdrWorkflowCoordinating: AnyObject, Sendable {
     func terminalSession() async -> SSHShellSession?
 }
 
+/// Builds the workflow for a connected shell. Keeping this factory at the
+/// root-model boundary lets the app use the SSH adapters while tests can feed
+/// recorded Herdr responses into the same production coordinator.
+protocol HerdrWorkflowFactory: Sendable {
+    func makeWorkflow(
+        for session: SSHShellSession,
+        rememberedPaneID: Pane.ID?
+    ) async -> any HerdrWorkflowCoordinating
+}
+
+struct SSHHerdrWorkflowFactory: HerdrWorkflowFactory, Sendable {
+    func makeWorkflow(
+        for session: SSHShellSession,
+        rememberedPaneID: Pane.ID?
+    ) async -> any HerdrWorkflowCoordinating {
+        HerdrWorkflowCoordinator(
+            discovery: SSHHerdrDiscovery(session: session),
+            transport: SSHHerdrTerminalTransport(session: session),
+            lastPaneID: rememberedPaneID
+        )
+    }
+}
+
+extension Pane {
+    /// The title shown by an attached terminal. Agent names are more useful
+    /// when available; a pane title (and finally its ID) keeps shell panes
+    /// identifiable without exposing the host address as the terminal title.
+    var terminalTitle: String {
+        if let agentName = agent?.name.trimmingCharacters(in: .whitespacesAndNewlines),
+           !agentName.isEmpty {
+            return agentName
+        }
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedTitle.isEmpty ? id : trimmedTitle
+    }
+}
+
 enum HerdrWorkflowError: Error, Equatable, LocalizedError, Sendable {
     case noConnectedHost
 

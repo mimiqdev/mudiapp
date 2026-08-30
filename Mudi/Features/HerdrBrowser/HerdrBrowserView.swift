@@ -5,6 +5,7 @@ struct HerdrBrowserView: View {
     let state: HerdrBrowserState
     let hasLastPane: Bool
     let canSwitchSessions: Bool
+    let onReturnToHosts: () -> Void
     let onSelectSession: (HerdrSession.ID) -> Void
     let onSelectPane: (Pane.ID) -> Void
     let onShowSessions: () -> Void
@@ -15,6 +16,7 @@ struct HerdrBrowserView: View {
         state: HerdrBrowserState,
         hasLastPane: Bool = false,
         canSwitchSessions: Bool = false,
+        onReturnToHosts: @escaping () -> Void = {},
         onSelectSession: @escaping (HerdrSession.ID) -> Void,
         onSelectPane: @escaping (Pane.ID) -> Void,
         onShowSessions: @escaping () -> Void = {},
@@ -24,6 +26,7 @@ struct HerdrBrowserView: View {
         self.state = state
         self.hasLastPane = hasLastPane
         self.canSwitchSessions = canSwitchSessions
+        self.onReturnToHosts = onReturnToHosts
         self.onSelectSession = onSelectSession
         self.onSelectPane = onSelectPane
         self.onShowSessions = onShowSessions
@@ -36,6 +39,7 @@ struct HerdrBrowserView: View {
     init(snapshot: HerdrSnapshot, selection _: Binding<Pane.ID?>) {
         self.init(
             state: Self.initialState(for: snapshot),
+            onReturnToHosts: {},
             onSelectSession: { _ in },
             onSelectPane: { _ in },
             onShowSessions: {},
@@ -44,9 +48,9 @@ struct HerdrBrowserView: View {
         )
     }
 
-    @ViewBuilder
     var body: some View {
-        switch state {
+        Group {
+            switch state {
         case .empty:
             ContentUnavailableView {
                 Label("No Herdr Sessions", systemImage: "rectangle.stack")
@@ -87,13 +91,6 @@ struct HerdrBrowserView: View {
                 message: message,
                 onSelectPane: onSelectPane
             )
-            .toolbar {
-                if canSwitchSessions {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Sessions", systemImage: "chevron.backward", action: onShowSessions)
-                    }
-                }
-            }
             .safeAreaInset(edge: .bottom) {
                 if hasLastPane {
                     Button("Restore Last Pane", systemImage: "arrow.counterclockwise", action: onRestoreLastPane)
@@ -105,8 +102,27 @@ struct HerdrBrowserView: View {
                 }
             }
 
-        case .ordinaryTerminal, .attached:
-            EmptyView()
+            case .ordinaryTerminal, .attached:
+                EmptyView()
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarLeading) {
+                Button(
+                    "Hosts",
+                    systemImage: "chevron.backward",
+                    action: onReturnToHosts
+                )
+                .accessibilityIdentifier("return-to-hosts")
+
+                if canSwitchSessions {
+                    Button(
+                        "Sessions",
+                        systemImage: "rectangle.stack",
+                        action: onShowSessions
+                    )
+                }
+            }
         }
     }
 

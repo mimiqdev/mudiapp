@@ -4,15 +4,28 @@ import SwiftUI
 
 struct TerminalViewContainer: UIViewRepresentable {
     let session: SSHShellSession
+    let fontSize: Double
     let onError: (String) -> Void
+
+    init(
+        session: SSHShellSession,
+        fontSize: Double = 14,
+        onError: @escaping (String) -> Void
+    ) {
+        self.session = session
+        self.fontSize = fontSize
+        self.onError = onError
+    }
 
     func makeUIView(context: Context) -> ShellTerminalView {
         let terminalView = ShellTerminalView(frame: .zero)
+        terminalView.updateFontSize(fontSize)
         terminalView.start(session: session, onError: onError)
         return terminalView
     }
 
     func updateUIView(_ terminalView: ShellTerminalView, context: Context) {
+        terminalView.updateFontSize(fontSize)
         terminalView.updateSession(session: session, onError: onError)
     }
 
@@ -107,6 +120,13 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         guard sessionIdentity != ObjectIdentifier(session) else { return }
         stop()
         start(session: session, onError: onError)
+    }
+
+    func updateFontSize(_ fontSize: Double) {
+        guard fontSize.isFinite, fontSize > 0,
+              abs(font.pointSize - fontSize) > 0.001
+        else { return }
+        font = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
     }
 
     func stop() {

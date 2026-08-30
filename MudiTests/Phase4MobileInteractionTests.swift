@@ -2,90 +2,142 @@ import HerdrKit
 import XCTest
 @testable import Mudi
 
+@MainActor
 final class Phase4MobileInteractionTests: XCTestCase {
     func testReturningFromHerdrListShowsHostsDisconnectsAndHidesPanes() async throws {
         let fixture = try Phase3HerdrFixtures.single()
         let host = phase4Host()
-        let transport = Phase4TerminalTransport()
-        let application = makeMissingPhase4NavigationApplication(
-            transport: transport,
+        let hostFileURL = phase4HostFileURL()
+        defer { try? FileManager.default.removeItem(at: hostFileURL.deletingLastPathComponent()) }
+        let application = makePhase4NavigationApplication(
+            hostFileURL: hostFileURL,
             fixture: fixture
         )
 
         try await application.save(host)
-        _ = try await application.connect(to: host)
-        let state = await application.returnToHosts()
+        application.model.connect(to: host)
+        let connected = await waitForRootViewCondition {
+            guard case .panes = application.model.herdrState else { return false }
+            return application.model.activeConnection != nil
+        }
+        XCTAssertTrue(connected)
 
-        if case let .hosts(hosts) = state {
-            XCTAssertEqual(hosts, [host])
-        } else {
-            XCTFail("Returning from Herdr should show the saved Host list")
+        application.model.returnToHosts()
+        let returned = await waitForRootViewCondition {
+            application.model.herdrState == nil
+                && application.model.activeConnection == nil
+                && application.model.connectionState == .disconnected
         }
-        let connectedAfterReturn = await application.isConnected()
-        let disconnections = await transport.disconnections()
-        XCTAssertFalse(connectedAfterReturn)
-        XCTAssertEqual(disconnections, 1)
-        if case .herdr(.panes) = state {
-            XCTFail("Returning to Hosts must not leave the Herdr pane list visible")
-        }
+        XCTAssertTrue(returned)
+        XCTAssertEqual(application.model.hosts, [host])
+        let connectionState = await application.coordinator.connectionState()
+        XCTAssertEqual(connectionState, .disconnected)
     }
 
     func testAttachedTerminalTitleUsesPaneOrAgentNameInsteadOfHostAddress() async throws {
         let fixture = try Phase3HerdrFixtures.single()
         let pane = try XCTUnwrap(phase4Panes(in: fixture).first)
         let host = phase4Host(hostname: "203.0.113.17")
-        let application = makeMissingPhase4NavigationApplication(fixture: fixture)
-
-        _ = try await application.connect(to: host)
-        let state = await application.selectPane(pane.id)
-
-        guard case let .terminal(attached) = state else {
-            XCTFail("Selecting a Herdr pane should produce an attached terminal")
-            return
-        }
-        let allowedTitles = [pane.title, pane.agent?.name].compactMap { $0 }
-        XCTAssertTrue(
-            allowedTitles.contains(attached.title),
-            "The terminal title should come from the selected pane or agent"
+        let hostFileURL = phase4HostFileURL()
+        defer { try? FileManager.default.removeItem(at: hostFileURL.deletingLastPathComponent()) }
+        let application = makePhase4NavigationApplication(
+            hostFileURL: hostFileURL,
+            fixture: fixture
         )
-        XCTAssertNotEqual(attached.title, host.hostname)
+
+        try await application.save(host)
+        application.model.connect(to: host)
+        let discovered = await waitForRootViewCondition {
+            guard case .panes = application.model.herdrState else { return false }
+            return application.model.activeConnection != nil
+        }
+        XCTAssertTrue(discovered)
+
+        application.model.selectPane(pane.id)
+        let attached = await waitForRootViewCondition {
+            if case .attached = application.model.herdrState {
+                return application.model.activeConnection?.terminalTitle != nil
+            }
+            return false
+        }
+        XCTAssertTrue(attached)
+
+        let terminalTitle = try XCTUnwrap(application.model.activeConnection?.terminalTitle)
+        let allowedTitles = [pane.title, pane.agent?.name].compactMap { $0 }
+        XCTAssertTrue(allowedTitles.contains(terminalTitle))
+        XCTAssertNotEqual(terminalTitle, host.hostname)
+
+        application.model.disconnect()
+        _ = await waitForRootViewCondition {
+            application.model.connectionState == .disconnected
+        }
     }
 
     func testColdStartKeepsSavedHostsWithoutImplicitlyRestoringLastPane() async throws {
         let fixture = try Phase3HerdrFixtures.single()
         let pane = try XCTUnwrap(phase4Panes(in: fixture).last)
         let host = phase4Host()
-        let hostFile = Phase4HostFile()
-        let firstLaunch = makeMissingPhase4NavigationApplication(
-            hostFile: hostFile,
-            fixture: fixture
+        let hostFileURL = phase4HostFileURL()
+        defer { try? FileManager.default.removeItem(at: hostFileURL.deletingLastPathComponent()) }
+        let credentials = Phase4CredentialVault()
+        let knownHostKeys = Phase4KnownHostKeys()
+        let firstLaunch = makePhase4NavigationApplication(
+            hostFileURL: hostFileURL,
+            fixture: fixture,
+            credentialVault: credentials,
+            knownHostKeys: knownHostKeys
         )
         try await firstLaunch.save(host)
 
         let transport = Phase4TerminalTransport()
-        let application = makeMissingPhase4NavigationApplication(
-            hostFile: hostFile,
-            transport: transport,
+        let application = makePhase4NavigationApplication(
+            hostFileURL: hostFileURL,
             fixture: fixture,
-            rememberedPaneID: pane.id
+            transport: transport,
+            credentialVault: credentials,
+            knownHostKeys: knownHostKeys,
+            rememberedPaneID: pane.id,
+            rememberedPaneHostID: host.id
         )
 
-        let state = await application.coldStart()
-        let loadedHosts = try await application.loadHosts()
-        XCTAssertEqual(loadedHosts, [host])
-        if case let .hosts(hosts) = state {
-            XCTAssertEqual(hosts, [host])
-        } else {
-            XCTFail("A cold start should begin at the saved Host list")
-        }
-        _ = try await application.connect(to: host)
-        let attachmentsBeforeRestore = await transport.attachments()
-        let connectedBeforeRestore = await application.isConnected()
-        XCTAssertTrue(attachmentsBeforeRestore.isEmpty)
-        XCTAssertTrue(connectedBeforeRestore)
+        await application.coldStart()
+        XCTAssertEqual(application.model.hosts, [host])
+        XCTAssertNil(application.model.herdrState)
+        XCTAssertNil(application.model.activeConnection)
 
-        _ = await application.restoreLastPane()
+        application.model.connect(to: host)
+        let discovered = await waitForRootViewCondition {
+            guard case .panes = application.model.herdrState else { return false }
+            return application.model.connectionState == .connected
+        }
+        XCTAssertTrue(discovered)
+        let attachmentsBeforeRestore = await transport.attachments()
+        XCTAssertTrue(attachmentsBeforeRestore.isEmpty)
+
+        application.model.restoreLastPane()
+        let restored = await waitForRootViewCondition {
+            if case let .attached(_, attachedPane) = application.model.herdrState {
+                return attachedPane.id == pane.id
+            }
+            return false
+        }
+        XCTAssertTrue(restored)
         let attachmentsAfterRestore = await transport.attachments()
         XCTAssertEqual(attachmentsAfterRestore, [pane])
+
+        application.model.disconnect()
+        _ = await waitForRootViewCondition {
+            application.model.connectionState == .disconnected
+        }
+    }
+
+    private func waitForRootViewCondition(
+        _ condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        for _ in 0..<200 {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        return condition()
     }
 }
