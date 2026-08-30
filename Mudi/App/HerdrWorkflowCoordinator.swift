@@ -32,6 +32,12 @@ protocol HerdrTerminalSessionProviding: Sendable {
     func releaseTerminalSession() async
 }
 
+/// Lets a Herdr transport select the named server that owns a pane. Legacy
+/// transports can continue to use the pane-only TerminalTransport method.
+protocol HerdrSessionAwareTerminalTransport: Sendable {
+    func attach(to pane: Pane, in session: HerdrSession) async throws
+}
+
 /// The narrow application boundary used by the root UI and by workflow tests.
 protocol HerdrWorkflowCoordinating: AnyObject, Sendable {
     func discover(on host: Host) async throws -> HerdrBrowserState
@@ -210,7 +216,11 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
 
     private func attach(_ pane: Pane, in session: HerdrSession) async -> HerdrBrowserState {
         do {
-            try await transport.attach(to: pane)
+            if let sessionAwareTransport = transport as? any HerdrSessionAwareTerminalTransport {
+                try await sessionAwareTransport.attach(to: pane, in: session)
+            } else {
+                try await transport.attach(to: pane)
+            }
             lastPaneID = pane.id
             browserState = .attached(session: session, pane: pane)
         } catch {

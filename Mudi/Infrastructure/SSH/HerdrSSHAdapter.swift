@@ -1,58 +1,6 @@
 import Foundation
 import HerdrKit
 
-/// Discovers Herdr with a dedicated SSH exec/session channel.
-///
-/// The authenticated interactive shell remains exclusively owned by
-/// `TerminalViewContainer`. A command channel is opened by the underlying
-/// Citadel connection and is collected to completion before decoding.
-actor SSHHerdrDiscovery: HerdrDiscovering {
-    private let session: SSHShellSession
-
-    init(session: SSHShellSession) {
-        self.session = session
-    }
-
-    func snapshot(for _: Host) async throws -> HerdrSnapshot {
-        let command = "if command -v herdr >/dev/null 2>&1; then "
-            + "herdr session list --json; "
-            + "else exit 0; fi"
-        let payload = try await session.execute(command)
-        return try decodeSnapshot(from: Data(payload))
-    }
-
-    private func decodeSnapshot(from data: Data) throws -> HerdrSnapshot {
-        guard let response = String(data: data, encoding: .utf8) else {
-            throw SSHHerdrDiscoveryError.invalidResponse
-        }
-        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return HerdrSnapshot(sessions: [])
-        }
-
-        let decoder = JSONDecoder()
-        if let snapshot = try? decoder.decode(HerdrSnapshot.self, from: Data(trimmed.utf8)) {
-            return snapshot
-        }
-        if let sessions = try? decoder.decode([HerdrSession].self, from: Data(trimmed.utf8)) {
-            return HerdrSnapshot(sessions: sessions)
-        }
-        throw SSHHerdrDiscoveryError.invalidJSON
-    }
-}
-
-enum SSHHerdrDiscoveryError: Error, LocalizedError, Sendable {
-    case invalidResponse
-    case invalidJSON
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidResponse, .invalidJSON:
-            "Herdr discovery returned an invalid response."
-        }
-    }
-}
-
 enum SSHHerdrTerminalTransportError: Error, LocalizedError, Sendable {
     case paneUnavailable
     case attachFailed
@@ -72,7 +20,8 @@ enum SSHHerdrTerminalTransportError: Error, LocalizedError, Sendable {
 /// The ordinary SSH shell is never used for Herdr discovery or pane attach.
 /// Each successful attach owns a separate interactive exec channel whose
 /// framed output is decoded before it reaches SwiftTerm.
-actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProviding {
+actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProviding,
+    HerdrSessionAwareTerminalTransport {
     nonisolated let kind: ActiveTransport = .ssh
     private let session: SSHShellSession
     private var attachedSession: SSHShellSession?
@@ -84,8 +33,20 @@ actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProvidin
     func connect(to _: Host) async throws {}
 
     func attach(to pane: Pane) async throws {
+        try await attach(to: pane, sessionName: nil)
+    }
+
+    func attach(to pane: Pane, in session: HerdrSession) async throws {
+        let sessionName = session.isDefault ? nil : session.name
+        try await attach(to: pane, sessionName: sessionName)
+    }
+
+    private func attach(to pane: Pane, sessionName: String?) async throws {
         let target = Self.shellQuote(pane.id)
-        let command = "herdr terminal session control \(target) --cols 80 --rows 24"
+        let path = "/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin"
+        let sessionOption = sessionName.map { "--session \(Self.shellQuote($0)) " } ?? ""
+        let command = "export PATH=\"\(path):$PATH\"; "
+            + "herdr \(sessionOption)terminal session control \(target) --cols 80 --rows 24"
         let channel: any PTYOutputChannel
         do {
             channel = try await session.openInteractiveCommand(command)
