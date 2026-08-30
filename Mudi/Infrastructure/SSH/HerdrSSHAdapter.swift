@@ -42,11 +42,13 @@ actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProvidin
     }
 
     private func attach(to pane: Pane, sessionName: String?) async throws {
-        let target = Self.shellQuote(pane.id)
-        let path = "/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin"
-        let sessionOption = sessionName.map { "--session \(Self.shellQuote($0)) " } ?? ""
-        let command = "export PATH=\"\(path):$PATH\"; "
-            + "herdr \(sessionOption)terminal session control \(target) --cols 80 --rows 24"
+        let target = SSHLoginShellCommand.shellQuote(pane.id)
+        let sessionOption = sessionName.map {
+            "--session \(SSHLoginShellCommand.shellQuote($0)) "
+        } ?? ""
+        let command = SSHLoginShellCommand.wrap(
+            "herdr \(sessionOption)terminal session control \(target) --cols 80 --rows 24"
+        )
         let channel: any PTYOutputChannel
         do {
             channel = try await session.openInteractiveCommand(command)

@@ -173,24 +173,23 @@ actor SSHHerdrDiscovery: HerdrDiscovering {
     private static func command(_ arguments: String, sessionName: String? = nil) -> String {
         var invocation = "herdr"
         if let sessionName {
-            invocation += " --session \(shellQuote(sessionName))"
+            invocation += " --session \(SSHLoginShellCommand.shellQuote(sessionName))"
         }
         invocation += " \(arguments)"
 
-        // SSH exec channels do not consistently load the user's login PATH.
-        // Homebrew is the normal Herdr installation location on macOS, while
-        // preserving the remote PATH also covers user-local installations.
-        let path = "/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin"
-        let pathSetup = "export PATH=\"\(path):$PATH\"; "
+        let command: String
+        let fallbackExitCode: Int
         if sessionName == nil {
-            return pathSetup
-                + "if command -v herdr >/dev/null 2>&1; then \(invocation); else exit 0; fi"
+            command = "if command -v herdr >/dev/null 2>&1; then \(invocation); else exit 0; fi"
+            fallbackExitCode = 0
+        } else {
+            command = invocation
+            fallbackExitCode = 127
         }
-        return pathSetup + invocation
-    }
-
-    private static func shellQuote(_ value: String) -> String {
-        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+        return SSHLoginShellCommand.wrap(
+            command,
+            fallbackExitCode: fallbackExitCode
+        )
     }
 }
 
