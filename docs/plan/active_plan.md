@@ -37,6 +37,7 @@
 - disconnected 或 failed 之后，手动 reconnect 会再次 connect
 - 连接失败、取消或删除 active Host 时，host-key prompt 会关闭；连接结束后点击 Accept 不会记住 key 或建立会话
 - 手动 reconnect 会按 Host id 重新读取最新保存的 hostname、port、username 和凭据
+- 手动 reconnect 的新 TOFU 提示绑定当前连接代次，接受后能继续本次连接
 - disconnect 期间不会让旧的 in-flight handshake 在新操作后安装会话
 - TOFU 提示等待用户时，SSH handshake 的登录超时不会提前结束本次连接
 - `make test-core` 通过

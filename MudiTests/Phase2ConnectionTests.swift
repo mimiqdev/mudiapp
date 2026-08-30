@@ -186,7 +186,9 @@ final class Phase2ConnectionTests: XCTestCase {
         )
         XCTAssertEqual(connectedState, .connected)
         await application.disconnect()
-        let reconnectedState = try await application.reconnect()
+        let reconnectedState = try await application.reconnect(
+            hostKeyDecision: { _ in .accept }
+        )
 
         XCTAssertEqual(reconnectedState, .connected)
         let attempts = await client.connectionAttempts()
@@ -216,7 +218,9 @@ final class Phase2ConnectionTests: XCTestCase {
         } catch {
             XCTFail("Expected a connection failure, got: \(error)")
         }
-        let reconnectedState = try await application.reconnect()
+        let reconnectedState = try await application.reconnect(
+            hostKeyDecision: { _ in .accept }
+        )
 
         XCTAssertEqual(reconnectedState, .connected)
         let attempts = await client.connectionAttempts()
@@ -249,7 +253,9 @@ final class Phase2ConnectionTests: XCTestCase {
 
         try await application.save(updatedHost)
         try await application.save(updatedCredentials, for: updatedHost)
-        _ = try await application.reconnect()
+        _ = try await application.reconnect(
+            hostKeyDecision: { _ in .accept }
+        )
 
         let records = await client.connectionRecords()
         XCTAssertEqual(records.map(\.host), [host, updatedHost])
@@ -275,7 +281,9 @@ final class Phase2ConnectionTests: XCTestCase {
         await application.disconnect()
 
         do {
-            _ = try await application.reconnect()
+            _ = try await application.reconnect(
+                hostKeyDecision: { _ in .accept }
+            )
             XCTFail("Expected reconnect to be rejected while the first handshake is active")
         } catch let error as Phase2ConnectionError {
             XCTAssertEqual(error, .connectionFailed)

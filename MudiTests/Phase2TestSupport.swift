@@ -25,7 +25,9 @@ protocol Phase2Application: Sendable {
     func connectionState() async -> Phase2ConnectionState
     func connectionStateStream() async -> AsyncStream<Phase2ConnectionState>
     func disconnect() async
-    func reconnect() async throws -> Phase2ConnectionState
+    func reconnect(
+        hostKeyDecision: @escaping @Sendable (String) async -> Phase2HostKeyDecision
+    ) async throws -> Phase2ConnectionState
 }
 
 extension ApplicationCoordinator: Phase2Application {}

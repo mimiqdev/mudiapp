@@ -168,7 +168,15 @@ final class RootViewModel: ObservableObject {
                 }
                 self.hosts = refreshedHosts
 
-                let state = try await coordinator.reconnect()
+                let state = try await coordinator.reconnect(
+                    hostKeyDecision: { [weak self] fingerprint in
+                        guard let self else { return .reject }
+                        return await self.requestHostKeyDecision(
+                            for: fingerprint,
+                            generation: generation
+                        )
+                    }
+                )
                 guard self.isCurrentConnection(generation),
                       !Task.isCancelled,
                       state == .connected,

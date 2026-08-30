@@ -16,7 +16,6 @@ actor ApplicationCoordinator: Sendable {
     private var state: ConnectionState = .idle
     private var session: SSHShellSession?
     private var activeHostID: Host.ID?
-    private var activeHostKeyDecision: (@Sendable (String) async -> HostKeyDecision)?
     private var hostKeyError: (attemptID: UUID, error: ConnectionError)?
     private var inFlightConnectID: UUID?
     private var disconnectRequestedFor: UUID?
@@ -75,7 +74,6 @@ actor ApplicationCoordinator: Sendable {
 
         if deletesActiveHost {
             activeHostID = nil
-            activeHostKeyDecision = nil
             hostKeyError = nil
         }
         if let firstError {
@@ -97,7 +95,6 @@ actor ApplicationCoordinator: Sendable {
 
         let attemptID = UUID()
         activeHostID = host.id
-        activeHostKeyDecision = hostKeyDecision
         hostKeyError = nil
         disconnectRequestedFor = nil
         inFlightConnectID = attemptID
@@ -193,13 +190,13 @@ actor ApplicationCoordinator: Sendable {
         }
     }
 
-    func reconnect() async throws -> ConnectionState {
+    func reconnect(
+        hostKeyDecision: @escaping @Sendable (String) async -> HostKeyDecision
+    ) async throws -> ConnectionState {
         guard inFlightConnectID == nil else {
             throw ConnectionError.connectionFailed
         }
-        guard let activeHostID,
-              let activeHostKeyDecision
-        else {
+        guard let activeHostID else {
             setState(.failed)
             throw ConnectionError.connectionFailed
         }
@@ -243,7 +240,7 @@ actor ApplicationCoordinator: Sendable {
         return try await connect(
             to: host,
             credentials: credentials,
-            hostKeyDecision: activeHostKeyDecision
+            hostKeyDecision: hostKeyDecision
         )
     }
 
