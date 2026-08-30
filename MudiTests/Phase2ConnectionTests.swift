@@ -209,4 +209,75 @@ final class Phase2ConnectionTests: XCTestCase {
         let attempts = await client.connectionAttempts()
         XCTAssertEqual(attempts, 2)
     }
+
+    func testReconnectReloadsLatestHostAndCredentials() async throws {
+        let host = phase2Host()
+        let updatedHost = Host(
+            id: host.id,
+            displayName: host.displayName,
+            hostname: "new.example.test",
+            port: 2200,
+            username: "new-user",
+            preferredTransport: .ssh
+        )
+        let credentials = phase2Credentials()
+        let updatedCredentials = SSHCredentials(password: "updated-password")
+        let client = Phase2SSHClient(presentedFingerprint: "SHA256:known-key")
+        let application = makeMissingPhase2Application(client: client)
+
+        try await application.save(host)
+        try await application.save(credentials, for: host)
+        _ = try await application.connect(
+            to: host,
+            credentials: credentials,
+            hostKeyDecision: { _ in .accept }
+        )
+        await application.disconnect()
+
+        try await application.save(updatedHost)
+        try await application.save(updatedCredentials, for: updatedHost)
+        _ = try await application.reconnect()
+
+        let records = await client.connectionRecords()
+        XCTAssertEqual(records.map(\.host), [host, updatedHost])
+        XCTAssertEqual(records.map(\.credentials), [credentials, updatedCredentials])
+    }
+
+    func testDisconnectRejectsReconnectWhileHandshakeIsInFlight() async throws {
+        let gate = Phase2ConnectionGate()
+        let client = Phase2SSHClient(
+            presentedFingerprint: "SHA256:known-key",
+            firstConnectionGate: gate
+        )
+        let application = makeMissingPhase2Application(client: client)
+        let firstConnect = Task {
+            try? await application.connect(
+                to: phase2Host(),
+                credentials: phase2Credentials(),
+                hostKeyDecision: { _ in .accept }
+            )
+        }
+
+        await gate.waitUntilStarted()
+        await application.disconnect()
+
+        do {
+            _ = try await application.reconnect()
+            XCTFail("Expected reconnect to be rejected while the first handshake is active")
+        } catch let error as Phase2ConnectionError {
+            XCTAssertEqual(error, .connectionFailed)
+        } catch {
+            XCTFail("Expected reconnect rejection, got: \(error)")
+        }
+        let attempts = await client.connectionAttempts()
+        XCTAssertEqual(attempts, 1)
+
+        await gate.release()
+        let firstResult = await firstConnect.value
+        XCTAssertNil(firstResult)
+        let state = await application.connectionState()
+        XCTAssertEqual(state, .disconnected)
+        let session = await application.activeShellSession()
+        XCTAssertNil(session)
+    }
 }

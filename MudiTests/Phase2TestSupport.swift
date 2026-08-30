@@ -79,24 +79,107 @@ actor Phase2KnownHostKeys {
     }
 }
 
+actor Phase2ConnectionGate {
+    private var started = false
+    private var released = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func markStarted() {
+        started = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func waitUntilStarted() async {
+        guard !started else { return }
+        await withCheckedContinuation { continuation in
+            if started {
+                continuation.resume()
+            } else {
+                startWaiters.append(continuation)
+            }
+        }
+    }
+
+    func waitUntilReleased() async {
+        guard !released else { return }
+        await withCheckedContinuation { continuation in
+            if released {
+                continuation.resume()
+            } else {
+                releaseWaiters.append(continuation)
+            }
+        }
+    }
+
+    func release() {
+        released = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+}
+
+struct Phase2ConnectionRecord: Sendable {
+    let host: Host
+    let credentials: SSHCredentials
+}
+
 /// A deterministic SSH transport double injected into the production
 /// coordinator by the test factory below.
 actor Phase2SSHClient: HostKeyAwareSSHClient {
     let presentedFingerprint: String
     private var outcomes: [Bool]
     private var attempts = 0
+    private var records: [Phase2ConnectionRecord] = []
+    private let firstConnectionGate: Phase2ConnectionGate?
+    private let callbackStartedGate: Phase2ConnectionGate?
+    private let failAfterStartingHostKeyDecision: Bool
 
-    init(presentedFingerprint: String, outcomes: [Bool] = []) {
+    init(
+        presentedFingerprint: String,
+        outcomes: [Bool] = [],
+        firstConnectionGate: Phase2ConnectionGate? = nil,
+        callbackStartedGate: Phase2ConnectionGate? = nil,
+        failAfterStartingHostKeyDecision: Bool = false
+    ) {
         self.presentedFingerprint = presentedFingerprint
         self.outcomes = outcomes
+        self.firstConnectionGate = firstConnectionGate
+        self.callbackStartedGate = callbackStartedGate
+        self.failAfterStartingHostKeyDecision = failAfterStartingHostKeyDecision
     }
 
     func connect(
-        to _: Host,
-        credentials _: SSHCredentials,
+        to host: Host,
+        credentials: SSHCredentials,
         hostKeyDecision: @escaping @Sendable (String) async -> Phase2HostKeyDecision
     ) async throws -> any PTYChannel {
         attempts += 1
+        let attempt = attempts
+        records.append(Phase2ConnectionRecord(host: host, credentials: credentials))
+
+        if attempt == 1, let firstConnectionGate {
+            await firstConnectionGate.markStarted()
+            await firstConnectionGate.waitUntilReleased()
+        }
+
+        if attempt == 1, failAfterStartingHostKeyDecision {
+            let fingerprint = presentedFingerprint
+            Task {
+                if let callbackStartedGate {
+                    await callbackStartedGate.markStarted()
+                }
+                _ = await hostKeyDecision(fingerprint)
+            }
+            if let callbackStartedGate {
+                await callbackStartedGate.waitUntilStarted()
+            }
+            throw Phase2ConnectionError.connectionFailed
+        }
+
         let decision = await hostKeyDecision(presentedFingerprint)
         guard decision == .accept else {
             throw Phase2ConnectionError.hostKeyRejected
@@ -111,6 +194,10 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
 
     func connectionAttempts() -> Int {
         attempts
+    }
+
+    func connectionRecords() -> [Phase2ConnectionRecord] {
+        records
     }
 }
 
