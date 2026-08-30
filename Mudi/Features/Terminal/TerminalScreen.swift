@@ -5,8 +5,21 @@ struct TerminalScreen: View {
     let host: Host
     let session: SSHShellSession
     let onDisconnect: () -> Void
+    let onBackToBrowser: (() -> Void)?
 
     @State private var errorMessage: String?
+
+    init(
+        host: Host,
+        session: SSHShellSession,
+        onDisconnect: @escaping () -> Void,
+        onBackToBrowser: (() -> Void)? = nil
+    ) {
+        self.host = host
+        self.session = session
+        self.onDisconnect = onDisconnect
+        self.onBackToBrowser = onBackToBrowser
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -31,6 +44,12 @@ struct TerminalScreen: View {
         .navigationTitle(host.hostname)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            if let onBackToBrowser {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Herdr", systemImage: "chevron.backward", action: onBackToBrowser)
+                        .tint(.white)
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Disconnect", systemImage: "xmark.circle") {
                     onDisconnect()

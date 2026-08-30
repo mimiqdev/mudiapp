@@ -26,14 +26,24 @@ struct HerdrSessionSummary: Equatable, Sendable {
     }
 }
 
+/// Provides the terminal session created by a successful pane attach.
+protocol HerdrTerminalSessionProviding: Sendable {
+    func terminalSession() async -> SSHShellSession?
+    func releaseTerminalSession() async
+}
+
 /// The narrow application boundary used by the root UI and by workflow tests.
 protocol HerdrWorkflowCoordinating: Sendable {
     func discover(on host: Host) async throws -> HerdrBrowserState
     func selectSession(_ sessionID: HerdrSession.ID) async -> HerdrBrowserState
     func selectPane(_ paneID: Pane.ID) async -> HerdrBrowserState
+    func showSessions() async -> HerdrBrowserState
+    func returnToBrowser() async -> HerdrBrowserState
     func openOrdinaryTerminal() async throws -> HerdrBrowserState
     func restoreLastPane() async -> HerdrBrowserState
     func hasRememberedPane() async -> Bool
+    func hasMultipleSessions() async -> Bool
+    func terminalSession() async -> SSHShellSession?
 }
 
 enum HerdrWorkflowError: Error, Equatable, LocalizedError, Sendable {
@@ -122,6 +132,24 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
         return await attach(pane, in: session)
     }
 
+    func showSessions() -> HerdrBrowserState {
+        guard let snapshot, snapshot.sessions.count > 1 else {
+            browserState = makeBrowserState()
+            return browserState
+        }
+        selectedSessionID = nil
+        browserState = makeBrowserState()
+        return browserState
+    }
+
+    func returnToBrowser() async -> HerdrBrowserState {
+        if let provider = transport as? any HerdrTerminalSessionProviding {
+            await provider.releaseTerminalSession()
+        }
+        browserState = makeBrowserState()
+        return browserState
+    }
+
     func openOrdinaryTerminal() async throws -> HerdrBrowserState {
         guard let connectedHost else {
             throw HerdrWorkflowError.noConnectedHost
@@ -167,6 +195,17 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
 
     func hasRememberedPane() async -> Bool {
         lastPaneID != nil
+    }
+
+    func hasMultipleSessions() async -> Bool {
+        (snapshot?.sessions.count ?? 0) > 1
+    }
+
+    func terminalSession() async -> SSHShellSession? {
+        guard let provider = transport as? any HerdrTerminalSessionProviding else {
+            return nil
+        }
+        return await provider.terminalSession()
     }
 
     private func attach(_ pane: Pane, in session: HerdrSession) async -> HerdrBrowserState {

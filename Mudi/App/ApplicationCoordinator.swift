@@ -335,7 +335,7 @@ actor ApplicationCoordinator: Sendable {
         }
         if let error = error as? SSHShellError {
             switch error {
-            case .authenticationFailed, .connectionFailed, .notConnected:
+            case .authenticationFailed, .connectionFailed, .commandExecutionUnavailable, .notConnected:
                 return .connectionFailed
             case .alreadyConnected:
                 return .connectionFailed

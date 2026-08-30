@@ -7,6 +7,7 @@ final class RootViewModel: ObservableObject {
     @Published private(set) var activeConnection: ActiveSSHConnection?
     @Published private(set) var herdrState: HerdrBrowserState?
     @Published private(set) var hasLastPane = false
+    @Published private(set) var hasMultipleHerdrSessions = false
     @Published private(set) var connectionState: ConnectionState = .idle
     @Published var errorMessage: String?
     @Published var editor: HostEditorContext?
@@ -20,6 +21,9 @@ final class RootViewModel: ObservableObject {
     private var connectionTask: Task<Void, Never>?
     private var connectionGeneration = UUID()
     private var lastHostID: Host.ID?
+    private var lastPaneID: Pane.ID?
+    private var lastPaneHostID: Host.ID?
+    private var baseSession: SSHShellSession?
 
     init(coordinator: ApplicationCoordinator = ApplicationCoordinator()) {
         self.coordinator = coordinator
@@ -89,6 +93,10 @@ final class RootViewModel: ObservableObject {
             workflow = nil
             herdrState = nil
             hasLastPane = false
+            hasMultipleHerdrSessions = false
+            baseSession = nil
+            lastPaneID = nil
+            lastPaneHostID = nil
             activeConnection = nil
             lastHostID = nil
         }
@@ -139,7 +147,7 @@ final class RootViewModel: ObservableObject {
                 else {
                     throw ConnectionError.connectionFailed
                 }
-                let workflow = self.makeWorkflow(for: session)
+                let workflow = self.makeWorkflow(for: session, hostID: host.id)
                 let browserState: HerdrBrowserState
                 do {
                     browserState = try await workflow.discover(on: host)
@@ -154,6 +162,9 @@ final class RootViewModel: ObservableObject {
                 }
                 self.workflow = workflow
                 self.herdrState = browserState
+                self.hasLastPane = await workflow.hasRememberedPane()
+                self.hasMultipleHerdrSessions = await workflow.hasMultipleSessions()
+                self.baseSession = session
                 self.activeConnection = ActiveSSHConnection(host: host, session: session)
                 self.connectionState = state
                 self.connectionTask = nil
@@ -208,7 +219,7 @@ final class RootViewModel: ObservableObject {
                     await coordinator.disconnect()
                     return
                 }
-                let workflow = self.makeWorkflow(for: session)
+                let workflow = self.makeWorkflow(for: session, hostID: host.id)
                 let browserState: HerdrBrowserState
                 do {
                     browserState = try await workflow.discover(on: host)
@@ -221,6 +232,9 @@ final class RootViewModel: ObservableObject {
                 }
                 self.workflow = workflow
                 self.herdrState = browserState
+                self.hasLastPane = await workflow.hasRememberedPane()
+                self.hasMultipleHerdrSessions = await workflow.hasMultipleSessions()
+                self.baseSession = session
                 self.activeConnection = ActiveSSHConnection(host: host, session: session)
                 self.connectionState = state
                 self.connectionTask = nil
@@ -241,8 +255,15 @@ final class RootViewModel: ObservableObject {
         guard let workflow else { return }
         Task { [weak self, workflow] in
             let state = await workflow.selectSession(sessionID)
-            guard let self, self.workflow != nil else { return }
-            self.herdrState = state
+            await self?.applyWorkflowState(state, from: workflow)
+        }
+    }
+
+    func showHerdrSessions() {
+        guard let workflow else { return }
+        Task { [weak self, workflow] in
+            let state = await workflow.showSessions()
+            await self?.applyWorkflowState(state, from: workflow)
         }
     }
 
@@ -250,11 +271,7 @@ final class RootViewModel: ObservableObject {
         guard let workflow else { return }
         Task { [weak self, workflow] in
             let state = await workflow.selectPane(paneID)
-            guard let self, self.workflow != nil else { return }
-            self.herdrState = state
-            if case .attached = state {
-                self.hasLastPane = true
-            }
+            await self?.applyWorkflowState(state, from: workflow)
         }
     }
 
@@ -263,9 +280,8 @@ final class RootViewModel: ObservableObject {
         Task { [weak self, workflow] in
             do {
                 let state = try await workflow.openOrdinaryTerminal()
-                guard let self, self.workflow != nil else { return }
-                self.herdrState = state
-                self.errorMessage = nil
+                await self?.applyWorkflowState(state, from: workflow)
+                self?.errorMessage = nil
             } catch {
                 self?.errorMessage = error.localizedDescription
             }
@@ -276,11 +292,15 @@ final class RootViewModel: ObservableObject {
         guard let workflow else { return }
         Task { [weak self, workflow] in
             let state = await workflow.restoreLastPane()
-            guard let self, self.workflow != nil else { return }
-            self.herdrState = state
-            if case .attached = state {
-                self.hasLastPane = true
-            }
+            await self?.applyWorkflowState(state, from: workflow)
+        }
+    }
+
+    func returnToHerdrBrowser() {
+        guard let workflow else { return }
+        Task { [weak self, workflow] in
+            let state = await workflow.returnToBrowser()
+            await self?.applyWorkflowState(state, from: workflow)
         }
     }
 
@@ -289,6 +309,8 @@ final class RootViewModel: ObservableObject {
         workflow = nil
         herdrState = nil
         hasLastPane = false
+        hasMultipleHerdrSessions = false
+        baseSession = nil
         activeConnection = nil
         let generation = connectionGeneration
         Task {
@@ -338,10 +360,16 @@ final class RootViewModel: ObservableObject {
 
     private func beginConnection(for hostID: Host.ID) -> UUID {
         invalidateConnectionAttempt()
+        if let lastPaneHostID, lastPaneHostID != hostID {
+            lastPaneID = nil
+            self.lastPaneHostID = nil
+        }
         lastHostID = hostID
         workflow = nil
         herdrState = nil
         hasLastPane = false
+        hasMultipleHerdrSessions = false
+        baseSession = nil
         activeConnection = nil
         connectionGeneration = UUID()
         return connectionGeneration
@@ -358,10 +386,48 @@ final class RootViewModel: ObservableObject {
         connectionGeneration == generation
     }
 
-    private func makeWorkflow(for session: SSHShellSession) -> any HerdrWorkflowCoordinating {
-        HerdrWorkflowCoordinator(
+    private func applyWorkflowState(
+        _ state: HerdrBrowserState,
+        from workflow: any HerdrWorkflowCoordinating
+    ) async {
+        guard self.workflow != nil else { return }
+        herdrState = state
+        hasLastPane = await workflow.hasRememberedPane()
+        hasMultipleHerdrSessions = await workflow.hasMultipleSessions()
+
+        if case let .attached(_, pane) = state {
+            lastPaneID = pane.id
+            lastPaneHostID = activeConnection?.host.id
+        }
+
+        guard let activeConnection else { return }
+        switch state {
+        case .attached:
+            if let terminalSession = await workflow.terminalSession() {
+                self.activeConnection = ActiveSSHConnection(
+                    host: activeConnection.host,
+                    session: terminalSession
+                )
+            }
+        case .empty, .sessions, .panes, .ordinaryTerminal:
+            if let baseSession {
+                self.activeConnection = ActiveSSHConnection(
+                    host: activeConnection.host,
+                    session: baseSession
+                )
+            }
+        }
+    }
+
+    private func makeWorkflow(
+        for session: SSHShellSession,
+        hostID: Host.ID
+    ) -> any HerdrWorkflowCoordinating {
+        let rememberedPaneID = lastPaneHostID == hostID ? lastPaneID : nil
+        return HerdrWorkflowCoordinator(
             discovery: SSHHerdrDiscovery(session: session),
-            transport: SSHHerdrTerminalTransport(session: session)
+            transport: SSHHerdrTerminalTransport(session: session),
+            lastPaneID: rememberedPaneID
         )
     }
 
@@ -402,18 +468,27 @@ struct RootView: View {
                 if let activeConnection = model.activeConnection,
                    let herdrState = model.herdrState {
                     switch herdrState {
-                    case .ordinaryTerminal, .attached:
+                    case .ordinaryTerminal:
                         TerminalScreen(
                             host: activeConnection.host,
                             session: activeConnection.session,
                             onDisconnect: model.disconnect
                         )
+                    case .attached:
+                        TerminalScreen(
+                            host: activeConnection.host,
+                            session: activeConnection.session,
+                            onDisconnect: model.disconnect,
+                            onBackToBrowser: model.returnToHerdrBrowser
+                        )
                     case .empty, .sessions, .panes:
                         HerdrBrowserView(
                             state: herdrState,
                             hasLastPane: model.hasLastPane,
+                            canSwitchSessions: model.hasMultipleHerdrSessions,
                             onSelectSession: model.selectSession,
                             onSelectPane: model.selectPane,
+                            onShowSessions: model.showHerdrSessions,
                             onOpenOrdinaryTerminal: model.openOrdinaryTerminal,
                             onRestoreLastPane: model.restoreLastPane
                         )

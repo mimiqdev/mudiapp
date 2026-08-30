@@ -26,6 +26,18 @@ public protocol PTYOutputChannel: PTYChannel {
     func outputStream() async -> AsyncThrowingStream<[UInt8], Error>
 }
 
+/// A connected SSH channel that can open a separate non-interactive exec
+/// channel on the same authenticated SSH connection.
+public protocol SSHCommandExecutingChannel: Sendable {
+    func execute(_ command: String) async throws -> [UInt8]
+}
+
+/// A connected SSH channel that can open an interactive exec channel without
+/// consuming the shell channel's output stream.
+public protocol SSHInteractiveCommandChannel: Sendable {
+    func openInteractiveCommand(_ command: String) async throws -> any PTYOutputChannel
+}
+
 /// Errors that an `SSHClient` reports to the shell session.
 public enum SSHClientError: Error, Equatable, Sendable {
     case authenticationFailed
@@ -49,6 +61,7 @@ public protocol ShellSession: Sendable {
 public enum SSHShellError: Error, Equatable, LocalizedError, Sendable {
     case authenticationFailed
     case connectionFailed
+    case commandExecutionUnavailable
     case notConnected
     case alreadyConnected
 
@@ -58,6 +71,8 @@ public enum SSHShellError: Error, Equatable, LocalizedError, Sendable {
             "SSH authentication failed."
         case .connectionFailed:
             "Unable to connect to the SSH host."
+        case .commandExecutionUnavailable:
+            "The SSH connection cannot execute a remote command."
         case .notConnected:
             "The SSH shell is not connected."
         case .alreadyConnected:
@@ -126,6 +141,30 @@ public actor SSHShellSession: ShellSession {
             resetConnectionAttempt()
             throw SSHShellError.connectionFailed
         }
+    }
+
+    /// Executes a command on a dedicated SSH session channel. The interactive
+    /// shell's output stream is never consumed by this operation.
+    public func execute(_ command: String) async throws -> [UInt8] {
+        guard let channel, state == .connected else {
+            throw SSHShellError.notConnected
+        }
+        guard let commandChannel = channel as? any SSHCommandExecutingChannel else {
+            throw SSHShellError.commandExecutionUnavailable
+        }
+        return try await commandChannel.execute(command)
+    }
+
+    /// Opens an interactive exec channel while leaving the connected shell
+    /// channel and its output stream untouched.
+    public func openInteractiveCommand(_ command: String) async throws -> any PTYOutputChannel {
+        guard let channel, state == .connected else {
+            throw SSHShellError.notConnected
+        }
+        guard let commandChannel = channel as? any SSHInteractiveCommandChannel else {
+            throw SSHShellError.commandExecutionUnavailable
+        }
+        return try await commandChannel.openInteractiveCommand(command)
     }
 
     /// Returns the remote output stream for the connected PTY.

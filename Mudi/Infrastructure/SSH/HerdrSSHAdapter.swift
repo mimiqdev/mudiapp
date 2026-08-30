@@ -1,11 +1,11 @@
 import Foundation
 import HerdrKit
 
-/// Discovers Herdr through the already-authenticated interactive shell.
+/// Discovers Herdr with a dedicated SSH exec/session channel.
 ///
-/// The command is framed with private markers so the shell prompt and command
-/// echo are not mistaken for JSON. If the Herdr executable is absent, the
-/// framed payload is empty and discovery reports no active sessions.
+/// The authenticated interactive shell remains exclusively owned by
+/// `TerminalViewContainer`. A command channel is opened by the underlying
+/// Citadel connection and is collected to completion before decoding.
 actor SSHHerdrDiscovery: HerdrDiscovering {
     private let session: SSHShellSession
 
@@ -14,77 +14,15 @@ actor SSHHerdrDiscovery: HerdrDiscovering {
     }
 
     func snapshot(for _: Host) async throws -> HerdrSnapshot {
-        let marker = "MUDI_HERDR_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
-        let begin = Array("\u{1e}\(marker)_BEGIN\u{1e}".utf8)
-        let end = Array("\u{1e}\(marker)_END\u{1e}".utf8)
-        let command = "printf '\\036%s_BEGIN\\036\\n' '\(marker)'; "
-            + "if command -v herdr >/dev/null 2>&1; then herdr session list --json; fi; "
-            + "printf '\\036%s_END\\036\\n' '\(marker)'\n"
-
-        let output = await session.outputStream()
-        try await session.send(Array(command.utf8))
-        let payload = try await readPayload(
-            from: output,
-            begin: begin,
-            end: end
-        )
-        return try decodeSnapshot(from: payload)
-    }
-
-    private func readPayload(
-        from output: AsyncThrowingStream<[UInt8], Error>,
-        begin: [UInt8],
-        end: [UInt8]
-    ) async throws -> Data {
-        try await withThrowingTaskGroup(of: Data.self) { group in
-            group.addTask {
-                try await Self.collectPayload(
-                    from: output,
-                    begin: begin,
-                    end: end
-                )
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: 10_000_000_000)
-                throw SSHHerdrDiscoveryError.timedOut
-            }
-            defer { group.cancelAll() }
-            guard let payload = try await group.next() else {
-                throw SSHHerdrDiscoveryError.noResponse
-            }
-            return payload
-        }
-    }
-
-    private static func collectPayload(
-        from output: AsyncThrowingStream<[UInt8], Error>,
-        begin: [UInt8],
-        end: [UInt8]
-    ) async throws -> Data {
-        var bytes: [UInt8] = []
-        for try await chunk in output {
-            guard !Task.isCancelled else {
-                throw CancellationError()
-            }
-            bytes.append(contentsOf: chunk)
-            guard let endRange = firstRange(of: end, in: bytes) else {
-                continue
-            }
-            guard let beginRange = lastRange(
-                of: begin,
-                in: bytes,
-                before: endRange.lowerBound
-            ) else {
-                throw SSHHerdrDiscoveryError.invalidResponse
-            }
-            return Data(bytes[beginRange.upperBound..<endRange.lowerBound])
-        }
-        throw SSHHerdrDiscoveryError.noResponse
+        let command = "if command -v herdr >/dev/null 2>&1; then "
+            + "herdr session list --json; "
+            + "else exit 0; fi"
+        let payload = try await session.execute(command)
+        return try decodeSnapshot(from: Data(payload))
     }
 
     private func decodeSnapshot(from data: Data) throws -> HerdrSnapshot {
-        let cleanedData = Self.removeTerminalEscapes(from: data)
-        guard let response = String(data: cleanedData, encoding: .utf8) else {
+        guard let response = String(data: data, encoding: .utf8) else {
             throw SSHHerdrDiscoveryError.invalidResponse
         }
         let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -101,74 +39,43 @@ actor SSHHerdrDiscovery: HerdrDiscovering {
         }
         throw SSHHerdrDiscoveryError.invalidJSON
     }
-
-    private static func firstRange(of needle: [UInt8], in haystack: [UInt8]) -> Range<Int>? {
-        guard !needle.isEmpty, haystack.count >= needle.count else { return nil }
-        let lastStart = haystack.count - needle.count
-        for start in 0...lastStart where haystack[start..<start + needle.count].elementsEqual(needle) {
-            return start..<(start + needle.count)
-        }
-        return nil
-    }
-
-    private static func lastRange(
-        of needle: [UInt8],
-        in haystack: [UInt8],
-        before limit: Int
-    ) -> Range<Int>? {
-        guard !needle.isEmpty, limit >= needle.count else { return nil }
-        var result: Range<Int>?
-        let lastStart = limit - needle.count
-        for start in 0...lastStart where haystack[start..<start + needle.count].elementsEqual(needle) {
-            result = start..<(start + needle.count)
-        }
-        return result
-    }
-
-    private static func removeTerminalEscapes(from data: Data) -> Data {
-        var result: [UInt8] = []
-        var skippingEscape = false
-        for byte in data {
-            if skippingEscape {
-                if (0x40...0x7e).contains(byte) {
-                    skippingEscape = false
-                }
-                continue
-            }
-            if byte == 0x1b {
-                skippingEscape = true
-                continue
-            }
-            result.append(byte)
-        }
-        return Data(result)
-    }
 }
 
 enum SSHHerdrDiscoveryError: Error, LocalizedError, Sendable {
-    case timedOut
-    case noResponse
     case invalidResponse
     case invalidJSON
 
     var errorDescription: String? {
         switch self {
-        case .timedOut:
-            "Herdr discovery timed out."
-        case .noResponse, .invalidResponse, .invalidJSON:
+        case .invalidResponse, .invalidJSON:
             "Herdr discovery returned an invalid response."
         }
     }
 }
 
-/// Adapts the existing SSH PTY to the phase-3 terminal transport boundary.
+enum SSHHerdrTerminalTransportError: Error, LocalizedError, Sendable {
+    case paneUnavailable
+    case attachFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .paneUnavailable:
+            "The selected Herdr pane is no longer available."
+        case .attachFailed:
+            "Unable to open the selected Herdr pane."
+        }
+    }
+}
+
+/// Adapts dedicated Herdr control channels to the phase-3 terminal boundary.
 ///
-/// A host has already been connected before this adapter is created, so
-/// `connect(to:)` is intentionally a no-op. Selecting a pane sends Herdr's
-/// control command through the same interactive channel that SwiftTerm reads.
-actor SSHHerdrTerminalTransport: TerminalTransport {
+/// The ordinary SSH shell is never used for Herdr discovery or pane attach.
+/// Each successful attach owns a separate interactive exec channel whose
+/// framed output is decoded before it reaches SwiftTerm.
+actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProviding {
     nonisolated let kind: ActiveTransport = .ssh
     private let session: SSHShellSession
+    private var attachedSession: SSHShellSession?
 
     init(session: SSHShellSession) {
         self.session = session
@@ -178,23 +85,201 @@ actor SSHHerdrTerminalTransport: TerminalTransport {
 
     func attach(to pane: Pane) async throws {
         let target = Self.shellQuote(pane.id)
-        let command = "herdr terminal session control \(target) --cols 80 --rows 24\n"
-        try await session.send(Array(command.utf8))
+        let command = "herdr terminal session control \(target) --cols 80 --rows 24"
+        let channel: any PTYOutputChannel
+        do {
+            channel = try await session.openInteractiveCommand(command)
+        } catch is SSHInteractiveCommandError {
+            throw SSHHerdrTerminalTransportError.paneUnavailable
+        } catch {
+            throw SSHHerdrTerminalTransportError.attachFailed
+        }
+
+        let controlChannel = HerdrControlChannel(underlying: channel)
+        await controlChannel.start()
+        let newSession = SSHShellSession(connectedChannel: controlChannel)
+        if let previousSession = attachedSession {
+            await previousSession.disconnect()
+        }
+        attachedSession = newSession
+    }
+
+    func terminalSession() async -> SSHShellSession? {
+        attachedSession
+    }
+
+    func releaseTerminalSession() async {
+        if let attachedSession {
+            await attachedSession.disconnect()
+            self.attachedSession = nil
+        }
     }
 
     func send(_ bytes: [UInt8]) async throws {
-        try await session.send(bytes)
+        if let attachedSession {
+            try await attachedSession.send(bytes)
+        } else {
+            try await session.send(bytes)
+        }
     }
 
     func resize(columns: Int, rows: Int) async throws {
-        try await session.resize(columns: columns, rows: rows)
+        if let attachedSession {
+            try await attachedSession.resize(columns: columns, rows: rows)
+        } else {
+            try await session.resize(columns: columns, rows: rows)
+        }
     }
 
     func disconnect() async {
+        if let attachedSession {
+            await attachedSession.disconnect()
+            self.attachedSession = nil
+        }
         await session.disconnect()
     }
 
     private static func shellQuote(_ value: String) -> String {
         "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+}
+
+/// Decodes Herdr's newline-delimited terminal frames and encodes input frames.
+/// Unknown JSON control frames are intentionally consumed rather than rendered
+/// as terminal text; non-JSON lines are forwarded as a compatibility fallback.
+private actor HerdrControlChannel: PTYOutputChannel {
+    private enum OutputFrame {
+        case bytes([UInt8])
+        case control
+    }
+
+    private struct InputFrame: Encodable {
+        let type = "input"
+        let data: String
+    }
+
+    private struct ResizeFrame: Encodable {
+        let type = "resize"
+        let columns: Int
+        let rows: Int
+    }
+
+    private let underlying: any PTYOutputChannel
+    private let output: AsyncThrowingStream<[UInt8], Error>
+    private let outputContinuation: AsyncThrowingStream<[UInt8], Error>.Continuation
+    private var forwardingTask: Task<Void, Never>?
+    private var pendingOutput: [UInt8] = []
+    private var didFinish = false
+
+    init(underlying: any PTYOutputChannel) {
+        self.underlying = underlying
+        var continuation: AsyncThrowingStream<[UInt8], Error>.Continuation!
+        output = AsyncThrowingStream(bufferingPolicy: .unbounded) { continuation = $0 }
+        outputContinuation = continuation
+    }
+
+    func start() {
+        guard forwardingTask == nil else { return }
+        let underlying = self.underlying
+        forwardingTask = Task { [weak self, underlying] in
+            let stream = await underlying.outputStream()
+            do {
+                for try await bytes in stream {
+                    guard !Task.isCancelled else { return }
+                    await self?.consume(bytes)
+                }
+                await self?.finish()
+            } catch {
+                await self?.finish(throwing: error)
+            }
+        }
+    }
+
+    func outputStream() async -> AsyncThrowingStream<[UInt8], Error> {
+        output
+    }
+
+    func send(_ bytes: [UInt8]) async throws {
+        guard !didFinish else { throw SSHInteractiveCommandError.channelClosed }
+        guard !bytes.isEmpty else { return }
+        var frame = Array(try JSONEncoder().encode(
+            InputFrame(data: Data(bytes).base64EncodedString())
+        ))
+        frame.append(0x0a)
+        try await underlying.send(frame)
+    }
+
+    func resize(columns: Int, rows: Int) async throws {
+        guard !didFinish else { throw SSHInteractiveCommandError.channelClosed }
+        guard columns > 0, rows > 0 else { return }
+        var frame = Array(try JSONEncoder().encode(
+            ResizeFrame(columns: columns, rows: rows)
+        ))
+        frame.append(0x0a)
+        try await underlying.send(frame)
+    }
+
+    func close() async {
+        guard !didFinish else { return }
+        didFinish = true
+        forwardingTask?.cancel()
+        forwardingTask = nil
+        outputContinuation.finish()
+        await underlying.close()
+    }
+
+    private func consume(_ bytes: [UInt8]) {
+        guard !didFinish else { return }
+        pendingOutput.append(contentsOf: bytes)
+        while let newline = pendingOutput.firstIndex(of: 0x0a) {
+            let line = Array(pendingOutput[..<newline])
+            pendingOutput.removeFirst(newline + 1)
+            forward(line)
+        }
+    }
+
+    private func finish(throwing error: Error? = nil) {
+        guard !didFinish else { return }
+        didFinish = true
+        if !pendingOutput.isEmpty {
+            outputContinuation.yield(pendingOutput)
+            pendingOutput.removeAll(keepingCapacity: false)
+        }
+        if let error {
+            outputContinuation.finish(throwing: error)
+        } else {
+            outputContinuation.finish()
+        }
+        forwardingTask = nil
+    }
+
+    private func forward(_ line: [UInt8]) {
+        guard !didFinish else { return }
+        guard let frame = Self.decodeOutputFrame(line) else {
+            outputContinuation.yield(line + [0x0a])
+            return
+        }
+        if case let .bytes(bytes) = frame, !bytes.isEmpty {
+            outputContinuation.yield(bytes)
+        }
+    }
+
+    private static func decodeOutputFrame(_ line: [UInt8]) -> OutputFrame? {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any]
+        else {
+            return nil
+        }
+
+        let payload = object["data"] ?? object["bytes"] ?? object["output"] ?? object["payload"]
+        if let string = payload as? String {
+            if let decoded = Data(base64Encoded: string) {
+                return .bytes(Array(decoded))
+            }
+            return .bytes(Array(string.utf8))
+        }
+        if let numbers = payload as? [Int] {
+            return .bytes(numbers.compactMap(UInt8.init(exactly:)))
+        }
+        return .control
     }
 }

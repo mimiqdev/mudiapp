@@ -4,23 +4,29 @@ import SwiftUI
 struct HerdrBrowserView: View {
     let state: HerdrBrowserState
     let hasLastPane: Bool
+    let canSwitchSessions: Bool
     let onSelectSession: (HerdrSession.ID) -> Void
     let onSelectPane: (Pane.ID) -> Void
+    let onShowSessions: () -> Void
     let onOpenOrdinaryTerminal: () -> Void
     let onRestoreLastPane: () -> Void
 
     init(
         state: HerdrBrowserState,
         hasLastPane: Bool = false,
+        canSwitchSessions: Bool = false,
         onSelectSession: @escaping (HerdrSession.ID) -> Void,
         onSelectPane: @escaping (Pane.ID) -> Void,
+        onShowSessions: @escaping () -> Void = {},
         onOpenOrdinaryTerminal: @escaping () -> Void,
         onRestoreLastPane: @escaping () -> Void
     ) {
         self.state = state
         self.hasLastPane = hasLastPane
+        self.canSwitchSessions = canSwitchSessions
         self.onSelectSession = onSelectSession
         self.onSelectPane = onSelectPane
+        self.onShowSessions = onShowSessions
         self.onOpenOrdinaryTerminal = onOpenOrdinaryTerminal
         self.onRestoreLastPane = onRestoreLastPane
     }
@@ -32,6 +38,7 @@ struct HerdrBrowserView: View {
             state: Self.initialState(for: snapshot),
             onSelectSession: { _ in },
             onSelectPane: { _ in },
+            onShowSessions: {},
             onOpenOrdinaryTerminal: {},
             onRestoreLastPane: {}
         )
@@ -80,6 +87,13 @@ struct HerdrBrowserView: View {
                 message: message,
                 onSelectPane: onSelectPane
             )
+            .toolbar {
+                if canSwitchSessions {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Sessions", systemImage: "chevron.backward", action: onShowSessions)
+                    }
+                }
+            }
             .safeAreaInset(edge: .bottom) {
                 if hasLastPane {
                     Button("Restore Last Pane", systemImage: "arrow.counterclockwise", action: onRestoreLastPane)
