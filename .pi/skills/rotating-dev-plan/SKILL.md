@@ -42,6 +42,9 @@ Do not recreate `docs/DEVELOPMENT_PLAN.md` or put all phases into `active_plan.m
    to `docs/plan/future/` only when the user asks to capture it.
 5. Do not pull Herdr, Mosh, Ghostty, or polish work into the current step
    because it appears in PRD or `future/`.
+6. If the work talks to Herdr, run the real `herdr` CLI (and `herdr --help` /
+   live `--json` output) first. The installed binary and herdr.dev docs are
+   the wire contract. Do not invent JSON, flags, or attach semantics.
 
 ## Writing `active_plan.md`
 
@@ -94,3 +97,4 @@ invent the next phase from PRD alone.
 - Do not keep a finished plan in `active_plan.md` as history
 - Do not rotate because the code compiled; 测试 in the active plan is the gate
 - Do not write feature code before the automated tests exist and fail
+- Do not invent a Herdr API. Decode and attach against captured real CLI output.

@@ -6,6 +6,7 @@
 
 ## 范围内
 
+- **Herdr 契约以本机真实 CLI 为准。** 实现和测试解码必须对照 `herdr session list --json`、`herdr workspace list`、`herdr pane list`、`herdr agent list`、`herdr terminal session control` 的实际输出与 help。禁止自编 JSON / 字段名 / attach 协议。
 - 连上 Host 后自动发现 session / workspace / tab / pane / agent 状态
 - 0 个 session：空状态 + 普通 SSH terminal
 - 1 个 session：直接展示 pane / agent
@@ -28,7 +29,7 @@
 
 ### 自动化
 
-用 fake Herdr discovery / attach，不连真 sshd。
+导航逻辑可以用 fake。凡是解析 Herdr 输出或调用 CLI 的测试，必须用从真实 `herdr` 命令截下来的 payload，不许编一份“看起来像”的 JSON。
 
 - 0 个 session：快照为空，可走普通 SSH terminal，不进入 pane attach
 - 1 个 session：不出现 session picker，直接列出其 pane / agent
