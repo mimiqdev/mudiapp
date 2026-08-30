@@ -9,3 +9,4 @@
 - 触屏能滑回 scrollback，看 agent 已经发出的内容（现在进 pane 后滚不回去）
 - 进了 pane 之后，导航标题用 pane / agent 名，不要再用 Host IP
 - 待定：terminal 里要不要有快捷切 pane 的入口，还是退回列表再选
+- 进了 Host 的 Herdr 列表后要能回到 Host 列表（现在列表页没有返回，只能从 terminal 里 Disconnect）
