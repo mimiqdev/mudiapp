@@ -15,11 +15,12 @@ enum SSHHerdrTerminalTransportError: Error, LocalizedError, Sendable {
     }
 }
 
-/// Adapts dedicated Herdr control channels to the phase-3 terminal boundary.
+/// Adapts a dedicated Herdr control exec channel to the phase-3 terminal boundary.
 ///
-/// The ordinary SSH shell is never used for Herdr discovery or pane attach.
-/// Each successful attach owns a separate interactive exec channel whose
-/// framed output is decoded before it reaches SwiftTerm.
+/// Wire format is the published CLI contract:
+/// `herdr terminal session control <target> [--takeover] [--cols N] [--rows N]`
+/// stdin: `terminal.input` / `terminal.resize` / `terminal.release`
+/// stdout: `terminal.frame` / `terminal.closed`
 actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProviding,
     HerdrSessionAwareTerminalTransport {
     nonisolated let kind: ActiveTransport = .ssh
@@ -46,9 +47,10 @@ actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProvidin
         let sessionOption = sessionName.map {
             "--session \(SSHLoginShellCommand.shellQuote($0)) "
         } ?? ""
-        let command = SSHLoginShellCommand.wrap(
-            "herdr \(sessionOption)terminal session control \(target) --cols 80 --rows 24"
-        )
+        let inner =
+            "exec herdr \(sessionOption)terminal session control \(target) --takeover --cols 80 --rows 24"
+        let command =
+            "\"${SHELL:-/bin/sh}\" -lc \(SSHLoginShellCommand.shellQuote(inner))"
         let channel: any PTYOutputChannel
         do {
             channel = try await session.openInteractiveCommand(command)
@@ -101,30 +103,23 @@ actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProvidin
         }
         await session.disconnect()
     }
-
-    private static func shellQuote(_ value: String) -> String {
-        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
-    }
 }
 
-/// Decodes Herdr's newline-delimited terminal frames and encodes input frames.
-/// Unknown JSON control frames are intentionally consumed rather than rendered
-/// as terminal text; non-JSON lines are forwarded as a compatibility fallback.
+/// Encodes and decodes the published `herdr terminal session control` NDJSON stream.
 private actor HerdrControlChannel: PTYOutputChannel {
-    private enum OutputFrame {
-        case bytes([UInt8])
-        case control
-    }
-
     private struct InputFrame: Encodable {
-        let type = "input"
-        let data: String
+        let type = "terminal.input"
+        let bytes: String
     }
 
     private struct ResizeFrame: Encodable {
-        let type = "resize"
-        let columns: Int
+        let type = "terminal.resize"
+        let cols: Int
         let rows: Int
+    }
+
+    private struct ReleaseFrame: Encodable {
+        let type = "terminal.release"
     }
 
     private let underlying: any PTYOutputChannel
@@ -166,7 +161,7 @@ private actor HerdrControlChannel: PTYOutputChannel {
         guard !didFinish else { throw SSHInteractiveCommandError.channelClosed }
         guard !bytes.isEmpty else { return }
         var frame = Array(try JSONEncoder().encode(
-            InputFrame(data: Data(bytes).base64EncodedString())
+            InputFrame(bytes: Data(bytes).base64EncodedString())
         ))
         frame.append(0x0a)
         try await underlying.send(frame)
@@ -176,7 +171,7 @@ private actor HerdrControlChannel: PTYOutputChannel {
         guard !didFinish else { throw SSHInteractiveCommandError.channelClosed }
         guard columns > 0, rows > 0 else { return }
         var frame = Array(try JSONEncoder().encode(
-            ResizeFrame(columns: columns, rows: rows)
+            ResizeFrame(cols: columns, rows: rows)
         ))
         frame.append(0x0a)
         try await underlying.send(frame)
@@ -184,6 +179,12 @@ private actor HerdrControlChannel: PTYOutputChannel {
 
     func close() async {
         guard !didFinish else { return }
+        let frame = (try? JSONEncoder().encode(ReleaseFrame())) ?? Data()
+        if !frame.isEmpty {
+            var bytes = Array(frame)
+            bytes.append(0x0a)
+            try? await underlying.send(bytes)
+        }
         didFinish = true
         forwardingTask?.cancel()
         forwardingTask = nil
@@ -204,10 +205,6 @@ private actor HerdrControlChannel: PTYOutputChannel {
     private func finish(throwing error: Error? = nil) {
         guard !didFinish else { return }
         didFinish = true
-        if !pendingOutput.isEmpty {
-            outputContinuation.yield(pendingOutput)
-            pendingOutput.removeAll(keepingCapacity: false)
-        }
         if let error {
             outputContinuation.finish(throwing: error)
         } else {
@@ -218,31 +215,20 @@ private actor HerdrControlChannel: PTYOutputChannel {
 
     private func forward(_ line: [UInt8]) {
         guard !didFinish else { return }
-        guard let frame = Self.decodeOutputFrame(line) else {
-            outputContinuation.yield(line + [0x0a])
-            return
+        guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+              let type = object["type"] as? String
+        else { return }
+        switch type {
+        case "terminal.closed":
+            finish()
+        case "terminal.frame":
+            guard let encoded = object["bytes"] as? String,
+                  let decoded = Data(base64Encoded: encoded),
+                  !decoded.isEmpty
+            else { return }
+            outputContinuation.yield(Array(decoded))
+        default:
+            break
         }
-        if case let .bytes(bytes) = frame, !bytes.isEmpty {
-            outputContinuation.yield(bytes)
-        }
-    }
-
-    private static func decodeOutputFrame(_ line: [UInt8]) -> OutputFrame? {
-        guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any]
-        else {
-            return nil
-        }
-
-        let payload = object["data"] ?? object["bytes"] ?? object["output"] ?? object["payload"]
-        if let string = payload as? String {
-            if let decoded = Data(base64Encoded: string) {
-                return .bytes(Array(decoded))
-            }
-            return .bytes(Array(string.utf8))
-        }
-        if let numbers = payload as? [Int] {
-            return .bytes(numbers.compactMap(UInt8.init(exactly:)))
-        }
-        return .control
     }
 }

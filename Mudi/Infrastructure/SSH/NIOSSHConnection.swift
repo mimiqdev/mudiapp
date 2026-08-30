@@ -422,7 +422,16 @@ private actor CitadelInteractivePTYChannel: PTYOutputChannel {
 
     func resize(columns: Int, rows: Int) async throws {
         guard columns > 0, rows > 0 else { return }
-        throw SSHInteractiveCommandError.invalidData
+        guard !closeRequested else { throw CitadelPTYChannelError.closed }
+        guard let childChannel else { throw CitadelPTYChannelError.notReady }
+        try await childChannel.triggerUserOutboundEvent(
+            SSHChannelRequestEvent.WindowChangeRequest(
+                terminalCharacterWidth: columns,
+                terminalRowHeight: rows,
+                terminalPixelWidth: 0,
+                terminalPixelHeight: 0
+            )
+        )
     }
 
     func close() async {
@@ -501,10 +510,9 @@ private final class NIOInteractiveCommandHandler: ChannelInboundHandler, @unchec
             output.yield(bytes)
             signalReadiness()
         case .stdErr:
-            let bytes = buffer.readBytes(length: buffer.readableBytes) ?? []
-            let message = String(bytes: bytes, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            fail(SSHInteractiveCommandError.commandFailed(exitCode: 1, message: message))
-            context.close(promise: nil)
+            // Login shells and herdr may write warnings to stderr. Killing the
+            // channel here made pane attach look connected then immediately fail.
+            break
         default:
             break
         }

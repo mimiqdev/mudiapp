@@ -160,11 +160,13 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
 
     private func resize(columns: Int, rows: Int) {
         guard columns > 0, rows > 0, let session else { return }
-        Task {
+        Task { [weak self] in
             do {
                 try await session.resize(columns: columns, rows: rows)
+            } catch is SSHShellError {
+                return
             } catch {
-                report(error)
+                self?.report(error)
             }
         }
     }
