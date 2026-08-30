@@ -136,6 +136,7 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
     private var records: [Phase2ConnectionRecord] = []
     private let firstConnectionGate: Phase2ConnectionGate?
     private let callbackStartedGate: Phase2ConnectionGate?
+    private let failureGate: Phase2ConnectionGate?
     private let failAfterStartingHostKeyDecision: Bool
 
     init(
@@ -143,12 +144,14 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
         outcomes: [Bool] = [],
         firstConnectionGate: Phase2ConnectionGate? = nil,
         callbackStartedGate: Phase2ConnectionGate? = nil,
+        failureGate: Phase2ConnectionGate? = nil,
         failAfterStartingHostKeyDecision: Bool = false
     ) {
         self.presentedFingerprint = presentedFingerprint
         self.outcomes = outcomes
         self.firstConnectionGate = firstConnectionGate
         self.callbackStartedGate = callbackStartedGate
+        self.failureGate = failureGate
         self.failAfterStartingHostKeyDecision = failAfterStartingHostKeyDecision
     }
 
@@ -176,6 +179,9 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
             }
             if let callbackStartedGate {
                 await callbackStartedGate.waitUntilStarted()
+            }
+            if let failureGate {
+                await failureGate.waitUntilReleased()
             }
             throw Phase2ConnectionError.connectionFailed
         }

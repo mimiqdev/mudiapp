@@ -12,8 +12,11 @@ final class RootViewModel: ObservableObject {
 
     let coordinator: ApplicationCoordinator
     private var pendingHostKeyDecision: CheckedContinuation<HostKeyDecision, Never>?
+    private var pendingHostKeyPromptID: UUID?
     private var stateTask: Task<Void, Never>?
-    private var lastHost: Host?
+    private var connectionTask: Task<Void, Never>?
+    private var connectionGeneration = UUID()
+    private var lastHostID: Host.ID?
 
     init(coordinator: ApplicationCoordinator = ApplicationCoordinator()) {
         self.coordinator = coordinator
@@ -28,6 +31,7 @@ final class RootViewModel: ObservableObject {
 
     deinit {
         stateTask?.cancel()
+        connectionTask?.cancel()
         pendingHostKeyDecision?.resume(returning: .reject)
     }
 
@@ -75,13 +79,18 @@ final class RootViewModel: ObservableObject {
     }
 
     func delete(_ host: Host) {
+        let deletesActiveConnection = lastHostID == host.id
+            || activeConnection?.host.id == host.id
+        if deletesActiveConnection {
+            invalidateConnectionAttempt()
+            activeConnection = nil
+            lastHostID = nil
+        }
+
         Task {
             do {
                 try await coordinator.delete(host)
                 hosts = try await coordinator.loadHosts()
-                if lastHost?.id == host.id {
-                    lastHost = nil
-                }
                 errorMessage = nil
             } catch {
                 errorMessage = error.localizedDescription
@@ -90,12 +99,13 @@ final class RootViewModel: ObservableObject {
     }
 
     func connect(to host: Host) {
-        guard connectionState != .connecting else { return }
+        guard connectionState != .connecting, connectionState != .connected else { return }
 
-        lastHost = host
+        let generation = beginConnection(for: host.id)
         errorMessage = nil
         connectionState = .connecting
-        Task {
+        let coordinator = self.coordinator
+        connectionTask = Task { [weak self, coordinator] in
             do {
                 guard let credentials = try await coordinator.credentials(for: host) else {
                     throw MissingCredentialsError()
@@ -103,70 +113,150 @@ final class RootViewModel: ObservableObject {
                 let state = try await coordinator.connect(
                     to: host,
                     credentials: credentials,
-                    hostKeyDecision: { fingerprint in
-                        await self.requestHostKeyDecision(for: fingerprint)
+                    hostKeyDecision: { [weak self] fingerprint in
+                        guard let self else { return .reject }
+                        return await self.requestHostKeyDecision(
+                            for: fingerprint,
+                            generation: generation
+                        )
                     }
                 )
+                guard let self,
+                      self.isCurrentConnection(generation),
+                      !Task.isCancelled
+                else {
+                    await coordinator.disconnect()
+                    return
+                }
                 guard state == .connected,
                       let session = await coordinator.activeShellSession()
                 else {
                     throw ConnectionError.connectionFailed
                 }
-                activeConnection = ActiveSSHConnection(host: host, session: session)
-                connectionState = state
+                self.activeConnection = ActiveSSHConnection(host: host, session: session)
+                self.connectionState = state
+                self.connectionTask = nil
             } catch {
-                activeConnection = nil
-                connectionState = (await coordinator.connectionState())
-                errorMessage = error.localizedDescription
+                guard let self, self.isCurrentConnection(generation) else { return }
+                self.answerHostKeyPrompt(.reject)
+                self.activeConnection = nil
+                self.connectionTask = nil
+                self.connectionState = await coordinator.connectionState()
+                self.errorMessage = error.localizedDescription
             }
         }
     }
 
     func reconnect() {
-        guard connectionState != .connecting, lastHost != nil else { return }
+        guard connectionState != .connecting,
+              connectionState != .connected,
+              let hostID = lastHostID
+        else { return }
 
+        let generation = beginConnection(for: hostID)
         errorMessage = nil
         connectionState = .connecting
-        Task {
+        let coordinator = self.coordinator
+        connectionTask = Task { [weak self, coordinator] in
             do {
-                let state = try await coordinator.reconnect()
-                guard state == .connected,
-                      let host = lastHost,
-                      let session = await coordinator.activeShellSession()
+                let refreshedHosts = try await coordinator.loadHosts()
+                guard let self,
+                      self.isCurrentConnection(generation),
+                      let host = refreshedHosts.first(where: { $0.id == hostID })
                 else {
                     throw ConnectionError.connectionFailed
                 }
-                activeConnection = ActiveSSHConnection(host: host, session: session)
-                connectionState = state
+                self.hosts = refreshedHosts
+
+                let state = try await coordinator.reconnect()
+                guard self.isCurrentConnection(generation),
+                      !Task.isCancelled,
+                      state == .connected,
+                      let session = await coordinator.activeShellSession()
+                else {
+                    await coordinator.disconnect()
+                    return
+                }
+                self.activeConnection = ActiveSSHConnection(host: host, session: session)
+                self.connectionState = state
+                self.connectionTask = nil
             } catch {
-                activeConnection = nil
-                connectionState = await coordinator.connectionState()
-                errorMessage = error.localizedDescription
+                guard let self, self.isCurrentConnection(generation) else { return }
+                self.answerHostKeyPrompt(.reject)
+                self.activeConnection = nil
+                self.connectionTask = nil
+                self.connectionState = await coordinator.connectionState()
+                self.errorMessage = error.localizedDescription
             }
         }
     }
 
     func disconnect() {
-        answerHostKeyPrompt(.reject)
+        invalidateConnectionAttempt()
         activeConnection = nil
+        let generation = connectionGeneration
         Task {
             await coordinator.disconnect()
+            guard connectionGeneration == generation else { return }
             connectionState = await coordinator.connectionState()
         }
     }
 
-    func requestHostKeyDecision(for fingerprint: String) async -> HostKeyDecision {
-        await withCheckedContinuation { continuation in
+    func requestHostKeyDecision(
+        for fingerprint: String,
+        generation: UUID
+    ) async -> HostKeyDecision {
+        guard connectionGeneration == generation,
+              connectionState == .connecting
+        else {
+            return .reject
+        }
+
+        return await withCheckedContinuation { continuation in
+            guard connectionGeneration == generation,
+                  connectionState == .connecting
+            else {
+                continuation.resume(returning: .reject)
+                return
+            }
+            pendingHostKeyDecision?.resume(returning: .reject)
             pendingHostKeyDecision = continuation
-            hostKeyPrompt = HostKeyPrompt(fingerprint: fingerprint)
+            let prompt = HostKeyPrompt(fingerprint: fingerprint)
+            pendingHostKeyPromptID = prompt.id
+            hostKeyPrompt = prompt
         }
     }
 
-    func answerHostKeyPrompt(_ decision: HostKeyDecision) {
-        guard let pendingHostKeyDecision else { return }
+    func answerHostKeyPrompt(_ decision: HostKeyDecision, for promptID: UUID? = nil) {
+        guard promptID == nil || promptID == pendingHostKeyPromptID else { return }
+        guard let pendingHostKeyDecision else {
+            hostKeyPrompt = nil
+            pendingHostKeyPromptID = nil
+            return
+        }
         self.pendingHostKeyDecision = nil
+        pendingHostKeyPromptID = nil
         hostKeyPrompt = nil
         pendingHostKeyDecision.resume(returning: decision)
+    }
+
+    private func beginConnection(for hostID: Host.ID) -> UUID {
+        invalidateConnectionAttempt()
+        lastHostID = hostID
+        activeConnection = nil
+        connectionGeneration = UUID()
+        return connectionGeneration
+    }
+
+    private func invalidateConnectionAttempt() {
+        connectionGeneration = UUID()
+        connectionTask?.cancel()
+        connectionTask = nil
+        answerHostKeyPrompt(.reject)
+    }
+
+    private func isCurrentConnection(_ generation: UUID) -> Bool {
+        connectionGeneration == generation
     }
 
     private struct MissingCredentialsError: LocalizedError {
@@ -243,10 +333,10 @@ struct RootView: View {
                     "The server presented this fingerprint:\n\n\(prompt.fingerprint)\n\nAccept only if it matches a fingerprint you trust."
                 ),
                 primaryButton: .destructive(Text("Reject")) {
-                    model.answerHostKeyPrompt(.reject)
+                    model.answerHostKeyPrompt(.reject, for: prompt.id)
                 },
                 secondaryButton: .default(Text("Accept")) {
-                    model.answerHostKeyPrompt(.accept)
+                    model.answerHostKeyPrompt(.accept, for: prompt.id)
                 }
             )
         }

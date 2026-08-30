@@ -11,9 +11,11 @@ final class RootViewTests: XCTestCase {
         let host = phase2Host()
         let knownHostKeys = Phase2KnownHostKeys()
         let callbackStarted = Phase2ConnectionGate()
+        let failureGate = Phase2ConnectionGate()
         let client = Phase2SSHClient(
             presentedFingerprint: "SHA256:late-key",
             callbackStartedGate: callbackStarted,
+            failureGate: failureGate,
             failAfterStartingHostKeyDecision: true
         )
         let application = makeMissingPhase2Application(
@@ -29,6 +31,7 @@ final class RootViewTests: XCTestCase {
         await callbackStarted.waitUntilStarted()
         let promptShown = await waitForRootViewCondition { model.hostKeyPrompt != nil }
         XCTAssertTrue(promptShown)
+        await failureGate.release()
         let connectionFailed = await waitForRootViewCondition { model.connectionState == .failed }
         XCTAssertTrue(connectionFailed)
         XCTAssertNil(model.hostKeyPrompt)

@@ -4,6 +4,11 @@ import XCTest
 @testable import Mudi
 
 final class Phase2ConnectionTests: XCTestCase {
+    func testHostKeyDecisionHandshakeAllowsTimeForUserResponse() {
+        let timeout = NIOSSHConnection.hostKeyDecisionTimeout.nanoseconds
+        XCTAssertGreaterThan(timeout, Int64(10_000_000_000))
+    }
+
     func testUnknownHostKeyAcceptanceRemembersFingerprintAndContinuesSameConnection() async throws {
         let host = phase2Host()
         let credentials = phase2Credentials()
@@ -169,10 +174,14 @@ final class Phase2ConnectionTests: XCTestCase {
             outcomes: [false, false]
         )
         let application = makeMissingPhase2Application(client: client)
+        let host = phase2Host()
+        let credentials = phase2Credentials()
+        try await application.save(host)
+        try await application.save(credentials, for: host)
 
         let connectedState = try await application.connect(
-            to: phase2Host(),
-            credentials: phase2Credentials(),
+            to: host,
+            credentials: credentials,
             hostKeyDecision: { _ in .accept }
         )
         XCTAssertEqual(connectedState, .connected)
@@ -190,11 +199,15 @@ final class Phase2ConnectionTests: XCTestCase {
             outcomes: [true, false]
         )
         let application = makeMissingPhase2Application(client: client)
+        let host = phase2Host()
+        let credentials = phase2Credentials()
+        try await application.save(host)
+        try await application.save(credentials, for: host)
 
         do {
             _ = try await application.connect(
-                to: phase2Host(),
-                credentials: phase2Credentials(),
+                to: host,
+                credentials: credentials,
                 hostKeyDecision: { _ in .accept }
             )
             XCTFail("Expected the first SSH connection to fail")

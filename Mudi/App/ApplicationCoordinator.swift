@@ -15,11 +15,11 @@ actor ApplicationCoordinator: Sendable {
 
     private var state: ConnectionState = .idle
     private var session: SSHShellSession?
-    private var activeHost: Host?
-    private var activeCredentials: SSHCredentials?
+    private var activeHostID: Host.ID?
     private var activeHostKeyDecision: (@Sendable (String) async -> HostKeyDecision)?
-    private var hostKeyError: ConnectionError?
-    private var disconnectRequested = false
+    private var hostKeyError: (attemptID: UUID, error: ConnectionError)?
+    private var inFlightConnectID: UUID?
+    private var disconnectRequestedFor: UUID?
     private var stateContinuations: [UUID: AsyncStream<ConnectionState>.Continuation] = [:]
 
     init(
@@ -51,7 +51,8 @@ actor ApplicationCoordinator: Sendable {
     }
 
     func delete(_ host: Host) async throws {
-        if activeHost?.id == host.id {
+        let deletesActiveHost = activeHostID == host.id
+        if deletesActiveHost {
             await disconnect()
         }
 
@@ -72,10 +73,10 @@ actor ApplicationCoordinator: Sendable {
             firstError = firstError ?? error
         }
 
-        if activeHost?.id == host.id {
-            activeHost = nil
-            activeCredentials = nil
+        if deletesActiveHost {
+            activeHostID = nil
             activeHostKeyDecision = nil
+            hostKeyError = nil
         }
         if let firstError {
             throw firstError
@@ -87,15 +88,19 @@ actor ApplicationCoordinator: Sendable {
         credentials: SSHCredentials,
         hostKeyDecision: @escaping @Sendable (String) async -> HostKeyDecision
     ) async throws -> ConnectionState {
-        guard state != .connecting, state != .connected else {
+        guard inFlightConnectID == nil,
+              state != .connecting,
+              state != .connected
+        else {
             throw ConnectionError.connectionFailed
         }
 
-        activeHost = host
-        activeCredentials = credentials
+        let attemptID = UUID()
+        activeHostID = host.id
         activeHostKeyDecision = hostKeyDecision
-        disconnectRequested = false
         hostKeyError = nil
+        disconnectRequestedFor = nil
+        inFlightConnectID = attemptID
         setState(.connecting)
 
         do {
@@ -106,29 +111,47 @@ actor ApplicationCoordinator: Sendable {
                     guard let self else { return .reject }
                     return await self.evaluateHostKey(
                         fingerprint,
+                        for: attemptID,
+                        host: host,
                         userDecision: hostKeyDecision
                     )
                 }
             )
 
-            if disconnectRequested {
+            guard inFlightConnectID == attemptID,
+                  activeHostID == host.id,
+                  disconnectRequestedFor != attemptID,
+                  !Task.isCancelled
+            else {
                 await channel.close()
-                disconnectRequested = false
-                setState(.disconnected)
+                finishAttempt(attemptID, state: .disconnected)
                 throw ConnectionError.connectionFailed
             }
 
             session = SSHShellSession(connectedChannel: channel)
+            inFlightConnectID = nil
+            disconnectRequestedFor = nil
             setState(.connected)
             return .connected
         } catch {
-            let connectionError = hostKeyError ?? mapConnectionError(error)
-            hostKeyError = nil
-            session = nil
-            if state != .disconnected {
-                setState(.failed)
+            let connectionError: ConnectionError
+            if hostKeyError?.attemptID == attemptID {
+                connectionError = hostKeyError?.error ?? mapConnectionError(error)
+            } else {
+                connectionError = mapConnectionError(error)
             }
-            disconnectRequested = false
+
+            guard inFlightConnectID == attemptID else {
+                throw connectionError
+            }
+
+            let wasDisconnectRequested = disconnectRequestedFor == attemptID
+                || state == .disconnected
+                || Task.isCancelled
+            finishAttempt(
+                attemptID,
+                state: wasDisconnectRequested ? .disconnected : .failed
+            )
             throw connectionError
         }
     }
@@ -159,8 +182,8 @@ actor ApplicationCoordinator: Sendable {
     }
 
     func disconnect() async {
-        if state == .connecting {
-            disconnectRequested = true
+        if let attemptID = inFlightConnectID {
+            disconnectRequestedFor = attemptID
             setState(.disconnected)
             return
         }
@@ -171,38 +194,84 @@ actor ApplicationCoordinator: Sendable {
     }
 
     func reconnect() async throws -> ConnectionState {
-        guard let activeHost,
-              let activeCredentials,
+        guard inFlightConnectID == nil else {
+            throw ConnectionError.connectionFailed
+        }
+        guard let activeHostID,
               let activeHostKeyDecision
         else {
             setState(.failed)
             throw ConnectionError.connectionFailed
         }
 
-        let reconnectCredentials = (try? await credentialStore.credentials(for: activeHost))
-            ?? activeCredentials
+        let host: Host
+        do {
+            guard let savedHost = try await hostStore.loadHosts().first(where: { $0.id == activeHostID }) else {
+                setState(.failed)
+                throw ConnectionError.connectionFailed
+            }
+            host = savedHost
+        } catch let error as ConnectionError {
+            throw error
+        } catch {
+            setState(.failed)
+            throw ConnectionError.connectionFailed
+        }
+
+        guard inFlightConnectID == nil, self.activeHostID == activeHostID else {
+            throw ConnectionError.connectionFailed
+        }
+
+        let credentials: SSHCredentials
+        do {
+            guard let savedCredentials = try await credentialStore.credentials(for: host) else {
+                setState(.failed)
+                throw ConnectionError.connectionFailed
+            }
+            credentials = savedCredentials
+        } catch let error as ConnectionError {
+            throw error
+        } catch {
+            setState(.failed)
+            throw ConnectionError.connectionFailed
+        }
+
+        guard inFlightConnectID == nil, self.activeHostID == activeHostID else {
+            throw ConnectionError.connectionFailed
+        }
+
         return try await connect(
-            to: activeHost,
-            credentials: reconnectCredentials,
+            to: host,
+            credentials: credentials,
             hostKeyDecision: activeHostKeyDecision
         )
     }
 
     private func evaluateHostKey(
         _ fingerprint: String,
+        for attemptID: UUID,
+        host: Host,
         userDecision: @escaping @Sendable (String) async -> HostKeyDecision
     ) async -> HostKeyDecision {
-        guard let activeHost else {
-            hostKeyError = .connectionFailed
+        guard inFlightConnectID == attemptID,
+              activeHostID == host.id,
+              disconnectRequestedFor != attemptID
+        else {
             return .reject
         }
 
         do {
-            if let remembered = try await knownHostKeyStore.fingerprint(for: activeHost) {
+            if let remembered = try await knownHostKeyStore.fingerprint(for: host) {
+                guard inFlightConnectID == attemptID,
+                      activeHostID == host.id,
+                      disconnectRequestedFor != attemptID
+                else {
+                    return .reject
+                }
                 guard remembered == fingerprint else {
-                    hostKeyError = .hostKeyMismatch(
-                        expected: remembered,
-                        actual: fingerprint
+                    hostKeyError = (
+                        attemptID,
+                        .hostKeyMismatch(expected: remembered, actual: fingerprint)
                     )
                     return .reject
                 }
@@ -211,13 +280,26 @@ actor ApplicationCoordinator: Sendable {
             }
 
             let decision = await userDecision(fingerprint)
-            guard decision == .accept else {
+            guard decision == .accept,
+                  inFlightConnectID == attemptID,
+                  activeHostID == host.id,
+                  disconnectRequestedFor != attemptID
+            else {
                 return .reject
             }
-            try await knownHostKeyStore.remember(fingerprint, for: activeHost)
+            try await knownHostKeyStore.remember(fingerprint, for: host)
+            guard inFlightConnectID == attemptID,
+                  activeHostID == host.id,
+                  disconnectRequestedFor != attemptID
+            else {
+                try? await knownHostKeyStore.delete(for: host)
+                return .reject
+            }
             return .accept
         } catch {
-            hostKeyError = .connectionFailed
+            if inFlightConnectID == attemptID {
+                hostKeyError = (attemptID, .connectionFailed)
+            }
             return .reject
         }
     }
@@ -228,6 +310,15 @@ actor ApplicationCoordinator: Sendable {
         }
         self.session = nil
         await session.disconnect()
+    }
+
+    private func finishAttempt(_ attemptID: UUID, state: ConnectionState) {
+        guard inFlightConnectID == attemptID else { return }
+        inFlightConnectID = nil
+        disconnectRequestedFor = nil
+        hostKeyError = nil
+        session = nil
+        setState(state)
     }
 
     private func setState(_ newState: ConnectionState) {
