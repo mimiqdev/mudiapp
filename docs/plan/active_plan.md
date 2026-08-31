@@ -18,8 +18,9 @@
 
 - Herdr discovery / attach JSON（阶段 3）
 - shortcut bar、回看、主题字号（阶段 4）
-- 首次本地网络权限说明（阶段 6）
-- 自定义字体 / Nerd Font（阶段 7）
+- 统一 Herdr Pane Picker（阶段 6）
+- 首次本地网络权限说明（阶段 7）
+- 自定义字体 / Nerd Font（阶段 8）
 - Chat UI、推送、Live Activity
 - 自编 Mosh 或 Herdr 协议
 
@@ -47,4 +48,4 @@
 
 ## 完成后
 
-归档为 `archive/05-mosh-and-release.md`，将 `future/06-ux-polish.md` 提升为 `active_plan.md`。
+归档为 `archive/05-mosh-and-release.md`，将 `future/06-herdr-pane-picker.md` 提升为 `active_plan.md`。

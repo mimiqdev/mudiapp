@@ -1,4 +1,4 @@
-# 7. Terminal 字体
+# 8. Terminal 字体
 
 **出口：** 用户能选预装字体，也能导入自己的字体；Nerd Font 符号能在 terminal 里显示。
 
