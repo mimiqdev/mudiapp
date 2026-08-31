@@ -1,51 +1,30 @@
-# Active plan — Mosh、韧性与发布准备
+# 5. Mosh transport
 
-**出口：** 切网、短暂断网后还能回到原来的 Herdr pane；Auto / Mosh / SSH 可选；具备进入外部测试的材料。
+**出口：** Host 可选 Auto / Mosh / SSH；Auto 能通过 SSH bootstrap 使用 Mosh 或回退 SSH，并显示实际 transport。
 
-阶段 4 已能纯触屏走完 Herdr attach。本步补移动网络韧性，不要重做 SSH attach 协议或触屏栏。
+## 已完成
 
-## 范围内
+- Host 保存并恢复 Auto / Mosh / SSH
+- Auto 先建立 SSH bootstrap，再尝试 swift-mosh；失败保留 SSH
+- 显式 Mosh 不可用时给出明确错误，不静默回退
+- Mosh 复用 Keychain SSH 凭据，不把密码或密钥写入 Host
+- terminal 显示实际 transport；主动离开时不闪断连错误
+- iOS 中文输入法的 marked text 显示在 shortcut bar；只发送提交后的文字
+- 真机连接到真实 `mosh-server`，确认实际 transport 为 Mosh
+- 继续使用 swift-mosh；若后续网络验收发现阻塞再重新评估
 
-- Host 的 transport：Auto / Mosh / SSH，并记住选择
-- Auto：先 SSH bootstrap，能上 Mosh 就用 Mosh，否则留在 SSH，并显示实际 transport
-- Mosh 复用已保存的 SSH Keychain 凭据，不另存一套
-- 验证 Wi-Fi / 蜂窝切换、短暂断网、前后台后 session 还在
-- 根据真机结果决定继续 swift-mosh，或换 libmoshios 并做 GPL 履约
-- 日志脱敏、崩溃后能再打开、真机过一遍 V1 主流程
-- TestFlight 所需的签名、隐私说明、许可文本（需付费 Apple Developer）
+## 验证
 
-## 不在本步
-
-- Herdr discovery / attach JSON（阶段 3）
-- shortcut bar、回看、主题字号（阶段 4）
-- 统一 Herdr Pane Picker（阶段 6）
-- 首次本地网络权限说明（阶段 7）
-- 自定义字体 / Nerd Font（阶段 8）
-- Chat UI、推送、Live Activity
-- 自编 Mosh 或 Herdr 协议
-
-## 测试
-
-先把自动化测试落地成会失败，再做切片。真机切网不自动化。
-
-### 自动化
-
-- Host 能保存并读回 Auto / Mosh / SSH
-- Auto 在 Mosh 不可用时回退 SSH，且能读到实际 transport
-- Mosh 建连使用已有 SSH 凭据，不把密钥写进 Host 文件
 - `make test-core` 通过
+- Mimikyu 真机 XCTest：45/45 通过，其中 Phase 5 Mosh 5/5
+- 独立 review：无 actionable findings
+- 真机中文输入组合文字、提交与 shortcut bar 恢复通过
 
-### 手工（出口，自动化全绿之后）
+## 延后
 
-- 真机 Wi-Fi ↔ 蜂窝或短暂断网后，还能回到刚才的 pane，不必重找 agent
-- 后台再回来，控制权按阶段 4 的 release / takeover 仍合理
-- 无 mosh-server 的 Host 能用 SSH 完成同一条主流程
-- 需要外测时，TestFlight 材料齐（否则先不挡 SSH/Mosh 主路径）
+以下需要更合适的蜂窝网络和发布条件，移至阶段 9：
 
-## 切片
-
-自动化测试已在仓库里且失败之后再写。本次切片已将 transport 选择移入生产 coordinator：SSH bootstrap 后尝试 swift-mosh，Auto 失败留在 SSH，并在终端显示实际 transport。
-
-## 完成后
-
-归档为 `archive/05-mosh-and-release.md`，将 `future/06-herdr-pane-picker.md` 提升为 `active_plan.md`。
+- Wi-Fi / 蜂窝切换、短暂断网与 Herdr pane 恢复
+- 无 `mosh-server` Host 的真机 Auto 回退
+- 日志脱敏、崩溃恢复、完整 V1 真机回归
+- TestFlight 签名、隐私、许可和外测材料
