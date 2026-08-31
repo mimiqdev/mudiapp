@@ -13,7 +13,7 @@
 - 记住并恢复 Host、上次 pane、界面位置
 - 外接键盘、鼠标、触控板的基础行为
 - 可切换主题：System / Light / Dark，默认跟随系统，并记住选择
-- 可调 terminal 字号；自带一款 Nerd Font 等宽（不做字体文件导入、不做成套 palette）
+- 可调 terminal 字号
 - Dynamic Type、基础无障碍
 - 涉及 Herdr 的帧仍以真实 CLI 为准。回看若走 `herdr terminal session control` 的 `terminal.scroll`，必须对照本机真实命令，禁止自编 JSON
 
@@ -24,6 +24,7 @@
 - 首次本地网络权限（阶段 6）
 - Chat UI、通知
 - terminal 里快捷切 pane（仍待定，本步不做）
+- 自定义字体、预装字体包、Nerd Font 符号（阶段 7；阶段 4 的 cascade 在真机上是方块）
 
 ## 测试
 
@@ -53,7 +54,7 @@
 
 自动化测试已在仓库里且失败之后再写。
 
-- 本次切片：attached control stream 使用实测的 `terminal.scroll` 字段，并把实测的 full `terminal.frame` 交给 SwiftTerm；终端提供触屏回看、shortcut bar、选择复制粘贴和 Nerd glyph fallback。
+- 本次切片：attached control stream 使用实测的 `terminal.scroll` 字段，并把实测的 full `terminal.frame` 交给 SwiftTerm；终端提供触屏回看、shortcut bar、选择复制粘贴。字体放到阶段 7。
 
 ## 完成后
 
