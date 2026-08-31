@@ -156,9 +156,13 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     }
 
     func updateFontSize(_ fontSize: Double) {
-        guard fontSize.isFinite, fontSize > 0,
-              abs(font.pointSize - fontSize) > 0.001
+        guard fontSize.isFinite, fontSize > 0 else { return }
+        guard abs(font.pointSize - fontSize) > 0.001
+                || !TerminalFont.hasSymbolsCascade(in: font)
         else { return }
+
+        // Point-size equality is not enough: SwiftTerm starts at 12pt and a
+        // same-size update must still install the symbol cascade.
         font = TerminalFont.font(ofSize: fontSize)
     }
 

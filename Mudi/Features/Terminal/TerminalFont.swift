@@ -9,6 +9,17 @@ enum TerminalFont {
     private static let symbolsFamilyName = "Symbols Nerd Font Mono"
     private static var didRegisterSymbols = false
 
+    static func hasSymbolsCascade(in font: UIFont) -> Bool {
+        guard let cascadeList = font.fontDescriptor.object(
+            forKey: .cascadeList
+        ) as? [UIFontDescriptor]
+        else { return false }
+
+        return cascadeList.contains { descriptor in
+            descriptor.object(forKey: .family) as? String == symbolsFamilyName
+        }
+    }
+
     static func font(ofSize size: Double) -> UIFont {
         guard size.isFinite, size > 0 else {
             return UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)

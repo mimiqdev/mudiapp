@@ -201,9 +201,26 @@ extension ShellTerminalView {
 
     func gestureRecognizer(
         _ gestureRecognizer: UIGestureRecognizer,
+        shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        guard remoteScrollbackEnabled,
+              gestureRecognizer === remoteScrollGesture,
+              otherGestureRecognizer is UIPanGestureRecognizer,
+              otherGestureRecognizer !== remoteScrollGesture
+        else { return false }
+
+        // SwiftTerm's mouse reporter is an internal UIPanGestureRecognizer. It
+        // must wait for this vertical-pan decision; if ours rejects a
+        // horizontal pan or an active selection, the competing pan can run.
+        return true
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        gestureRecognizer === remoteScrollGesture
-            || otherGestureRecognizer === remoteScrollGesture
+        // A vertical scroll must be owned by one recognizer, never duplicated
+        // as terminal mouse motion and a remote history request.
+        false
     }
 }
