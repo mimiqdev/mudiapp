@@ -70,6 +70,34 @@ final class Phase5MoshTests: XCTestCase {
         XCTAssertEqual(reportedTransport, .mosh)
     }
 
+    func testExplicitMoshFailureSurfacesPresentableTransportError() async throws {
+        let host = phase5Host(preferredTransport: .mosh)
+        let client = Phase2SSHClient(presentedFingerprint: "SHA256:phase5")
+        let application = makeMissingPhase2Application(
+            client: client,
+            moshTransport: Phase5MoshFailureTransport()
+        )
+
+        do {
+            _ = try await application.connect(
+                to: host,
+                credentials: phase5Credentials(),
+                hostKeyDecision: { _ in .accept }
+            )
+            XCTFail("An explicit Mosh failure should fail the connection")
+        } catch let error as ConnectionError {
+            XCTAssertEqual(error, .moshUnavailable)
+            XCTAssertEqual(error.localizedDescription, "Mosh is unavailable for this host.")
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        let sshAttempts = await client.connectionAttempts()
+        let connectionState = await application.connectionState()
+        XCTAssertEqual(sshAttempts, 1)
+        XCTAssertEqual(connectionState, .failed)
+    }
+
     func testMoshUsesSavedSSHCredentialsAndDoesNotPutSecretsInHostFile() async throws {
         let host = phase5Host(preferredTransport: .mosh)
         let credentials = phase5Credentials()

@@ -294,13 +294,15 @@ func makeMissingPhase2Application(
     hostFile: Phase2HostFile = Phase2HostFile(),
     keychain: Phase2Keychain = Phase2Keychain(),
     knownHostKeys: Phase2KnownHostKeys = Phase2KnownHostKeys(),
-    client: Phase2SSHClient = Phase2SSHClient(presentedFingerprint: "SHA256:test")
+    client: Phase2SSHClient = Phase2SSHClient(presentedFingerprint: "SHA256:test"),
+    moshTransport: any MoshTransportBootstrapping = SwiftMoshAdapter()
 ) -> ApplicationCoordinator {
     ApplicationCoordinator(
         hostStore: Phase2HostStore(file: hostFile),
         credentialStore: Phase2CredentialStore(keychain: keychain),
         knownHostKeyStore: Phase2KnownHostKeyStore(knownHostKeys: knownHostKeys),
-        client: client
+        client: client,
+        moshTransport: moshTransport
     )
 }
 

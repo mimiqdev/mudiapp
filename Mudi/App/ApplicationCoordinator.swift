@@ -385,6 +385,9 @@ actor ApplicationCoordinator: Sendable {
         if let error = error as? ConnectionError {
             return error
         }
+        if error is TransportSelectionError {
+            return .moshUnavailable
+        }
         if let error = error as? SSHShellError {
             switch error {
             case .authenticationFailed, .connectionFailed, .commandExecutionUnavailable, .notConnected:

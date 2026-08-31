@@ -24,6 +24,18 @@ enum Phase5TransportError: Error, Equatable, LocalizedError, Sendable {
     }
 }
 
+struct Phase5MoshFailureTransport: MoshTransportBootstrapping {
+    func connect(
+        to _: Host,
+        credentials _: SSHCredentials,
+        using _: SSHShellSession
+    ) async throws -> SSHShellSession {
+        throw Phase5TransportError.unavailable
+    }
+
+    func disconnect() async {}
+}
+
 struct Phase5ConnectionRecord: Equatable, Sendable {
     let host: Host
     let credentials: SSHCredentials
