@@ -43,7 +43,7 @@
 
 ## 切片
 
-自动化测试已在仓库里且失败之后再写。
+自动化测试已在仓库里且失败之后再写。本次切片已将 transport 选择移入生产 coordinator：SSH bootstrap 后尝试 swift-mosh，Auto 失败留在 SSH，并在终端显示实际 transport。
 
 ## 完成后
 

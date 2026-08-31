@@ -2,9 +2,8 @@ import Foundation
 import HerdrKit
 @testable import Mudi
 
-/// The phase-5 connection seam used by the tests-first slice. The production
-/// implementation can replace this compile-only application with its real
-/// transport coordinator without changing the observations under test.
+/// The phase-5 contract is backed by the production transport coordinator;
+/// only persistence and connector boundaries are test doubles.
 protocol Phase5TransportApplication: Sendable {
     func loadHosts() async throws -> [Host]
     func save(_ host: Host) async throws
@@ -133,57 +132,22 @@ private struct Phase5CredentialStore: CredentialStore {
     }
 }
 
-/// Compile-only scaffold for the tests-first step. It deliberately preserves
-/// the existing SSH-only behavior: every preference is routed to SSH and the
-/// Mosh spy is never attempted. The phase-5 implementation must replace this
-/// path with Auto/Mosh selection and report the resulting ActiveTransport.
-actor MissingPhase5Application: Phase5TransportApplication {
-    let hostStore: any HostStore
-    let credentialStore: any CredentialStore
-    let sshTransport: Phase5TransportSpy
-    let moshTransport: Phase5TransportSpy
-    private var activeTransportValue: ActiveTransport?
+/// Adapt the test double to the production connector boundary. The tests
+/// still control availability and inspect the same connection records, but
+/// transport selection itself runs in the app target.
+private struct Phase5TransportConnector: TransportConnector {
+    let spy: Phase5TransportSpy
 
-    init(
-        hostStore: any HostStore,
-        credentialStore: any CredentialStore,
-        sshTransport: Phase5TransportSpy,
-        moshTransport: Phase5TransportSpy
-    ) {
-        self.hostStore = hostStore
-        self.credentialStore = credentialStore
-        self.sshTransport = sshTransport
-        self.moshTransport = moshTransport
-    }
-
-    func loadHosts() async throws -> [Host] {
-        try await hostStore.loadHosts()
-    }
-
-    func save(_ host: Host) async throws {
-        try await hostStore.save(host)
-    }
-
-    func save(_ credentials: SSHCredentials, for host: Host) async throws {
-        try await credentialStore.save(credentials, for: host)
-    }
-
-    func credentials(for host: Host) async throws -> SSHCredentials? {
-        try await credentialStore.credentials(for: host)
-    }
-
-    func connect(to host: Host) async throws -> ActiveTransport {
-        let credentials = try await credentialStore.credentials(for: host) ?? SSHCredentials()
-        // Intentionally incomplete until phase-5 transport selection is built.
-        try await sshTransport.connect(to: host, credentials: credentials)
-        activeTransportValue = .ssh
-        return .ssh
-    }
-
-    func activeTransport() async -> ActiveTransport? {
-        activeTransportValue
+    func connect(to host: Host, credentials: SSHCredentials) async throws {
+        try await spy.connect(to: host, credentials: credentials)
     }
 }
+
+/// Keep the factory name used by the phase contract while making it return the
+/// production coordinator rather than a test-only implementation.
+typealias MissingPhase5Application = TransportSelectionCoordinator
+
+extension TransportSelectionCoordinator: Phase5TransportApplication {}
 
 func makeMissingPhase5Application(
     hostFile: Phase5HostFile = Phase5HostFile(),
@@ -191,11 +155,11 @@ func makeMissingPhase5Application(
     sshTransport: Phase5TransportSpy = Phase5TransportSpy(kind: .ssh),
     moshTransport: Phase5TransportSpy = Phase5TransportSpy(kind: .mosh)
 ) -> MissingPhase5Application {
-    MissingPhase5Application(
+    TransportSelectionCoordinator(
         hostStore: Phase5HostStore(file: hostFile),
         credentialStore: Phase5CredentialStore(keychain: keychain),
-        sshTransport: sshTransport,
-        moshTransport: moshTransport
+        sshTransport: Phase5TransportConnector(spy: sshTransport),
+        moshTransport: Phase5TransportConnector(spy: moshTransport)
     )
 }
 

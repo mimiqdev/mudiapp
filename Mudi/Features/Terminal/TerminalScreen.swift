@@ -5,6 +5,7 @@ struct TerminalScreen: View {
     let host: Host
     let session: SSHShellSession
     let title: String
+    let transport: ActiveTransport
     let onDisconnect: () -> Void
     let onBackToBrowser: (() -> Void)?
     let fontSize: Double
@@ -17,6 +18,7 @@ struct TerminalScreen: View {
         host: Host,
         session: SSHShellSession,
         title: String? = nil,
+        transport: ActiveTransport = .ssh,
         onDisconnect: @escaping () -> Void,
         onBackToBrowser: (() -> Void)? = nil,
         fontSize: Double = 14,
@@ -25,6 +27,7 @@ struct TerminalScreen: View {
         self.host = host
         self.session = session
         self.title = title ?? host.hostname
+        self.transport = transport
         self.onDisconnect = onDisconnect
         self.onBackToBrowser = onBackToBrowser
         self.fontSize = fontSize
@@ -59,6 +62,10 @@ struct TerminalScreen: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Label(transport.displayName, systemImage: transport.systemImage)
+                    .accessibilityIdentifier("active-transport")
+            }
             if let onBackToBrowser {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Herdr", systemImage: "chevron.backward", action: onBackToBrowser)
@@ -76,5 +83,25 @@ struct TerminalScreen: View {
 
     private var terminalAppearance: TerminalAppearance {
         TerminalAppearance.colors(for: colorScheme)
+    }
+}
+
+private extension ActiveTransport {
+    var displayName: String {
+        switch self {
+        case .mosh:
+            "Mosh"
+        case .ssh:
+            "SSH"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .mosh:
+            "antenna.radiowaves.left.and.right"
+        case .ssh:
+            "network"
+        }
     }
 }

@@ -1,37 +1,42 @@
 import Foundation
 import HerdrKit
 
-/// The application-level coordinator for saved hosts and one active SSH shell.
+/// The application-level coordinator for saved hosts and one active shell.
 ///
 /// Host configuration is delegated to the host store, while credentials and
-/// accepted host keys use separate secure stores. The coordinator owns only
-/// the in-memory values needed for the current connection and a manual
-/// reconnect.
+/// accepted host keys use separate secure stores. The coordinator keeps the
+/// SSH bootstrap session for Herdr discovery and exposes the selected terminal
+/// session separately when Mosh is available.
 actor ApplicationCoordinator: Sendable {
     let hostStore: any HostStore
     let credentialStore: any CredentialStore
     let knownHostKeyStore: any KnownHostKeyStore
     let client: any HostKeyAwareSSHClient
+    let moshTransport: any MoshTransportBootstrapping
 
-    private var state: ConnectionState = .idle
-    private var session: SSHShellSession?
+    var state: ConnectionState = .idle
+    var session: SSHShellSession?
+    var terminalSession: SSHShellSession?
+    var activeTransportValue: ActiveTransport?
     private var activeHostID: Host.ID?
     private var hostKeyError: (attemptID: UUID, error: ConnectionError)?
     private var inFlightConnectID: UUID?
     private var disconnectRequestedFor: UUID?
     private var attemptWaiters: [UUID: [CheckedContinuation<Void, Never>]] = [:]
-    private var stateContinuations: [UUID: AsyncStream<ConnectionState>.Continuation] = [:]
+    var stateContinuations: [UUID: AsyncStream<ConnectionState>.Continuation] = [:]
 
     init(
         hostStore: any HostStore = JSONHostStore(),
         credentialStore: any CredentialStore = KeychainCredentialStore(),
         knownHostKeyStore: any KnownHostKeyStore = KeychainKnownHostKeyStore(),
-        client: any HostKeyAwareSSHClient = CitadelSSHAdapter()
+        client: any HostKeyAwareSSHClient = CitadelSSHAdapter(),
+        moshTransport: any MoshTransportBootstrapping = SwiftMoshAdapter()
     ) {
         self.hostStore = hostStore
         self.credentialStore = credentialStore
         self.knownHostKeyStore = knownHostKeyStore
         self.client = client
+        self.moshTransport = moshTransport
     }
 
     func loadHosts() async throws -> [Host] {
@@ -96,6 +101,7 @@ actor ApplicationCoordinator: Sendable {
 
         let attemptID = UUID()
         activeHostID = host.id
+        activeTransportValue = nil
         hostKeyError = nil
         disconnectRequestedFor = nil
         inFlightConnectID = attemptID
@@ -115,18 +121,44 @@ actor ApplicationCoordinator: Sendable {
                     )
                 }
             )
+            let bootstrapSession = SSHShellSession(connectedChannel: channel)
+            let selection: (transport: ActiveTransport, moshConnection: SSHShellSession?)
+            do {
+                selection = try await TransportSelectionStrategy.select(
+                    preference: host.preferredTransport,
+                    bootstrapSSH: {},
+                    connectMosh: { [moshTransport, bootstrapSession] in
+                        try await moshTransport.connect(
+                            to: host,
+                            credentials: credentials,
+                            using: bootstrapSession
+                        )
+                    }
+                )
+            } catch {
+                await moshTransport.disconnect()
+                await bootstrapSession.disconnect()
+                throw error
+            }
+            let selectedTerminalSession = selection.moshConnection ?? bootstrapSession
 
             guard inFlightConnectID == attemptID,
                   activeHostID == host.id,
                   disconnectRequestedFor != attemptID,
                   !Task.isCancelled
             else {
-                await channel.close()
+                await selectedTerminalSession.disconnect()
+                if ObjectIdentifier(selectedTerminalSession) != ObjectIdentifier(bootstrapSession) {
+                    await bootstrapSession.disconnect()
+                }
+                await moshTransport.disconnect()
                 finishAttempt(attemptID, state: .disconnected)
                 throw ConnectionError.connectionFailed
             }
 
-            session = SSHShellSession(connectedChannel: channel)
+            session = bootstrapSession
+            terminalSession = selectedTerminalSession
+            activeTransportValue = selection.transport
             inFlightConnectID = nil
             disconnectRequestedFor = nil
             setState(.connected)
@@ -143,6 +175,7 @@ actor ApplicationCoordinator: Sendable {
                 throw connectionError
             }
 
+            await disconnectCurrentSession()
             let wasDisconnectRequested = disconnectRequestedFor == attemptID
                 || state == .disconnected
                 || Task.isCancelled
@@ -154,37 +187,13 @@ actor ApplicationCoordinator: Sendable {
         }
     }
 
-    func connectionState() -> ConnectionState {
-        state
-    }
-
-    /// Returns lifecycle events after subscription. The stream intentionally
-    /// does not replay the initial idle state, so a connection reports the
-    /// meaningful `connecting` → `connected` transition to new observers.
-    func connectionStateStream() -> AsyncStream<ConnectionState> {
-        let id = UUID()
-        return AsyncStream { continuation in
-            stateContinuations[id] = continuation
-            continuation.onTermination = { [weak self] _ in
-                Task {
-                    await self?.removeStateContinuation(id)
-                }
-            }
-        }
-    }
-
-    /// The active session is already connected and can be passed to the
-    /// SwiftTerm container without another SSH handshake.
-    func activeShellSession() -> SSHShellSession? {
-        session
-    }
-
     func disconnect() async {
         if let attemptID = inFlightConnectID {
             disconnectRequestedFor = attemptID
             return
         }
         await disconnectCurrentSession()
+        activeTransportValue = nil
         if state != .disconnected {
             setState(.disconnected)
         }
@@ -200,6 +209,7 @@ actor ApplicationCoordinator: Sendable {
             return
         }
         await disconnectCurrentSession()
+        activeTransportValue = nil
         if state != .disconnected {
             setState(.disconnected)
         }
@@ -317,11 +327,23 @@ actor ApplicationCoordinator: Sendable {
     }
 
     private func disconnectCurrentSession() async {
-        guard let session else {
-            return
+        let bootstrapSession = session
+        let terminalSession = self.terminalSession
+        session = nil
+        self.terminalSession = nil
+
+        if let terminalSession {
+            await terminalSession.disconnect()
         }
-        self.session = nil
-        await session.disconnect()
+        if let bootstrapSession {
+            let isSameSession = terminalSession.map {
+                ObjectIdentifier(bootstrapSession) == ObjectIdentifier($0)
+            } ?? false
+            if !isSameSession {
+                await bootstrapSession.disconnect()
+            }
+        }
+        await moshTransport.disconnect()
     }
 
     private func finishAttempt(_ attemptID: UUID, state: ConnectionState) {
@@ -330,6 +352,8 @@ actor ApplicationCoordinator: Sendable {
         disconnectRequestedFor = nil
         hostKeyError = nil
         session = nil
+        terminalSession = nil
+        activeTransportValue = nil
         setState(state)
         let waiters = attemptWaiters.removeValue(forKey: attemptID) ?? []
         waiters.forEach { $0.resume() }
@@ -353,7 +377,7 @@ actor ApplicationCoordinator: Sendable {
         }
     }
 
-    private func removeStateContinuation(_ id: UUID) {
+    func removeStateContinuation(_ id: UUID) {
         stateContinuations[id] = nil
     }
 

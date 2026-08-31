@@ -11,6 +11,7 @@ final class RootViewModel: ObservableObject {
     @Published private(set) var isTearingDown = false
     @Published private(set) var isPaneControlSuspended = false
     @Published private(set) var connectionState: ConnectionState = .idle
+    @Published private(set) var activeTransport: ActiveTransport?
     @Published private(set) var preferences = TerminalPreferences()
     @Published var errorMessage: String?
     @Published var editor: HostEditorContext?
@@ -32,6 +33,7 @@ final class RootViewModel: ObservableObject {
     private var lastPaneID: Pane.ID?
     private var lastPaneHostID: Host.ID?
     private var baseSession: SSHShellSession?
+    private var baseTerminalSession: SSHShellSession?
 
     init(
         coordinator: ApplicationCoordinator = ApplicationCoordinator(),
@@ -135,9 +137,11 @@ extension RootViewModel {
             hasLastPane = false
             hasMultipleHerdrSessions = false
             baseSession = nil
+            baseTerminalSession = nil
             lastPaneID = nil
             lastPaneHostID = nil
             activeConnection = nil
+            activeTransport = nil
             lastHostID = nil
         }
 
@@ -194,11 +198,16 @@ extension RootViewModel {
                     return
                 }
                 guard state == .connected,
-                      let session = await coordinator.activeShellSession()
+                      let bootstrapSession = await coordinator.activeShellSession()
                 else {
                     throw ConnectionError.connectionFailed
                 }
-                let workflow = await self.makeWorkflow(for: session, hostID: host.id)
+                let terminalSession = await coordinator.activeTerminalSession() ?? bootstrapSession
+                let selectedTransport = await coordinator.activeTransport() ?? .ssh
+                let workflow = await self.makeWorkflow(
+                    for: bootstrapSession,
+                    hostID: host.id
+                )
                 let browserState: HerdrBrowserState
                 do {
                     browserState = try await workflow.discover(on: host)
@@ -215,8 +224,14 @@ extension RootViewModel {
                 self.herdrState = browserState
                 self.hasLastPane = await workflow.hasRememberedPane()
                 self.hasMultipleHerdrSessions = await workflow.hasMultipleSessions()
-                self.baseSession = session
-                self.activeConnection = ActiveSSHConnection(host: host, session: session)
+                self.baseSession = bootstrapSession
+                self.baseTerminalSession = terminalSession
+                self.activeTransport = selectedTransport
+                self.activeConnection = ActiveSSHConnection(
+                    host: host,
+                    session: terminalSession,
+                    transport: selectedTransport
+                )
                 self.connectionState = state
                 self.connectionTask = nil
             } catch {
@@ -225,6 +240,9 @@ extension RootViewModel {
                 self.workflow = nil
                 self.herdrState = nil
                 self.activeConnection = nil
+                self.activeTransport = nil
+                self.baseSession = nil
+                self.baseTerminalSession = nil
                 self.connectionTask = nil
                 self.connectionState = await coordinator.connectionState()
                 self.errorMessage = error.localizedDescription
@@ -271,12 +289,17 @@ extension RootViewModel {
                 guard self.isCurrentConnection(generation),
                       !Task.isCancelled,
                       state == .connected,
-                      let session = await coordinator.activeShellSession()
+                      let bootstrapSession = await coordinator.activeShellSession()
                 else {
                     await coordinator.disconnect()
                     return
                 }
-                let workflow = await self.makeWorkflow(for: session, hostID: host.id)
+                let terminalSession = await coordinator.activeTerminalSession() ?? bootstrapSession
+                let selectedTransport = await coordinator.activeTransport() ?? .ssh
+                let workflow = await self.makeWorkflow(
+                    for: bootstrapSession,
+                    hostID: host.id
+                )
                 let browserState: HerdrBrowserState
                 do {
                     browserState = try await workflow.discover(on: host)
@@ -291,8 +314,14 @@ extension RootViewModel {
                 self.herdrState = browserState
                 self.hasLastPane = await workflow.hasRememberedPane()
                 self.hasMultipleHerdrSessions = await workflow.hasMultipleSessions()
-                self.baseSession = session
-                self.activeConnection = ActiveSSHConnection(host: host, session: session)
+                self.baseSession = bootstrapSession
+                self.baseTerminalSession = terminalSession
+                self.activeTransport = selectedTransport
+                self.activeConnection = ActiveSSHConnection(
+                    host: host,
+                    session: terminalSession,
+                    transport: selectedTransport
+                )
                 self.connectionState = state
                 self.connectionTask = nil
             } catch {
@@ -301,6 +330,9 @@ extension RootViewModel {
                 self.workflow = nil
                 self.herdrState = nil
                 self.activeConnection = nil
+                self.activeTransport = nil
+                self.baseSession = nil
+                self.baseTerminalSession = nil
                 self.connectionTask = nil
                 self.connectionState = await coordinator.connectionState()
                 self.errorMessage = error.localizedDescription
@@ -432,7 +464,9 @@ extension RootViewModel {
         hasLastPane = false
         hasMultipleHerdrSessions = false
         baseSession = nil
+        baseTerminalSession = nil
         activeConnection = nil
+        activeTransport = nil
         isPaneControlSuspended = false
         scheduleTeardown(workflow: workflow)
     }
@@ -493,7 +527,9 @@ extension RootViewModel {
         hasLastPane = false
         hasMultipleHerdrSessions = false
         baseSession = nil
+        baseTerminalSession = nil
         activeConnection = nil
+        activeTransport = nil
         connectionGeneration = UUID()
         return connectionGeneration
     }
@@ -540,7 +576,8 @@ extension RootViewModel {
             self.activeConnection = ActiveSSHConnection(
                 host: activeConnection.host,
                 session: terminalSession,
-                terminalTitle: pane.terminalTitle
+                terminalTitle: pane.terminalTitle,
+                transport: activeConnection.transport
             )
             herdrState = state
         case .empty, .sessions, .panes, .ordinaryTerminal:
@@ -548,7 +585,8 @@ extension RootViewModel {
                let baseSession {
                 self.activeConnection = ActiveSSHConnection(
                     host: activeConnection.host,
-                    session: baseSession
+                    session: baseTerminalSession ?? baseSession,
+                    transport: activeConnection.transport
                 )
             }
             herdrState = state
@@ -659,6 +697,7 @@ struct RootView: View {
                         TerminalScreen(
                             host: activeConnection.host,
                             session: activeConnection.session,
+                            transport: activeConnection.transport,
                             onDisconnect: model.disconnect,
                             fontSize: model.preferences.fontSize
                         )
@@ -667,6 +706,7 @@ struct RootView: View {
                             host: activeConnection.host,
                             session: activeConnection.session,
                             title: activeConnection.terminalTitle ?? pane.terminalTitle,
+                            transport: activeConnection.transport,
                             onDisconnect: model.disconnect,
                             onBackToBrowser: model.returnToHerdrBrowser,
                             fontSize: model.preferences.fontSize,
@@ -755,11 +795,18 @@ struct ActiveSSHConnection {
     let host: Host
     let session: SSHShellSession
     let terminalTitle: String?
+    let transport: ActiveTransport
 
-    init(host: Host, session: SSHShellSession, terminalTitle: String? = nil) {
+    init(
+        host: Host,
+        session: SSHShellSession,
+        terminalTitle: String? = nil,
+        transport: ActiveTransport = .ssh
+    ) {
         self.host = host
         self.session = session
         self.terminalTitle = terminalTitle
+        self.transport = transport
     }
 }
 
