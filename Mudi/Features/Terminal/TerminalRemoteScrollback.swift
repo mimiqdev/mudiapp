@@ -71,19 +71,60 @@ extension ShellTerminalView {
 
         switch gesture.state {
         case .began:
+            remoteScrollInertiaTask?.cancel()
+            remoteScrollInertiaTask = nil
             remoteScrollLastTranslation = gesture.translation(in: self).y
             remoteScrollDistance = 0
         case .changed:
             let translation = gesture.translation(in: self).y
             let delta = translation - remoteScrollLastTranslation
             remoteScrollLastTranslation = translation
-            remoteScrollDistance -= delta
+            // Natural scrolling: content follows the finger. Drag down to
+            // reveal history above (Herdr terminal.scroll up).
+            remoteScrollDistance += delta
             flushRemoteScrollDistance()
-        case .ended, .cancelled, .failed:
+        case .ended:
+            let velocity = gesture.velocity(in: self).y
+            remoteScrollLastTranslation = 0
+            startRemoteScrollInertia(velocityY: velocity)
+        case .cancelled, .failed:
+            remoteScrollInertiaTask?.cancel()
+            remoteScrollInertiaTask = nil
             remoteScrollDistance = 0
             remoteScrollLastTranslation = 0
         default:
             break
+        }
+    }
+
+    private func startRemoteScrollInertia(velocityY: CGFloat) {
+        remoteScrollInertiaTask?.cancel()
+        // Slow drags stay 1:1 with the finger. Only a flick keeps moving.
+        let flickThreshold: CGFloat = 320
+        guard abs(velocityY) >= flickThreshold else {
+            remoteScrollDistance = 0
+            remoteScrollInertiaTask = nil
+            return
+        }
+
+        remoteScrollInertiaTask = Task { [weak self] in
+            var velocity = velocityY
+            let frameNanoseconds: UInt64 = 16_000_000
+            let dt = CGFloat(frameNanoseconds) / 1_000_000_000
+            let deceleration: CGFloat = 2_400
+            let stopSpeed: CGFloat = 140
+            while !Task.isCancelled, abs(velocity) > stopSpeed {
+                try? await Task.sleep(nanoseconds: frameNanoseconds)
+                guard let self, self.remoteScrollbackEnabled else { return }
+                self.remoteScrollDistance += velocity * dt
+                self.flushRemoteScrollDistance()
+                let sign: CGFloat = velocity > 0 ? 1 : -1
+                velocity -= sign * deceleration * dt
+                if velocity * sign <= 0 {
+                    break
+                }
+            }
+            self?.remoteScrollDistance = 0
         }
     }
 

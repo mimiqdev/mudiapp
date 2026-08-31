@@ -12,6 +12,7 @@ final class MudiTerminalShortcutBar: UIInputView {
     private let onPageDown: () -> Void
     private let scrollView = UIScrollView()
     private let stackView = UIStackView()
+    private let dismissKeyboardButton = UIButton(type: .system)
     private var buttons: [UIButton] = []
     private weak var controlButton: UIButton?
     private weak var altButton: UIButton?
@@ -71,6 +72,7 @@ extension MudiTerminalShortcutBar {
         for button in buttons {
             button.setTitleColor(foregroundColor, for: .normal)
             button.setTitleColor(.white, for: .selected)
+            button.tintColor = foregroundColor
             style(button)
         }
     }
@@ -82,6 +84,7 @@ extension MudiTerminalShortcutBar {
     private func setupView() {
         setupScrollView()
         addShortcutButtons()
+        addDismissKeyboardButton()
     }
 
     private func setupScrollView() {
@@ -100,7 +103,6 @@ extension MudiTerminalShortcutBar {
         scrollView.addSubview(stackView)
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
             stackView.leadingAnchor.constraint(
@@ -217,6 +219,38 @@ extension MudiTerminalShortcutBar {
             action: #selector(toggleMouseReporting)
         )
         mouseButton?.accessibilityLabel = "Mouse reporting"
+    }
+
+    private func addDismissKeyboardButton() {
+        dismissKeyboardButton.translatesAutoresizingMaskIntoConstraints = false
+        dismissKeyboardButton.setImage(
+            UIImage(systemName: "keyboard.chevron.compact.down"),
+            for: .normal
+        )
+        dismissKeyboardButton.accessibilityIdentifier = "terminal-shortcut-dismiss-keyboard"
+        dismissKeyboardButton.accessibilityLabel = "Hide keyboard"
+        dismissKeyboardButton.addTarget(
+            self,
+            action: #selector(dismissKeyboard),
+            for: .touchUpInside
+        )
+        dismissKeyboardButton.layer.cornerRadius = 6
+        addSubview(dismissKeyboardButton)
+        buttons.append(dismissKeyboardButton)
+        NSLayoutConstraint.activate([
+            dismissKeyboardButton.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -8
+            ),
+            dismissKeyboardButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dismissKeyboardButton.widthAnchor.constraint(equalToConstant: 44),
+            dismissKeyboardButton.heightAnchor.constraint(equalToConstant: 32),
+            scrollView.trailingAnchor.constraint(
+                equalTo: dismissKeyboardButton.leadingAnchor,
+                constant: -6
+            )
+        ])
+        style(dismissKeyboardButton)
     }
 
     @discardableResult
@@ -375,6 +409,10 @@ extension MudiTerminalShortcutBar {
 
     @objc private func sendPageDown() {
         onPageDown()
+    }
+
+    @objc private func dismissKeyboard() {
+        terminalView?.resignFirstResponder()
     }
 
     @objc private func copySelection() {

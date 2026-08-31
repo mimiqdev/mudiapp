@@ -52,6 +52,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     var remoteScrollTask: Task<Void, Never>?
     var remoteScrollLastTranslation: CGFloat = 0
     var remoteScrollDistance: CGFloat = 0
+    var remoteScrollInertiaTask: Task<Void, Never>?
 
     private enum TerminalSessionError: Error, Sendable {
         case remoteClosed
@@ -173,6 +174,8 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         remoteScrollCapabilityTask = nil
         remoteScrollTask?.cancel()
         remoteScrollTask = nil
+        remoteScrollInertiaTask?.cancel()
+        remoteScrollInertiaTask = nil
         if let remoteScrollGesture {
             removeGestureRecognizer(remoteScrollGesture)
         }
