@@ -8,6 +8,7 @@ struct TerminalScreen: View {
     let onDisconnect: () -> Void
     let onBackToBrowser: (() -> Void)?
     let fontSize: Double
+    let suppressConnectionErrors: Bool
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var errorMessage: String?
@@ -18,7 +19,8 @@ struct TerminalScreen: View {
         title: String? = nil,
         onDisconnect: @escaping () -> Void,
         onBackToBrowser: (() -> Void)? = nil,
-        fontSize: Double = 14
+        fontSize: Double = 14,
+        suppressConnectionErrors: Bool = false
     ) {
         self.host = host
         self.session = session
@@ -26,6 +28,7 @@ struct TerminalScreen: View {
         self.onDisconnect = onDisconnect
         self.onBackToBrowser = onBackToBrowser
         self.fontSize = fontSize
+        self.suppressConnectionErrors = suppressConnectionErrors
     }
 
     var body: some View {
@@ -35,6 +38,7 @@ struct TerminalScreen: View {
                 fontSize: fontSize,
                 colorScheme: colorScheme
             ) { message in
+                guard !suppressConnectionErrors else { return }
                 errorMessage = message
             }
             .background(Color(uiColor: terminalAppearance.background))

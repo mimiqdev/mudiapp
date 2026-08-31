@@ -47,6 +47,8 @@ protocol HerdrWorkflowCoordinating: AnyObject, Sendable {
     func returnToBrowser() async -> HerdrBrowserState
     func openOrdinaryTerminal() async throws -> HerdrBrowserState
     func restoreLastPane() async -> HerdrBrowserState
+    func suspendAttachedControl() async
+    func resumeAttachedControl() async -> HerdrBrowserState
     func hasRememberedPane() async -> Bool
     func hasMultipleSessions() async -> Bool
     func terminalSession() async -> SSHShellSession?
@@ -201,6 +203,20 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
         try await transport.connect(to: connectedHost)
         browserState = .ordinaryTerminal
         return browserState
+    }
+
+    func suspendAttachedControl() async {
+        guard case .attached = browserState else { return }
+        if let provider = transport as? any HerdrTerminalSessionProviding {
+            await provider.releaseTerminalSession()
+        }
+    }
+
+    func resumeAttachedControl() async -> HerdrBrowserState {
+        guard case let .attached(session, pane) = browserState else {
+            return browserState
+        }
+        return await attach(pane, in: session)
     }
 
     func restoreLastPane() async -> HerdrBrowserState {

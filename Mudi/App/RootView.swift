@@ -9,6 +9,7 @@ final class RootViewModel: ObservableObject {
     @Published private(set) var hasLastPane = false
     @Published private(set) var hasMultipleHerdrSessions = false
     @Published private(set) var isTearingDown = false
+    @Published private(set) var isPaneControlSuspended = false
     @Published private(set) var connectionState: ConnectionState = .idle
     @Published private(set) var preferences = TerminalPreferences()
     @Published var errorMessage: String?
@@ -383,6 +384,30 @@ extension RootViewModel {
         }
     }
 
+    func suspendPaneControl() {
+        guard case .attached = herdrState, let workflow else { return }
+        isPaneControlSuspended = true
+        Task { [weak self, workflow] in
+            await workflow.suspendAttachedControl()
+            guard let self, !Task.isCancelled else { return }
+            self.isPaneControlSuspended = true
+        }
+    }
+
+    func resumePaneControl() {
+        guard isPaneControlSuspended, case .attached = herdrState, let workflow else {
+            isPaneControlSuspended = false
+            return
+        }
+        workflowTask?.cancel()
+        workflowTask = Task { [weak self, workflow] in
+            let state = await workflow.resumeAttachedControl()
+            guard !Task.isCancelled else { return }
+            await self?.applyWorkflowState(state, from: workflow)
+            self?.isPaneControlSuspended = false
+        }
+    }
+
     /// Leaves the Herdr browser and returns to the saved-host list. The
     /// workflow is released before the SSH shell so an attached control
     /// session cannot outlive the host connection.
@@ -395,6 +420,7 @@ extension RootViewModel {
         hasMultipleHerdrSessions = false
         baseSession = nil
         activeConnection = nil
+        isPaneControlSuspended = false
         scheduleTeardown(workflow: workflow)
     }
 
@@ -407,6 +433,7 @@ extension RootViewModel {
         hasMultipleHerdrSessions = false
         baseSession = nil
         activeConnection = nil
+        isPaneControlSuspended = false
         scheduleTeardown(workflow: workflow)
     }
 
@@ -615,6 +642,7 @@ struct HostEditorContext: Identifiable {
 
 struct RootView: View {
     @StateObject private var model: RootViewModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var isSettingsPresented = false
 
     init(coordinator: ApplicationCoordinator = ApplicationCoordinator()) {
@@ -641,7 +669,8 @@ struct RootView: View {
                             title: activeConnection.terminalTitle ?? pane.terminalTitle,
                             onDisconnect: model.disconnect,
                             onBackToBrowser: model.returnToHerdrBrowser,
-                            fontSize: model.preferences.fontSize
+                            fontSize: model.preferences.fontSize,
+                            suppressConnectionErrors: model.isPaneControlSuspended
                         )
                     case .empty, .sessions, .panes:
                         HerdrBrowserView(
@@ -676,6 +705,16 @@ struct RootView: View {
             }
         }
         .preferredColorScheme(model.preferences.appearance.colorScheme)
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background:
+                model.suspendPaneControl()
+            case .active:
+                model.resumePaneControl()
+            default:
+                break
+            }
+        }
         .task {
             await model.loadHosts()
             await model.loadPreferences()
