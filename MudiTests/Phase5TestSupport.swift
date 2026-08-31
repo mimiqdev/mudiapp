@@ -1,0 +1,225 @@
+import Foundation
+import HerdrKit
+@testable import Mudi
+
+/// The phase-5 connection seam used by the tests-first slice. The production
+/// implementation can replace this compile-only application with its real
+/// transport coordinator without changing the observations under test.
+protocol Phase5TransportApplication: Sendable {
+    func loadHosts() async throws -> [Host]
+    func save(_ host: Host) async throws
+    func save(_ credentials: SSHCredentials, for host: Host) async throws
+    func credentials(for host: Host) async throws -> SSHCredentials?
+    func connect(to host: Host) async throws -> ActiveTransport
+    func activeTransport() async -> ActiveTransport?
+}
+
+enum Phase5TransportError: Error, Equatable, LocalizedError, Sendable {
+    case unavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable:
+            "The requested transport is unavailable."
+        }
+    }
+}
+
+struct Phase5ConnectionRecord: Equatable, Sendable {
+    let host: Host
+    let credentials: SSHCredentials
+}
+
+/// A deterministic transport double. It records attempted connections even
+/// when unavailable so Auto tests can distinguish fallback from SSH-only
+/// behavior.
+actor Phase5TransportSpy {
+    let kind: ActiveTransport
+    private let available: Bool
+    private var records: [Phase5ConnectionRecord] = []
+
+    init(kind: ActiveTransport, available: Bool = true) {
+        self.kind = kind
+        self.available = available
+    }
+
+    func connect(to host: Host, credentials: SSHCredentials) throws {
+        records.append(Phase5ConnectionRecord(host: host, credentials: credentials))
+        guard available else {
+            throw Phase5TransportError.unavailable
+        }
+    }
+
+    func connectionAttempts() -> Int {
+        records.count
+    }
+
+    func connectionRecords() -> [Phase5ConnectionRecord] {
+        records
+    }
+}
+
+/// File-shaped storage matching the phase-2 persistence double. Only encoded
+/// Host values cross this boundary; credentials are held by Phase5Keychain.
+actor Phase5HostFile {
+    private var contents: Data?
+
+    func write(hosts: [Host]) throws {
+        contents = try JSONEncoder().encode(hosts)
+    }
+
+    func data() -> Data? {
+        contents
+    }
+
+    func hosts() throws -> [Host] {
+        guard let contents else { return [] }
+        return try JSONDecoder().decode([Host].self, from: contents)
+    }
+}
+
+actor Phase5Keychain {
+    private var values: [Host.ID: SSHCredentials] = [:]
+
+    func put(_ credentials: SSHCredentials, for host: Host) {
+        values[host.id] = credentials
+    }
+
+    func credentials(for host: Host) -> SSHCredentials? {
+        values[host.id]
+    }
+
+    func remove(for host: Host) {
+        values[host.id] = nil
+    }
+}
+
+private struct Phase5HostStore: HostStore {
+    let file: Phase5HostFile
+
+    func loadHosts() async throws -> [Host] {
+        try await file.hosts()
+    }
+
+    func save(_ host: Host) async throws {
+        var hosts = try await file.hosts()
+        if let index = hosts.firstIndex(where: { $0.id == host.id }) {
+            hosts[index] = host
+        } else {
+            hosts.append(host)
+        }
+        try await file.write(hosts: hosts)
+    }
+
+    func delete(_ host: Host) async throws {
+        let hosts = try await file.hosts().filter { $0.id != host.id }
+        try await file.write(hosts: hosts)
+    }
+}
+
+private struct Phase5CredentialStore: CredentialStore {
+    let keychain: Phase5Keychain
+
+    func save(_ credentials: SSHCredentials, for host: Host) async throws {
+        await keychain.put(credentials, for: host)
+    }
+
+    func credentials(for host: Host) async throws -> SSHCredentials? {
+        await keychain.credentials(for: host)
+    }
+
+    func delete(for host: Host) async throws {
+        await keychain.remove(for: host)
+    }
+}
+
+/// Compile-only scaffold for the tests-first step. It deliberately preserves
+/// the existing SSH-only behavior: every preference is routed to SSH and the
+/// Mosh spy is never attempted. The phase-5 implementation must replace this
+/// path with Auto/Mosh selection and report the resulting ActiveTransport.
+actor MissingPhase5Application: Phase5TransportApplication {
+    let hostStore: any HostStore
+    let credentialStore: any CredentialStore
+    let sshTransport: Phase5TransportSpy
+    let moshTransport: Phase5TransportSpy
+    private var activeTransportValue: ActiveTransport?
+
+    init(
+        hostStore: any HostStore,
+        credentialStore: any CredentialStore,
+        sshTransport: Phase5TransportSpy,
+        moshTransport: Phase5TransportSpy
+    ) {
+        self.hostStore = hostStore
+        self.credentialStore = credentialStore
+        self.sshTransport = sshTransport
+        self.moshTransport = moshTransport
+    }
+
+    func loadHosts() async throws -> [Host] {
+        try await hostStore.loadHosts()
+    }
+
+    func save(_ host: Host) async throws {
+        try await hostStore.save(host)
+    }
+
+    func save(_ credentials: SSHCredentials, for host: Host) async throws {
+        try await credentialStore.save(credentials, for: host)
+    }
+
+    func credentials(for host: Host) async throws -> SSHCredentials? {
+        try await credentialStore.credentials(for: host)
+    }
+
+    func connect(to host: Host) async throws -> ActiveTransport {
+        let credentials = try await credentialStore.credentials(for: host) ?? SSHCredentials()
+        // Intentionally incomplete until phase-5 transport selection is built.
+        try await sshTransport.connect(to: host, credentials: credentials)
+        activeTransportValue = .ssh
+        return .ssh
+    }
+
+    func activeTransport() async -> ActiveTransport? {
+        activeTransportValue
+    }
+}
+
+func makeMissingPhase5Application(
+    hostFile: Phase5HostFile = Phase5HostFile(),
+    keychain: Phase5Keychain = Phase5Keychain(),
+    sshTransport: Phase5TransportSpy = Phase5TransportSpy(kind: .ssh),
+    moshTransport: Phase5TransportSpy = Phase5TransportSpy(kind: .mosh)
+) -> MissingPhase5Application {
+    MissingPhase5Application(
+        hostStore: Phase5HostStore(file: hostFile),
+        credentialStore: Phase5CredentialStore(keychain: keychain),
+        sshTransport: sshTransport,
+        moshTransport: moshTransport
+    )
+}
+
+func phase5Host(
+    id: UUID = UUID(),
+    preferredTransport: TransportPreference = .automatic
+) -> Host {
+    Host(
+        id: id,
+        displayName: "Phase 5 Host",
+        hostname: "phase5.example.test",
+        port: 2222,
+        username: "developer",
+        preferredTransport: preferredTransport
+    )
+}
+
+func phase5Credentials() -> SSHCredentials {
+    SSHCredentials(
+        password: "phase5-password",
+        pemPrivateKey: """
+        -----BEGIN OPENSSH PRIVATE KEY-----
+        phase5-private-key
+        -----END OPENSSH PRIVATE KEY-----
+        """
+    )
+}
