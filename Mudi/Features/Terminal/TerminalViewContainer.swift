@@ -5,26 +5,31 @@ import SwiftUI
 struct TerminalViewContainer: UIViewRepresentable {
     let session: SSHShellSession
     let fontSize: Double
+    let colorScheme: ColorScheme
     let onError: (String) -> Void
 
     init(
         session: SSHShellSession,
         fontSize: Double = 14,
+        colorScheme: ColorScheme,
         onError: @escaping (String) -> Void
     ) {
         self.session = session
         self.fontSize = fontSize
+        self.colorScheme = colorScheme
         self.onError = onError
     }
 
     func makeUIView(context: Context) -> ShellTerminalView {
         let terminalView = ShellTerminalView(frame: .zero)
+        terminalView.updateAppearance(for: colorScheme)
         terminalView.updateFontSize(fontSize)
         terminalView.start(session: session, onError: onError)
         return terminalView
     }
 
     func updateUIView(_ terminalView: ShellTerminalView, context: Context) {
+        terminalView.updateAppearance(for: colorScheme)
         terminalView.updateFontSize(fontSize)
         terminalView.updateSession(session: session, onError: onError)
     }
@@ -48,8 +53,6 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     override init(frame: CGRect) {
         super.init(frame: frame)
         terminalDelegate = self
-        nativeBackgroundColor = .black
-        backgroundColor = .black
         isOpaque = true
         contentInsetAdjustmentBehavior = .never
         showsVerticalScrollIndicator = false
@@ -120,6 +123,15 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         guard sessionIdentity != ObjectIdentifier(session) else { return }
         stop()
         start(session: session, onError: onError)
+    }
+
+    func updateAppearance(for colorScheme: ColorScheme) {
+        let appearance = TerminalAppearance.colors(for: colorScheme)
+        nativeBackgroundColor = appearance.background
+        nativeForegroundColor = appearance.foreground
+        backgroundColor = appearance.background
+        caretColor = appearance.foreground
+        caretTextColor = appearance.background
     }
 
     func updateFontSize(_ fontSize: Double) {

@@ -9,6 +9,7 @@ struct TerminalScreen: View {
     let onBackToBrowser: (() -> Void)?
     let fontSize: Double
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var errorMessage: String?
 
     init(
@@ -29,10 +30,14 @@ struct TerminalScreen: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            TerminalViewContainer(session: session, fontSize: fontSize) { message in
+            TerminalViewContainer(
+                session: session,
+                fontSize: fontSize,
+                colorScheme: colorScheme
+            ) { message in
                 errorMessage = message
             }
-            .background(.black)
+            .background(Color(uiColor: terminalAppearance.background))
 
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
@@ -46,22 +51,26 @@ struct TerminalScreen: View {
                     .accessibilityIdentifier("ssh-terminal-error")
             }
         }
-        .background(.black)
+        .background(Color(uiColor: terminalAppearance.background))
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if let onBackToBrowser {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Herdr", systemImage: "chevron.backward", action: onBackToBrowser)
-                        .tint(.white)
+                        .tint(Color(uiColor: terminalAppearance.foreground))
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Disconnect", systemImage: "xmark.circle") {
                     onDisconnect()
                 }
-                .tint(.white)
+                .tint(Color(uiColor: terminalAppearance.foreground))
             }
         }
+    }
+
+    private var terminalAppearance: TerminalAppearance {
+        TerminalAppearance.colors(for: colorScheme)
     }
 }
