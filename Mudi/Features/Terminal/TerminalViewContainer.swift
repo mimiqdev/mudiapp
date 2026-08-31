@@ -7,31 +7,42 @@ struct TerminalViewContainer: UIViewRepresentable {
     let fontSize: Double
     let colorScheme: ColorScheme
     let onError: (String) -> Void
+    let onCompositionChange: (String?) -> Void
 
     init(
         session: SSHShellSession,
         fontSize: Double = 14,
         colorScheme: ColorScheme,
-        onError: @escaping (String) -> Void
+        onError: @escaping (String) -> Void,
+        onCompositionChange: @escaping (String?) -> Void = { _ in }
     ) {
         self.session = session
         self.fontSize = fontSize
         self.colorScheme = colorScheme
         self.onError = onError
+        self.onCompositionChange = onCompositionChange
     }
 
     func makeUIView(context: Context) -> ShellTerminalView {
         let terminalView = ShellTerminalView(frame: .zero)
         terminalView.updateAppearance(for: colorScheme)
         terminalView.updateFontSize(fontSize)
-        terminalView.start(session: session, onError: onError)
+        terminalView.start(
+            session: session,
+            onError: onError,
+            onCompositionChange: onCompositionChange
+        )
         return terminalView
     }
 
     func updateUIView(_ terminalView: ShellTerminalView, context: Context) {
         terminalView.updateAppearance(for: colorScheme)
         terminalView.updateFontSize(fontSize)
-        terminalView.updateSession(session: session, onError: onError)
+        terminalView.updateSession(
+            session: session,
+            onError: onError,
+            onCompositionChange: onCompositionChange
+        )
     }
 
     static func dismantleUIView(_ terminalView: ShellTerminalView, coordinator: ()) {
@@ -46,6 +57,9 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     var sessionIdentity: ObjectIdentifier?
     private var outputTask: Task<Void, Never>?
     var onError: ((String) -> Void)?
+    var onCompositionChange: ((String?) -> Void)?
+    private var compositionInputDelegate: TerminalCompositionInputDelegate?
+    private var compositionState = TerminalCompositionState()
     var remoteScrollbackEnabled = false
     var remoteScrollGesture: UIPanGestureRecognizer?
     var remoteScrollCapabilityTask: Task<Void, Never>?
@@ -60,6 +74,12 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        let compositionInputDelegate = TerminalCompositionInputDelegate()
+        self.compositionInputDelegate = compositionInputDelegate
+        compositionInputDelegate.onTextChange = { [weak self] textInput in
+            self?.updateComposition(from: textInput)
+        }
+        inputDelegate = compositionInputDelegate
         terminalDelegate = self
         accessibilityIdentifier = "ssh-terminal"
         isOpaque = true
@@ -80,11 +100,17 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         fatalError("init(coder:) has not been implemented")
     }
 
-    func start(session: SSHShellSession, onError: @escaping (String) -> Void) {
+    func start(
+        session: SSHShellSession,
+        onError: @escaping (String) -> Void,
+        onCompositionChange: @escaping (String?) -> Void
+    ) {
         guard outputTask == nil else { return }
         self.session = session
         sessionIdentity = ObjectIdentifier(session)
         self.onError = onError
+        self.onCompositionChange = onCompositionChange
+        installCompositionInputDelegate()
         terminalDelegate = self
         let sessionIdentity = ObjectIdentifier(session)
         loadRemoteScrollbackCapability(for: session, identity: sessionIdentity)
@@ -135,12 +161,18 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
 
     func updateSession(
         session: SSHShellSession,
-        onError: @escaping (String) -> Void
+        onError: @escaping (String) -> Void,
+        onCompositionChange: @escaping (String?) -> Void
     ) {
         self.onError = onError
+        self.onCompositionChange = onCompositionChange
         guard sessionIdentity != ObjectIdentifier(session) else { return }
         stop()
-        start(session: session, onError: onError)
+        start(
+            session: session,
+            onError: onError,
+            onCompositionChange: onCompositionChange
+        )
     }
 
     func updateAppearance(for colorScheme: ColorScheme) {
@@ -184,10 +216,36 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         remoteScrollDistance = 0
         remoteScrollLastTranslation = 0
         isScrollEnabled = true
+        compositionInputDelegate?.onTextChange = nil
+        compositionState.update(markedText: nil)
+        onCompositionChange?(nil)
         terminalDelegate = nil
         session = nil
         sessionIdentity = nil
         onError = nil
+        onCompositionChange = nil
+    }
+
+    private func installCompositionInputDelegate() {
+        guard let compositionInputDelegate else { return }
+        if inputDelegate !== compositionInputDelegate {
+            compositionInputDelegate.downstream = inputDelegate
+            inputDelegate = compositionInputDelegate
+        }
+        compositionInputDelegate.onTextChange = { [weak self] textInput in
+            self?.updateComposition(from: textInput)
+        }
+    }
+
+    private func updateComposition(from textInput: UITextInput) {
+        let markedText: String?
+        if let markedTextRange = textInput.markedTextRange {
+            markedText = textInput.text(in: markedTextRange)
+        } else {
+            markedText = nil
+        }
+        compositionState.update(markedText: markedText)
+        onCompositionChange?(compositionState.visibleText)
     }
 
 }
