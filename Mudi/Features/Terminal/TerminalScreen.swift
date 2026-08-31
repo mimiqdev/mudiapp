@@ -13,6 +13,7 @@ struct TerminalScreen: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var errorMessage: String?
+    @State private var isLeaving = false
 
     init(
         host: Host,
@@ -41,7 +42,7 @@ struct TerminalScreen: View {
                 fontSize: fontSize,
                 colorScheme: colorScheme
             ) { message in
-                guard !suppressConnectionErrors else { return }
+                guard !suppressConnectionErrors, !isLeaving else { return }
                 errorMessage = message
             }
             .background(Color(uiColor: terminalAppearance.background))
@@ -59,26 +60,46 @@ struct TerminalScreen: View {
             }
         }
         .background(Color(uiColor: terminalAppearance.background))
+        .onAppear {
+            isLeaving = false
+        }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Label(transport.displayName, systemImage: transport.systemImage)
-                    .accessibilityIdentifier("active-transport")
+                Label {
+                    Text(transport.displayName)
+                } icon: {
+                    Image(systemName: transport.systemImage)
+                }
+                .labelStyle(.titleAndIcon)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(transport.accessibilityLabel)
+                .accessibilityIdentifier("active-transport")
             }
             if let onBackToBrowser {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Herdr", systemImage: "chevron.backward", action: onBackToBrowser)
-                        .tint(Color(uiColor: terminalAppearance.foreground))
+                    Button("Herdr", systemImage: "chevron.backward") {
+                        beginLeaving {
+                            onBackToBrowser()
+                        }
+                    }
+                    .tint(Color(uiColor: terminalAppearance.foreground))
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Disconnect", systemImage: "xmark.circle") {
-                    onDisconnect()
+                    beginLeaving(onDisconnect)
                 }
                 .tint(Color(uiColor: terminalAppearance.foreground))
             }
         }
+    }
+
+    private func beginLeaving(_ action: () -> Void) {
+        isLeaving = true
+        errorMessage = nil
+        action()
     }
 
     private var terminalAppearance: TerminalAppearance {
@@ -103,5 +124,9 @@ private extension ActiveTransport {
         case .ssh:
             "network"
         }
+    }
+
+    var accessibilityLabel: String {
+        "Active transport: \(displayName)"
     }
 }
