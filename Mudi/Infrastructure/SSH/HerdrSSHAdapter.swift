@@ -15,11 +15,93 @@ enum SSHHerdrTerminalTransportError: Error, LocalizedError, Sendable {
     }
 }
 
+enum HerdrTerminalControlCodecError: Error, Equatable, Sendable {
+    case invalidFrame
+    case invalidFrameBytes
+    case invalidScrollLines
+}
+
+/// A screen snapshot emitted by the real `terminal.frame` control protocol.
+/// `full` is retained because full frames replace the visible remote screen;
+/// the ANSI bytes are still fed through SwiftTerm for rendering.
+struct HerdrTerminalFrame: Decodable, Equatable, Sendable {
+    let bytes: [UInt8]
+    let encoding: String
+    let full: Bool
+    let height: Int
+    let sequence: UInt64
+    let width: Int
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        guard try container.decode(String.self, forKey: .type) == "terminal.frame" else {
+            throw HerdrTerminalControlCodecError.invalidFrame
+        }
+
+        let encodedBytes = try container.decode(String.self, forKey: .bytes)
+        guard let decodedBytes = Data(base64Encoded: encodedBytes) else {
+            throw HerdrTerminalControlCodecError.invalidFrameBytes
+        }
+
+        bytes = Array(decodedBytes)
+        encoding = try container.decode(String.self, forKey: .encoding)
+        full = try container.decode(Bool.self, forKey: .full)
+        height = try container.decode(Int.self, forKey: .height)
+        sequence = try container.decode(UInt64.self, forKey: .sequence)
+        width = try container.decode(Int.self, forKey: .width)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case bytes
+        case encoding
+        case full
+        case height
+        case sequence = "seq"
+        case type
+        case width
+    }
+}
+
+enum HerdrTerminalControlCodec {
+    static func encodeScroll(
+        direction: TerminalScrollDirection,
+        lines: Int
+    ) throws -> Data {
+        guard lines > 0 else {
+            throw HerdrTerminalControlCodecError.invalidScrollLines
+        }
+
+        var data = try JSONEncoder().encode(ScrollFrame(direction: direction, lines: lines))
+        data.append(0x0a)
+        return data
+    }
+
+    static func decodeFrame(_ data: Data) throws -> HerdrTerminalFrame {
+        do {
+            return try JSONDecoder().decode(HerdrTerminalFrame.self, from: data)
+        } catch let error as HerdrTerminalControlCodecError {
+            throw error
+        } catch {
+            throw HerdrTerminalControlCodecError.invalidFrame
+        }
+    }
+
+    private struct ScrollFrame: Encodable {
+        let type = "terminal.scroll"
+        let direction: TerminalScrollDirection
+        let lines: Int
+    }
+}
+
 /// Adapts a dedicated Herdr control exec channel to the phase-3 terminal boundary.
 ///
 /// Wire format is the published CLI contract:
 /// `herdr terminal session control <target> [--takeover] [--cols N] [--rows N]`
-/// stdin: `terminal.input` / `terminal.resize` / `terminal.release`
+/// stdin: `terminal.input` / `terminal.resize` / `terminal.scroll` /
+/// `terminal.release`
+/// `terminal.scroll` was captured from Herdr 0.8.2 as
+/// `{\"type\":\"terminal.scroll\",\"direction\":\"up\",\"lines\":1}`;
+/// direction is `up` or `down`, and lines must be positive.
 /// stdout: `terminal.frame` / `terminal.closed`
 actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProviding,
     HerdrSessionAwareTerminalTransport {
@@ -106,7 +188,7 @@ actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProvidin
 }
 
 /// Encodes and decodes the published `herdr terminal session control` NDJSON stream.
-private actor HerdrControlChannel: PTYOutputChannel {
+private actor HerdrControlChannel: PTYOutputChannel, PTYScrollChannel {
     private struct InputFrame: Encodable {
         let type = "terminal.input"
         let bytes: String
@@ -177,6 +259,18 @@ private actor HerdrControlChannel: PTYOutputChannel {
         try await underlying.send(frame)
     }
 
+    func scroll(
+        direction: TerminalScrollDirection,
+        lines: Int
+    ) async throws {
+        guard !didFinish else { throw SSHInteractiveCommandError.channelClosed }
+        let frame = try HerdrTerminalControlCodec.encodeScroll(
+            direction: direction,
+            lines: lines
+        )
+        try await underlying.send(Array(frame))
+    }
+
     func close() async {
         guard !didFinish else { return }
         let frame = (try? JSONEncoder().encode(ReleaseFrame())) ?? Data()
@@ -222,11 +316,10 @@ private actor HerdrControlChannel: PTYOutputChannel {
         case "terminal.closed":
             finish()
         case "terminal.frame":
-            guard let encoded = object["bytes"] as? String,
-                  let decoded = Data(base64Encoded: encoded),
-                  !decoded.isEmpty
+            guard let frame = try? HerdrTerminalControlCodec.decodeFrame(Data(line)),
+                  !frame.bytes.isEmpty
             else { return }
-            outputContinuation.yield(Array(decoded))
+            outputContinuation.yield(frame.bytes)
         default:
             break
         }

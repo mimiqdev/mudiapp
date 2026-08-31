@@ -11,11 +11,26 @@ public struct SSHCredentials: Equatable, Sendable {
     }
 }
 
+/// The direction of a remote terminal scrollback request.
+public enum TerminalScrollDirection: String, Codable, Equatable, Sendable {
+    case up
+    case down
+}
+
 /// The byte-level PTY operations needed by an interactive shell.
 public protocol PTYChannel: Sendable {
     func send(_ bytes: [UInt8]) async throws
     func resize(columns: Int, rows: Int) async throws
     func close() async
+}
+
+/// A PTY channel whose host can provide scrollback snapshots independently
+/// from the local terminal emulator's buffer.
+public protocol PTYScrollChannel: PTYChannel {
+    func scroll(
+        direction: TerminalScrollDirection,
+        lines: Int
+    ) async throws
 }
 
 /// A PTY channel that exposes bytes received from the remote shell.
@@ -192,6 +207,25 @@ public actor SSHShellSession: ShellSession {
             throw SSHShellError.notConnected
         }
         try await channel.resize(columns: columns, rows: rows)
+    }
+
+    /// Whether this session's channel can request host-side scrollback.
+    public func supportsRemoteScrollback() -> Bool {
+        channel is any PTYScrollChannel && state == .connected
+    }
+
+    /// Requests a host-side scrollback snapshot when the channel supports it.
+    public func scroll(
+        direction: TerminalScrollDirection,
+        lines: Int
+    ) async throws {
+        guard let channel, state == .connected else {
+            throw SSHShellError.notConnected
+        }
+        guard let scrollChannel = channel as? any PTYScrollChannel else {
+            throw SSHShellError.commandExecutionUnavailable
+        }
+        try await scrollChannel.scroll(direction: direction, lines: lines)
     }
 
     public func disconnect() async {

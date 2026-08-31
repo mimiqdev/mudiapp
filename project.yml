@@ -42,6 +42,9 @@ targets:
       - path: Mudi
         excludes:
           - "**/README.md"
+    resources:
+      - path: Mudi/Resources/SymbolsNerdFontMono-Regular.ttf
+      - path: Mudi/Resources/SymbolsNerdFontMono-LICENSE.txt
     dependencies:
       - package: HerdrKit
       - package: SwiftTerm

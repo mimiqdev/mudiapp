@@ -53,6 +53,8 @@
 
 自动化测试已在仓库里且失败之后再写。
 
+- 本次切片：attached control stream 使用实测的 `terminal.scroll` 字段，并把实测的 full `terminal.frame` 交给 SwiftTerm；终端提供触屏回看、shortcut bar、选择复制粘贴和 Nerd glyph fallback。
+
 ## 完成后
 
 归档为 `archive/04-mobile-interaction.md`，将 `future/05-mosh-and-release.md` 提升为 `active_plan.md`。

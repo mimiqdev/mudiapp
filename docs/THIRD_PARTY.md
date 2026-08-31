@@ -9,6 +9,11 @@
 | SwiftTerm | 1.15.0 | VT100 / xterm emulation、iOS terminal view | MIT | SwiftPM |
 | Citadel | 0.12.1 | SSH client 高层 API | MIT | SwiftPM |
 | swift-mosh | 0.1.8 | Mosh protocol、UDP transport、state synchronization | MIT | SwiftPM |
+| Symbols Nerd Font Mono | Nerd Fonts 3.5.1 | terminal Nerd glyph fallback | MIT (license bundled with the font) | bundled TTF |
+
+The bundled font is the unmodified symbols-only release from
+<https://github.com/ryanoasis/nerd-fonts/releases/tag/v3.5.1>. Its SHA-256 is
+`fe471e538392f51910faab985fa8e192a39dd3426125edd15b71b3680df0e749`.
 
 Citadel 会传递引入 SwiftNIO、Swift Crypto 和一个 SwiftNIO SSH fork 等依赖，由 SwiftPM 统一解析。SSH 技术验证阶段需要检查该 fork 与 Apple 上游的差异、维护状态和安全更新路径。
 

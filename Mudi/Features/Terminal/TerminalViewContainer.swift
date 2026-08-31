@@ -40,11 +40,18 @@ struct TerminalViewContainer: UIViewRepresentable {
 }
 
 @MainActor
-final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegate {
-    private var session: SSHShellSession?
-    private var sessionIdentity: ObjectIdentifier?
+final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegate,
+    UIGestureRecognizerDelegate {
+    var session: SSHShellSession?
+    var sessionIdentity: ObjectIdentifier?
     private var outputTask: Task<Void, Never>?
-    private var onError: ((String) -> Void)?
+    var onError: ((String) -> Void)?
+    var remoteScrollbackEnabled = false
+    var remoteScrollGesture: UIPanGestureRecognizer?
+    var remoteScrollCapabilityTask: Task<Void, Never>?
+    var remoteScrollTask: Task<Void, Never>?
+    var remoteScrollLastTranslation: CGFloat = 0
+    var remoteScrollDistance: CGFloat = 0
 
     private enum TerminalSessionError: Error, Sendable {
         case remoteClosed
@@ -53,10 +60,19 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     override init(frame: CGRect) {
         super.init(frame: frame)
         terminalDelegate = self
+        accessibilityIdentifier = "ssh-terminal"
         isOpaque = true
         contentInsetAdjustmentBehavior = .never
         showsVerticalScrollIndicator = false
         alwaysBounceHorizontal = false
+        alwaysBounceVertical = true
+        inputAssistantItem.leadingBarButtonGroups = []
+        inputAssistantItem.trailingBarButtonGroups = []
+        inputAccessoryView = MudiTerminalShortcutBar(
+            terminalView: self,
+            onPageUp: { [weak self] in self?.pageUpFromShortcut() },
+            onPageDown: { [weak self] in self?.pageDownFromShortcut() }
+        )
     }
 
     required init?(coder: NSCoder) {
@@ -70,6 +86,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         self.onError = onError
         terminalDelegate = self
         let sessionIdentity = ObjectIdentifier(session)
+        loadRemoteScrollbackCapability(for: session, identity: sessionIdentity)
 
         outputTask = Task { [weak self, session, sessionIdentity] in
             let output = await session.outputStream()
@@ -132,24 +149,43 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         backgroundColor = appearance.background
         caretColor = appearance.foreground
         caretTextColor = appearance.background
+        (inputAccessoryView as? MudiTerminalShortcutBar)?.updateAppearance(
+            background: appearance.background,
+            foreground: appearance.foreground
+        )
     }
 
     func updateFontSize(_ fontSize: Double) {
         guard fontSize.isFinite, fontSize > 0,
               abs(font.pointSize - fontSize) > 0.001
         else { return }
-        font = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        font = TerminalFont.font(ofSize: fontSize)
     }
 
     func stop() {
         outputTask?.cancel()
         outputTask = nil
+        remoteScrollCapabilityTask?.cancel()
+        remoteScrollCapabilityTask = nil
+        remoteScrollTask?.cancel()
+        remoteScrollTask = nil
+        if let remoteScrollGesture {
+            removeGestureRecognizer(remoteScrollGesture)
+        }
+        remoteScrollGesture = nil
+        remoteScrollbackEnabled = false
+        remoteScrollDistance = 0
+        remoteScrollLastTranslation = 0
+        isScrollEnabled = true
         terminalDelegate = nil
         session = nil
         sessionIdentity = nil
         onError = nil
     }
 
+}
+
+extension ShellTerminalView {
     // MARK: TerminalViewDelegate
 
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
@@ -173,7 +209,11 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     func setTerminalTitle(source: TerminalView, title: String) {}
 
     func clipboardCopy(source: TerminalView, content: Data) {
-        UIPasteboard.general.setValue(content, forPasteboardType: "public.data")
+        if let text = String(data: content, encoding: .utf8) {
+            UIPasteboard.general.string = text
+        } else {
+            UIPasteboard.general.setValue(content, forPasteboardType: "public.data")
+        }
     }
 
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
@@ -203,7 +243,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         }
     }
 
-    private func report(_ error: Error) {
+    func report(_ error: Error) {
         let message: String
         if let shellError = error as? SSHShellError, let description = shellError.errorDescription {
             message = description
