@@ -13,7 +13,11 @@ final class MudiTerminalShortcutBar: UIInputView {
     private let scrollView = UIScrollView()
     private let stackView = UIStackView()
     private let dismissKeyboardButton = UIButton(type: .system)
+    private let compositionLabel = UILabel()
     private var buttons: [UIButton] = []
+    private var shortcutButtons: [UIButton] = []
+    private var isShowingComposition = false
+    private var shortcutContentOffset = CGPoint.zero
     private weak var controlButton: UIButton?
     private weak var altButton: UIButton?
     private weak var mouseButton: UIButton?
@@ -69,11 +73,42 @@ extension MudiTerminalShortcutBar {
         backgroundColor = background
         foregroundColor = foreground
         normalBackgroundColor = foreground.withAlphaComponent(0.14)
+        compositionLabel.textColor = foregroundColor
+        compositionLabel.backgroundColor = normalBackgroundColor
         for button in buttons {
             button.setTitleColor(foregroundColor, for: .normal)
             button.setTitleColor(.white, for: .selected)
             button.tintColor = foregroundColor
             style(button)
+        }
+    }
+
+    func updateComposition(markedText: String?) {
+        let text = markedText?.isEmpty == false ? markedText : nil
+        let wasShowingComposition = isShowingComposition
+        let shouldShowComposition = text != nil
+
+        if shouldShowComposition, !wasShowingComposition {
+            shortcutContentOffset = scrollView.contentOffset
+        }
+        isShowingComposition = shouldShowComposition
+        compositionLabel.text = text
+        compositionLabel.isHidden = !shouldShowComposition
+        compositionLabel.accessibilityLabel = text.map { "Composing \($0)" }
+        shortcutButtons.forEach { $0.isHidden = shouldShowComposition }
+
+        if shouldShowComposition {
+            setNeedsLayout()
+            layoutIfNeeded()
+            let maximumOffset = max(0, scrollView.contentSize.width - scrollView.bounds.width)
+            scrollView.setContentOffset(
+                CGPoint(x: maximumOffset, y: scrollView.contentOffset.y),
+                animated: false
+            )
+        } else if wasShowingComposition {
+            setNeedsLayout()
+            layoutIfNeeded()
+            scrollView.setContentOffset(shortcutContentOffset, animated: false)
         }
     }
 
@@ -84,6 +119,7 @@ extension MudiTerminalShortcutBar {
     private func setupView() {
         setupScrollView()
         addShortcutButtons()
+        addCompositionLabel()
         addDismissKeyboardButton()
     }
 
@@ -221,6 +257,25 @@ extension MudiTerminalShortcutBar {
         mouseButton?.accessibilityLabel = "Mouse reporting"
     }
 
+    private func addCompositionLabel() {
+        compositionLabel.translatesAutoresizingMaskIntoConstraints = false
+        compositionLabel.font = UIFont.monospacedSystemFont(
+            ofSize: UIFont.preferredFont(forTextStyle: .body).pointSize,
+            weight: .regular
+        )
+        compositionLabel.adjustsFontForContentSizeCategory = true
+        compositionLabel.numberOfLines = 1
+        compositionLabel.lineBreakMode = .byClipping
+        compositionLabel.textAlignment = .left
+        compositionLabel.isHidden = true
+        compositionLabel.accessibilityIdentifier = "terminal-ime-composition"
+        compositionLabel.accessibilityTraits = [.staticText]
+        compositionLabel.setContentHuggingPriority(.required, for: .horizontal)
+        compositionLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        compositionLabel.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        stackView.addArrangedSubview(compositionLabel)
+    }
+
     private func addDismissKeyboardButton() {
         dismissKeyboardButton.translatesAutoresizingMaskIntoConstraints = false
         dismissKeyboardButton.setImage(
@@ -280,6 +335,7 @@ extension MudiTerminalShortcutBar {
         button.heightAnchor.constraint(equalToConstant: 32).isActive = true
         stackView.addArrangedSubview(button)
         buttons.append(button)
+        shortcutButtons.append(button)
         return button
     }
 

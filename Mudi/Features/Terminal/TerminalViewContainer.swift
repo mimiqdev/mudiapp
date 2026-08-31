@@ -7,42 +7,31 @@ struct TerminalViewContainer: UIViewRepresentable {
     let fontSize: Double
     let colorScheme: ColorScheme
     let onError: (String) -> Void
-    let onCompositionChange: (String?) -> Void
 
     init(
         session: SSHShellSession,
         fontSize: Double = 14,
         colorScheme: ColorScheme,
-        onError: @escaping (String) -> Void,
-        onCompositionChange: @escaping (String?) -> Void = { _ in }
+        onError: @escaping (String) -> Void
     ) {
         self.session = session
         self.fontSize = fontSize
         self.colorScheme = colorScheme
         self.onError = onError
-        self.onCompositionChange = onCompositionChange
     }
 
     func makeUIView(context: Context) -> ShellTerminalView {
         let terminalView = ShellTerminalView(frame: .zero)
         terminalView.updateAppearance(for: colorScheme)
         terminalView.updateFontSize(fontSize)
-        terminalView.start(
-            session: session,
-            onError: onError,
-            onCompositionChange: onCompositionChange
-        )
+        terminalView.start(session: session, onError: onError)
         return terminalView
     }
 
     func updateUIView(_ terminalView: ShellTerminalView, context: Context) {
         terminalView.updateAppearance(for: colorScheme)
         terminalView.updateFontSize(fontSize)
-        terminalView.updateSession(
-            session: session,
-            onError: onError,
-            onCompositionChange: onCompositionChange
-        )
+        terminalView.updateSession(session: session, onError: onError)
     }
 
     static func dismantleUIView(_ terminalView: ShellTerminalView, coordinator: ()) {
@@ -57,7 +46,6 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     var sessionIdentity: ObjectIdentifier?
     private var outputTask: Task<Void, Never>?
     var onError: ((String) -> Void)?
-    var onCompositionChange: ((String?) -> Void)?
     private var compositionInputDelegate: TerminalCompositionInputDelegate?
     private var compositionState = TerminalCompositionState()
     var remoteScrollbackEnabled = false
@@ -102,14 +90,12 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
 
     func start(
         session: SSHShellSession,
-        onError: @escaping (String) -> Void,
-        onCompositionChange: @escaping (String?) -> Void
+        onError: @escaping (String) -> Void
     ) {
         guard outputTask == nil else { return }
         self.session = session
         sessionIdentity = ObjectIdentifier(session)
         self.onError = onError
-        self.onCompositionChange = onCompositionChange
         installCompositionInputDelegate()
         terminalDelegate = self
         let sessionIdentity = ObjectIdentifier(session)
@@ -161,18 +147,12 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
 
     func updateSession(
         session: SSHShellSession,
-        onError: @escaping (String) -> Void,
-        onCompositionChange: @escaping (String?) -> Void
+        onError: @escaping (String) -> Void
     ) {
         self.onError = onError
-        self.onCompositionChange = onCompositionChange
         guard sessionIdentity != ObjectIdentifier(session) else { return }
         stop()
-        start(
-            session: session,
-            onError: onError,
-            onCompositionChange: onCompositionChange
-        )
+        start(session: session, onError: onError)
     }
 
     func updateAppearance(for colorScheme: ColorScheme) {
@@ -218,12 +198,11 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         isScrollEnabled = true
         compositionInputDelegate?.onTextChange = nil
         compositionState.update(markedText: nil)
-        onCompositionChange?(nil)
+        (inputAccessoryView as? MudiTerminalShortcutBar)?.updateComposition(markedText: nil)
         terminalDelegate = nil
         session = nil
         sessionIdentity = nil
         onError = nil
-        onCompositionChange = nil
     }
 
     private func installCompositionInputDelegate() {
@@ -244,8 +223,12 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         } else {
             markedText = nil
         }
+        let previousText = compositionState.visibleText
         compositionState.update(markedText: markedText)
-        onCompositionChange?(compositionState.visibleText)
+        guard previousText != compositionState.visibleText else { return }
+        (inputAccessoryView as? MudiTerminalShortcutBar)?.updateComposition(
+            markedText: compositionState.visibleText
+        )
     }
 
 }

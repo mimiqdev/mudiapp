@@ -13,7 +13,6 @@ struct TerminalScreen: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var errorMessage: String?
-    @State private var compositionText: String?
     @State private var isLeaving = false
 
     init(
@@ -41,15 +40,11 @@ struct TerminalScreen: View {
             TerminalViewContainer(
                 session: session,
                 fontSize: fontSize,
-                colorScheme: colorScheme,
-                onError: { message in
-                    guard !suppressConnectionErrors, !isLeaving else { return }
-                    errorMessage = message
-                },
-                onCompositionChange: { markedText in
-                    compositionText = markedText
-                }
-            )
+                colorScheme: colorScheme
+            ) { message in
+                guard !suppressConnectionErrors, !isLeaving else { return }
+                errorMessage = message
+            }
             .background(Color(uiColor: terminalAppearance.background))
 
             if let errorMessage {
@@ -64,24 +59,6 @@ struct TerminalScreen: View {
                     .accessibilityIdentifier("ssh-terminal-error")
             }
 
-            if let compositionText {
-                Text(compositionText)
-                    .font(.system(size: CGFloat(max(fontSize, 12)), design: .monospaced))
-                    .foregroundStyle(Color(uiColor: terminalAppearance.foreground))
-                    .underline()
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(
-                        Color(uiColor: terminalAppearance.background).opacity(0.96),
-                        in: RoundedRectangle(cornerRadius: 6)
-                    )
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 12)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                    .allowsHitTesting(false)
-                    .accessibilityIdentifier("terminal-ime-composition")
-                    .accessibilityLabel("Composing \(compositionText)")
-            }
         }
         .background(Color(uiColor: terminalAppearance.background))
         .onAppear {
