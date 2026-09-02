@@ -26,6 +26,26 @@ struct HerdrSessionSummary: Equatable, Sendable {
     }
 }
 
+/// The IDs returned by the official `herdr workspace create` response. The
+/// root pane ID is used to take over the newly created workspace immediately.
+struct HerdrWorkspaceCreation: Equatable, Sendable {
+    let workspaceID: String
+    let tabID: String
+    let rootPaneID: Pane.ID
+
+    init(workspaceID: String, tabID: String, rootPaneID: Pane.ID) {
+        self.workspaceID = workspaceID
+        self.tabID = tabID
+        self.rootPaneID = rootPaneID
+    }
+}
+
+/// The remote Herdr command boundary for creating a workspace without
+/// changing focus or creating a Git worktree.
+protocol HerdrWorkspaceCreating: Sendable {
+    func createWorkspace() async throws -> HerdrWorkspaceCreation
+}
+
 /// Provides the terminal session created by a successful pane attach.
 protocol HerdrTerminalSessionProviding: Sendable {
     func terminalSession() async -> SSHShellSession?
@@ -121,11 +141,14 @@ extension Pane {
 
 enum HerdrWorkflowError: Error, Equatable, LocalizedError, Sendable {
     case noConnectedHost
+    case workspaceCreationUnavailable
 
     var errorDescription: String? {
         switch self {
         case .noConnectedHost:
             "Connect to an SSH host before opening a terminal."
+        case .workspaceCreationUnavailable:
+            "Workspace creation is unavailable on this connection."
         }
     }
 }
@@ -457,4 +480,13 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
 extension HerdrWorkflowCoordinator:
     HerdrSnapshotProviding,
     HerdrSessionPaneSelecting,
-    HerdrExistingConnectionTerminalOpening {}
+    HerdrExistingConnectionTerminalOpening,
+    HerdrWorkspaceCreating
+{
+    func createWorkspace() async throws -> HerdrWorkspaceCreation {
+        guard let creator = discovery as? any HerdrWorkspaceCreating else {
+            throw HerdrWorkflowError.workspaceCreationUnavailable
+        }
+        return try await creator.createWorkspace()
+    }
+}

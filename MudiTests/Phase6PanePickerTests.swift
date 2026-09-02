@@ -4,6 +4,48 @@ import XCTest
 @testable import Mudi
 
 final class Phase6PanePickerTests: XCTestCase {
+    func testPanePickerCompactPresentationUsesMediumLargeAndDragIndicator() {
+        let policy = PanePickerPresentationPolicy.compactSheet
+
+        XCTAssertEqual(policy.compactDetents, [.medium, .large])
+        XCTAssertTrue(policy.showsDragIndicator)
+    }
+
+    func testPanePickerDismissalUsesNativeSystemInteraction() {
+        // Outside taps at medium, swipe-down, and popover outside taps are
+        // handled by the system sheet and flow through the presentation
+        // Binding into dismissPanePicker(). Custom gesture bridges broke
+        // detent dragging and must not return.
+        XCTAssertTrue(
+            PanePickerPresentationPolicy.compactSheet
+                .usesSystemInteractiveDismissal
+        )
+    }
+
+    func testIPadPopoverUsesFullHeightSidePanel() {
+        // iPad Pro 11" landscape: a narrow full-height panel, not a small
+        // card floating in the top-leading corner.
+        let landscape = PanePickerPresentationPolicy.popoverContentSize(
+            for: CGSize(width: 1180, height: 820)
+        )
+        XCTAssertEqual(landscape.width, 420)
+        XCTAssertEqual(landscape.height, 796)
+
+        // Portrait: width is floored to a readable minimum, height still
+        // fills the screen.
+        let portrait = PanePickerPresentationPolicy.popoverContentSize(
+            for: CGSize(width: 820, height: 1180)
+        )
+        XCTAssertEqual(portrait.width, 320)
+        XCTAssertEqual(portrait.height, 1156)
+
+        // Odd/small containers keep a usable minimum height.
+        let small = PanePickerPresentationPolicy.popoverContentSize(
+            for: CGSize(width: 375, height: 400)
+        )
+        XCTAssertEqual(small.height, 420)
+    }
+
     func testSuccessfulHostConnectionPresentsPanePickerInsteadOfLegacyHerdrBrowser() async throws {
         let fixture = try Phase3HerdrFixtures.single()
         let application = makeMissingPhase6Application(

@@ -75,7 +75,7 @@ struct Phase4KnownHostKeyStore: KnownHostKeyStore {
 actor Phase4TerminalTransport: TerminalTransport, HerdrTerminalSessionProviding {
     nonisolated let kind: ActiveTransport = .ssh
 
-    private let missingPaneIDs: Set<Pane.ID>
+    private var missingPaneIDs: Set<Pane.ID>
     private var baseSession: SSHShellSession?
     private var terminalSessionValue: SSHShellSession?
     private var connectedHosts: [Host] = []
@@ -83,6 +83,10 @@ actor Phase4TerminalTransport: TerminalTransport, HerdrTerminalSessionProviding 
 
     init(missingPaneIDs: Set<Pane.ID> = []) {
         self.missingPaneIDs = missingPaneIDs
+    }
+
+    func setMissingPaneIDs(_ paneIDs: Set<Pane.ID>) {
+        missingPaneIDs = paneIDs
     }
 
     func setTerminalSession(_ session: SSHShellSession) {
@@ -128,9 +132,79 @@ actor Phase4TerminalTransport: TerminalTransport, HerdrTerminalSessionProviding 
     }
 }
 
+actor Phase4OutputChannel: PTYOutputChannel {
+    private let output: AsyncThrowingStream<[UInt8], Error>
+    private var continuation: AsyncThrowingStream<[UInt8], Error>.Continuation
+
+    init() {
+        var continuation: AsyncThrowingStream<[UInt8], Error>.Continuation!
+        output = AsyncThrowingStream { continuation = $0 }
+        self.continuation = continuation
+    }
+
+    func outputStream() async -> AsyncThrowingStream<[UInt8], Error> {
+        output
+    }
+
+    func finish() {
+        continuation.finish()
+    }
+
+    func send(_: [UInt8]) async throws {}
+
+    func resize(columns _: Int, rows _: Int) async throws {}
+
+    func close() async {
+        continuation.finish()
+    }
+}
+
+struct Phase4MoshTransport: MoshTransportBootstrapping {
+    func connect(
+        to _: Host,
+        credentials _: SSHCredentials,
+        using _: SSHShellSession
+    ) async throws -> SSHShellSession {
+        SSHShellSession(connectedChannel: Phase4MoshPTY())
+    }
+
+    func disconnect() async {}
+}
+
+private struct Phase4MoshPTY: PTYChannel {
+    func send(_: [UInt8]) async throws {}
+
+    func resize(columns _: Int, rows _: Int) async throws {}
+
+    func close() async {}
+}
+
 struct Phase4WorkflowFactory: HerdrWorkflowFactory {
     let fixture: Phase3HerdrFixture
     let transport: Phase4TerminalTransport
+    let workspaceCreation: HerdrWorkspaceCreation?
+    let workspaceSnapshotAfterCreation: HerdrSnapshot?
+    let workspaceCreationShouldFail: Bool
+    let workspaceCreationGate: Phase2ConnectionGate?
+    let workspaceCreationRecorder: Phase6WorkspaceCreationRecorder?
+
+    init(
+        fixture: Phase3HerdrFixture,
+        transport: Phase4TerminalTransport,
+        workspaceCreation: HerdrWorkspaceCreation? = nil,
+        workspaceSnapshotAfterCreation: HerdrSnapshot? = nil,
+        workspaceCreationShouldFail: Bool = false,
+        workspaceCreationGate: Phase2ConnectionGate? = nil,
+        workspaceCreationRecorder: Phase6WorkspaceCreationRecorder? = nil
+    ) {
+        self.fixture = fixture
+        self.transport = transport
+        self.workspaceCreation = workspaceCreation
+        self.workspaceSnapshotAfterCreation = workspaceSnapshotAfterCreation
+        self.workspaceCreationShouldFail = workspaceCreationShouldFail
+        self.workspaceCreationGate = workspaceCreationGate
+        self.workspaceCreationRecorder = workspaceCreationRecorder
+    }
 
     func makeWorkflow(
         for session: SSHShellSession,
@@ -138,7 +212,14 @@ struct Phase4WorkflowFactory: HerdrWorkflowFactory {
     ) async -> any HerdrWorkflowCoordinating {
         await transport.setTerminalSession(session)
         return HerdrWorkflowCoordinator(
-            discovery: Phase3HerdrDiscovery(fixture: fixture),
+            discovery: Phase3HerdrDiscovery(
+                fixture: fixture,
+                workspaceCreation: workspaceCreation,
+                snapshotAfterWorkspaceCreation: workspaceSnapshotAfterCreation,
+                workspaceCreationShouldFail: workspaceCreationShouldFail,
+                workspaceCreationGate: workspaceCreationGate,
+                workspaceCreationRecorder: workspaceCreationRecorder
+            ),
             transport: transport,
             lastPaneID: rememberedPaneID
         )
@@ -153,6 +234,7 @@ final class Phase4NavigationApplication {
     let coordinator: ApplicationCoordinator
     let transport: Phase4TerminalTransport
     let panePickerScheduler: Phase6TestScheduler
+    let workspaceCreationRecorder: Phase6WorkspaceCreationRecorder
 
     private let knownHostKeys: Phase4KnownHostKeys
     private let hostKeyFingerprint = "SHA256:phase4-test-key"
@@ -166,25 +248,38 @@ final class Phase4NavigationApplication {
         client: Phase2SSHClient = Phase2SSHClient(
             presentedFingerprint: "SHA256:phase4-test-key"
         ),
+        moshTransport: any MoshTransportBootstrapping = SwiftMoshAdapter(),
         preferencesStore: (any PreferencesStore)? = nil,
         panePickerScheduler: Phase6TestScheduler = Phase6TestScheduler(),
+        workspaceCreation: HerdrWorkspaceCreation? = nil,
+        workspaceSnapshotAfterCreation: HerdrSnapshot? = nil,
+        workspaceCreationShouldFail: Bool = false,
+        workspaceCreationGate: Phase2ConnectionGate? = nil,
+        workspaceCreationRecorder: Phase6WorkspaceCreationRecorder = Phase6WorkspaceCreationRecorder(),
         rememberedPaneID: Pane.ID? = nil,
         rememberedPaneHostID: Host.ID? = nil
     ) {
         self.transport = transport
         self.panePickerScheduler = panePickerScheduler
+        self.workspaceCreationRecorder = workspaceCreationRecorder
         self.knownHostKeys = knownHostKeys
         coordinator = ApplicationCoordinator(
             hostStore: JSONHostStore(fileURL: hostFileURL),
             credentialStore: Phase4CredentialStore(vault: credentialVault),
             knownHostKeyStore: Phase4KnownHostKeyStore(knownHostKeys: knownHostKeys),
-            client: client
+            client: client,
+            moshTransport: moshTransport
         )
         model = RootViewModel(
             coordinator: coordinator,
             workflowFactory: Phase4WorkflowFactory(
                 fixture: fixture,
-                transport: transport
+                transport: transport,
+                workspaceCreation: workspaceCreation,
+                workspaceSnapshotAfterCreation: workspaceSnapshotAfterCreation,
+                workspaceCreationShouldFail: workspaceCreationShouldFail,
+                workspaceCreationGate: workspaceCreationGate,
+                workspaceCreationRecorder: workspaceCreationRecorder
             ),
             preferencesStore: preferencesStore ?? UserDefaultsPreferencesStore(),
             panePickerScheduler: panePickerScheduler,
@@ -216,8 +311,14 @@ func makePhase4NavigationApplication(
     client: Phase2SSHClient = Phase2SSHClient(
         presentedFingerprint: "SHA256:phase4-test-key"
     ),
+    moshTransport: any MoshTransportBootstrapping = SwiftMoshAdapter(),
     preferencesStore: (any PreferencesStore)? = nil,
     panePickerScheduler: Phase6TestScheduler = Phase6TestScheduler(),
+    workspaceCreation: HerdrWorkspaceCreation? = nil,
+    workspaceSnapshotAfterCreation: HerdrSnapshot? = nil,
+    workspaceCreationShouldFail: Bool = false,
+    workspaceCreationGate: Phase2ConnectionGate? = nil,
+    workspaceCreationRecorder: Phase6WorkspaceCreationRecorder = Phase6WorkspaceCreationRecorder(),
     rememberedPaneID: Pane.ID? = nil,
     rememberedPaneHostID: Host.ID? = nil
 ) -> Phase4NavigationApplication {
@@ -228,8 +329,14 @@ func makePhase4NavigationApplication(
         credentialVault: credentialVault,
         knownHostKeys: knownHostKeys,
         client: client,
+        moshTransport: moshTransport,
         preferencesStore: preferencesStore,
         panePickerScheduler: panePickerScheduler,
+        workspaceCreation: workspaceCreation,
+        workspaceSnapshotAfterCreation: workspaceSnapshotAfterCreation,
+        workspaceCreationShouldFail: workspaceCreationShouldFail,
+        workspaceCreationGate: workspaceCreationGate,
+        workspaceCreationRecorder: workspaceCreationRecorder,
         rememberedPaneID: rememberedPaneID,
         rememberedPaneHostID: rememberedPaneHostID
     )

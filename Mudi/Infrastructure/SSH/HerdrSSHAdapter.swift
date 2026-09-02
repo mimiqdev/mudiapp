@@ -103,14 +103,30 @@ enum HerdrTerminalControlCodec {
 /// `{\"type\":\"terminal.scroll\",\"direction\":\"up\",\"lines\":1}`;
 /// direction is `up` or `down`, and lines must be positive.
 /// stdout: `terminal.frame` / `terminal.closed`
+/// The last terminal geometry the app actually used. Takeover starts the
+/// control session at this size instead of a hardcoded default so the
+/// remote TUI is never laid out twice (default size, then real size).
+struct HerdrTerminalSize: Equatable, Sendable {
+    let columns: Int
+    let rows: Int
+
+    static let fallback = HerdrTerminalSize(columns: 80, rows: 24)
+}
+
 actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProviding,
     HerdrSessionAwareTerminalTransport, HerdrPaneControlReleasing {
     nonisolated let kind: ActiveTransport = .ssh
     private let session: SSHShellSession
     private var attachedSession: SSHShellSession?
+    private var lastTerminalSize: HerdrTerminalSize?
 
     init(session: SSHShellSession) {
         self.session = session
+    }
+
+    /// The size a takeover would start with right now. Exposed for tests.
+    var currentTakeoverSize: HerdrTerminalSize {
+        lastTerminalSize ?? .fallback
     }
 
     func connect(to _: Host) async throws {}
@@ -129,8 +145,12 @@ actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProvidin
         let sessionOption = sessionName.map {
             "--session \(SSHLoginShellCommand.shellQuote($0)) "
         } ?? ""
-        let inner =
-            "exec herdr \(sessionOption)terminal session control \(target) --takeover --cols 80 --rows 24"
+        let size = currentTakeoverSize
+        let inner = Self.takeoverInnerCommand(
+            target: target,
+            sessionOption: sessionOption,
+            size: size
+        )
         let command =
             "\"${SHELL:-/bin/sh}\" -lc \(SSHLoginShellCommand.shellQuote(inner))"
         let channel: any PTYOutputChannel
@@ -142,13 +162,34 @@ actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProvidin
             throw SSHHerdrTerminalTransportError.attachFailed
         }
 
-        let controlChannel = HerdrControlChannel(underlying: channel)
+        let controlChannel = HerdrControlChannel(
+            underlying: channel,
+            initialSize: size
+        )
+        await controlChannel.setResizeObserver { [weak self] columns, rows in
+            Task {
+                await self?.recordTerminalSize(columns: columns, rows: rows)
+            }
+        }
         await controlChannel.start()
         let newSession = SSHShellSession(connectedChannel: controlChannel)
         if let previousSession = attachedSession {
             await previousSession.disconnect()
         }
         attachedSession = newSession
+    }
+
+    static func takeoverInnerCommand(
+        target: String,
+        sessionOption: String,
+        size: HerdrTerminalSize
+    ) -> String {
+        "exec herdr \(sessionOption)terminal session control \(target) --takeover --cols \(size.columns) --rows \(size.rows)"
+    }
+
+    func recordTerminalSize(columns: Int, rows: Int) {
+        guard columns > 0, rows > 0 else { return }
+        lastTerminalSize = HerdrTerminalSize(columns: columns, rows: rows)
     }
 
     func terminalSession() async -> SSHShellSession? {
@@ -192,7 +233,7 @@ actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProvidin
 }
 
 /// Encodes and decodes the published `herdr terminal session control` NDJSON stream.
-private actor HerdrControlChannel: PTYOutputChannel, PTYScrollChannel {
+actor HerdrControlChannel: PTYOutputChannel, PTYScrollChannel {
     private struct InputFrame: Encodable {
         let type = "terminal.input"
         let bytes: String
@@ -214,12 +255,24 @@ private actor HerdrControlChannel: PTYOutputChannel, PTYScrollChannel {
     private var forwardingTask: Task<Void, Never>?
     private var pendingOutput: [UInt8] = []
     private var didFinish = false
+    private var lastSentSize: HerdrTerminalSize?
+    private var onResize: (@Sendable (Int, Int) -> Void)?
 
-    init(underlying: any PTYOutputChannel) {
+    init(
+        underlying: any PTYOutputChannel,
+        initialSize: HerdrTerminalSize? = nil
+    ) {
         self.underlying = underlying
+        lastSentSize = initialSize
         var continuation: AsyncThrowingStream<[UInt8], Error>.Continuation!
         output = AsyncThrowingStream(bufferingPolicy: .unbounded) { continuation = $0 }
         outputContinuation = continuation
+    }
+
+    func setResizeObserver(
+        _ observer: @escaping @Sendable (Int, Int) -> Void
+    ) {
+        onResize = observer
     }
 
     func start() {
@@ -256,11 +309,18 @@ private actor HerdrControlChannel: PTYOutputChannel, PTYScrollChannel {
     func resize(columns: Int, rows: Int) async throws {
         guard !didFinish else { throw SSHInteractiveCommandError.channelClosed }
         guard columns > 0, rows > 0 else { return }
+        let size = HerdrTerminalSize(columns: columns, rows: rows)
+        // A takeover already started this control session at the recorded
+        // size; forwarding an identical resize would make the remote TUI
+        // lay itself out again for no reason.
+        guard size != lastSentSize else { return }
         var frame = Array(try JSONEncoder().encode(
             ResizeFrame(cols: columns, rows: rows)
         ))
         frame.append(0x0a)
         try await underlying.send(frame)
+        lastSentSize = size
+        onResize?(columns, rows)
     }
 
     func scroll(

@@ -6,32 +6,58 @@ struct TerminalViewContainer: UIViewRepresentable {
     let session: SSHShellSession
     let fontSize: Double
     let colorScheme: ColorScheme
+    let isInputFocusAllowed: Bool
+    let shouldRestoreInputFocus: Bool
+    let onInputFocusChange: ((Bool) -> Void)?
     let onError: (String) -> Void
+    let onClosed: () -> Void
 
     init(
         session: SSHShellSession,
         fontSize: Double = 14,
         colorScheme: ColorScheme,
+        isInputFocusAllowed: Bool = true,
+        shouldRestoreInputFocus: Bool = false,
+        onInputFocusChange: ((Bool) -> Void)? = nil,
+        onClosed: @escaping () -> Void = {},
         onError: @escaping (String) -> Void
     ) {
         self.session = session
         self.fontSize = fontSize
         self.colorScheme = colorScheme
+        self.isInputFocusAllowed = isInputFocusAllowed
+        self.shouldRestoreInputFocus = shouldRestoreInputFocus
+        self.onInputFocusChange = onInputFocusChange
         self.onError = onError
+        self.onClosed = onClosed
     }
 
     func makeUIView(context: Context) -> ShellTerminalView {
         let terminalView = ShellTerminalView(frame: .zero)
         terminalView.updateAppearance(for: colorScheme)
         terminalView.updateFontSize(fontSize)
-        terminalView.start(session: session, onError: onError)
+        terminalView.shouldRestoreInputFocus = shouldRestoreInputFocus
+        terminalView.onInputFocusChange = onInputFocusChange
+        terminalView.start(
+            session: session,
+            onError: onError,
+            onClosed: onClosed
+        )
+        terminalView.updateInputFocus(isAllowed: isInputFocusAllowed)
         return terminalView
     }
 
     func updateUIView(_ terminalView: ShellTerminalView, context: Context) {
         terminalView.updateAppearance(for: colorScheme)
         terminalView.updateFontSize(fontSize)
-        terminalView.updateSession(session: session, onError: onError)
+        terminalView.shouldRestoreInputFocus = shouldRestoreInputFocus
+        terminalView.onInputFocusChange = onInputFocusChange
+        terminalView.updateInputFocus(isAllowed: isInputFocusAllowed)
+        terminalView.updateSession(
+            session: session,
+            onError: onError,
+            onClosed: onClosed
+        )
     }
 
     static func dismantleUIView(_ terminalView: ShellTerminalView, coordinator: ()) {
@@ -44,8 +70,19 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     UIGestureRecognizerDelegate {
     var session: SSHShellSession?
     var sessionIdentity: ObjectIdentifier?
+    private(set) var isInputFocusAllowed = true
+    /// Mirrors UIKit's own state restoration: when the terminal had keyboard
+    /// focus before a background retakeover replaced its control session,
+    /// the recreated view reacquires focus once it is ready.
+    var shouldRestoreInputFocus = false
+    var onInputFocusChange: ((Bool) -> Void)?
+    private var suppressFocusCallbacks = false
+    private(set) var becomeFirstResponderRequestCount = 0
+    private(set) var resignFirstResponderRequestCount = 0
     private var outputTask: Task<Void, Never>?
+    private var didCloseNormally = false
     var onError: ((String) -> Void)?
+    var onClosed: (() -> Void)?
     private var compositionInputDelegate: TerminalCompositionInputDelegate?
     private var compositionState = TerminalCompositionState()
     var remoteScrollbackEnabled = false
@@ -55,10 +92,6 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     var remoteScrollLastTranslation: CGFloat = 0
     var remoteScrollDistance: CGFloat = 0
     var remoteScrollInertiaTask: Task<Void, Never>?
-
-    private enum TerminalSessionError: Error, Sendable {
-        case remoteClosed
-    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -88,14 +121,43 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func becomeFirstResponder() -> Bool {
+        becomeFirstResponderRequestCount += 1
+        let didBecome = super.becomeFirstResponder()
+        if didBecome, !suppressFocusCallbacks {
+            onInputFocusChange?(true)
+        }
+        return didBecome
+    }
+
+    override func resignFirstResponder() -> Bool {
+        resignFirstResponderRequestCount += 1
+        let didResign = super.resignFirstResponder()
+        if didResign, !suppressFocusCallbacks {
+            onInputFocusChange?(false)
+        }
+        return didResign
+    }
+
+    func updateInputFocus(isAllowed: Bool) {
+        let wasAllowed = isInputFocusAllowed
+        isInputFocusAllowed = isAllowed
+        guard !isAllowed, wasAllowed || isFirstResponder else { return }
+        _ = resignFirstResponder()
+    }
+
     func start(
         session: SSHShellSession,
-        onError: @escaping (String) -> Void
+        onError: @escaping (String) -> Void,
+        onClosed: @escaping () -> Void = {}
     ) {
         guard outputTask == nil else { return }
         self.session = session
         sessionIdentity = ObjectIdentifier(session)
         self.onError = onError
+        self.onClosed = onClosed
+        didCloseNormally = false
+        suppressFocusCallbacks = false
         installCompositionInputDelegate()
         terminalDelegate = self
         let sessionIdentity = ObjectIdentifier(session)
@@ -129,30 +191,40 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
                   let self,
                   self.sessionIdentity == sessionIdentity
             else { return }
+            self.didCloseNormally = true
             await session.disconnect()
             guard !Task.isCancelled,
                   self.sessionIdentity == sessionIdentity
             else { return }
-            self.report(TerminalSessionError.remoteClosed)
+            self.onClosed?()
         }
 
         DispatchQueue.main.async { [weak self] in
             guard let self,
                   self.sessionIdentity == sessionIdentity
             else { return }
-            _ = becomeFirstResponder()
+            if shouldRestoreInputFocus, isInputFocusAllowed {
+                shouldRestoreInputFocus = false
+                _ = becomeFirstResponder()
+            }
             sendCurrentSize()
         }
     }
 
     func updateSession(
         session: SSHShellSession,
-        onError: @escaping (String) -> Void
+        onError: @escaping (String) -> Void,
+        onClosed: @escaping () -> Void = {}
     ) {
         self.onError = onError
+        self.onClosed = onClosed
         guard sessionIdentity != ObjectIdentifier(session) else { return }
         stop()
-        start(session: session, onError: onError)
+        start(
+            session: session,
+            onError: onError,
+            onClosed: onClosed
+        )
     }
 
     func updateAppearance(for colorScheme: ColorScheme) {
@@ -180,6 +252,10 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     }
 
     func stop() {
+        // UIKit resigns first responder when the view leaves the window. That
+        // implicit resign is teardown, not a user keyboard dismissal, so it
+        // must not clear the remembered focus used for restoration.
+        suppressFocusCallbacks = true
         outputTask?.cancel()
         outputTask = nil
         remoteScrollCapabilityTask?.cancel()
@@ -200,9 +276,11 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         compositionState.update(markedText: nil)
         (inputAccessoryView as? MudiTerminalShortcutBar)?.updateComposition(markedText: nil)
         terminalDelegate = nil
+        didCloseNormally = false
         session = nil
         sessionIdentity = nil
         onError = nil
+        onClosed = nil
     }
 
     private func installCompositionInputDelegate() {
@@ -292,6 +370,7 @@ extension ShellTerminalView {
     }
 
     func report(_ error: Error) {
+        guard !didCloseNormally else { return }
         let message: String
         if let shellError = error as? SSHShellError, let description = shellError.errorDescription {
             message = description

@@ -342,9 +342,12 @@ actor HerdrPanePickerCoordinator<
 
     /// Manual and scheduled refreshes share this method. The actor flag is
     /// necessary because an actor can still be re-entered while discovery is
-    /// suspended on network I/O.
+    /// suspended on network I/O. Callers wait for an already-running refresh
+    /// before beginning their own so actions such as workspace creation cannot
+    /// race a stale snapshot.
     func refreshPicker() async -> PanePickerNavigationState {
-        await refreshPicker(generation: nil)
+        await waitForRefreshToFinish()
+        return await refreshPicker(generation: nil)
     }
 
     func dismissPicker() async -> PanePickerNavigationState {
@@ -508,13 +511,7 @@ actor HerdrPanePickerCoordinator<
         scheduledRefreshID = id
     }
 
-    private func cancelRefresh() async {
-        refreshGeneration = UUID()
-        refreshCancellation.invalidate()
-        if let scheduledRefreshID {
-            await scheduler.cancel(scheduledRefreshID)
-            self.scheduledRefreshID = nil
-        }
+    private func waitForRefreshToFinish() async {
         guard refreshInFlight else { return }
         await withCheckedContinuation { continuation in
             if refreshInFlight {
@@ -523,6 +520,16 @@ actor HerdrPanePickerCoordinator<
                 continuation.resume()
             }
         }
+    }
+
+    private func cancelRefresh() async {
+        refreshGeneration = UUID()
+        refreshCancellation.invalidate()
+        if let scheduledRefreshID {
+            await scheduler.cancel(scheduledRefreshID)
+            self.scheduledRefreshID = nil
+        }
+        await waitForRefreshToFinish()
     }
 
     private func finishRefresh() {

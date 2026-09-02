@@ -6,12 +6,13 @@ final class RootViewModel: ObservableObject {
     @Published private(set) var hosts: [Host] = []
     @Published private(set) var activeConnection: ActiveSSHConnection?
     @Published private(set) var herdrState: HerdrBrowserState?
-    @Published private(set) var panePicker: PanePickerState?
-    @Published private(set) var isPanePickerPresented = false
+    @Published var panePicker: PanePickerState?
+    @Published var isPanePickerPresented = false
+    @Published var isCreatingWorkspace = false
     @Published private(set) var hasLastPane = false
     @Published private(set) var hasMultipleHerdrSessions = false
     @Published private(set) var isTearingDown = false
-    @Published private(set) var isPaneControlSuspended = false
+    @Published var isPaneControlSuspended = false
     @Published private(set) var connectionState: ConnectionState = .idle
     @Published private(set) var activeTransport: ActiveTransport?
     @Published private(set) var preferences = TerminalPreferences()
@@ -23,21 +24,37 @@ final class RootViewModel: ObservableObject {
     let preferencesStore: any PreferencesStore
     private let workflowFactory: any HerdrWorkflowFactory
     private let panePickerScheduler: any PanePickerRefreshScheduling
-    private var workflow: (any HerdrWorkflowCoordinating)?
-    private var panePickerCoordinator: (any PanePickerCoordinating)?
+    var workflow: (any HerdrWorkflowCoordinating)?
+    var panePickerCoordinator: (any PanePickerCoordinating)?
     private var pendingHostKeyDecision: CheckedContinuation<HostKeyDecision, Never>?
     private var pendingHostKeyPromptID: UUID?
     private var stateTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
     private var teardownTask: Task<Void, Never>?
     private var teardownID: UUID?
-    private var workflowTask: Task<Void, Never>?
-    private var connectionGeneration = UUID()
+    var workflowTask: Task<Void, Never>?
+    var workspaceCreationTask: Task<Void, Never>?
+    var workspaceCreationID = UUID()
+    var panePickerDismissalInProgress = false
+    var panePickerDismissalWaiters: [CheckedContinuation<Void, Never>] = []
+    var connectionGeneration = UUID()
     private var lastHostID: Host.ID?
     private var lastPaneID: Pane.ID?
     private var lastPaneHostID: Host.ID?
     private var baseSession: SSHShellSession?
     private var baseTerminalSession: SSHShellSession?
+    var isSceneInactive = false
+    var sceneLifecycleGeneration = UUID()
+    var terminalSessionCloseSuppressed = false
+    /// Whether the terminal held keyboard focus. UIKit preserves first
+    /// responder across app switching natively; this flag covers the case
+    /// where a background control retakeover replaces the terminal session
+    /// and recreates the view, so focus can be restored on the new view.
+    var terminalKeyboardFocusActive = false
+
+    func terminalInputFocusDidChange(_ isFocused: Bool) {
+        terminalKeyboardFocusActive = isFocused
+    }
 
     init(
         coordinator: ApplicationCoordinator = ApplicationCoordinator(),
@@ -66,6 +83,7 @@ final class RootViewModel: ObservableObject {
         stateTask?.cancel()
         connectionTask?.cancel()
         workflowTask?.cancel()
+        workspaceCreationTask?.cancel()
         pendingHostKeyDecision?.resume(returning: .reject)
     }
 
@@ -137,6 +155,7 @@ extension RootViewModel {
         let deletesActiveConnection = lastHostID == host.id
             || activeConnection?.host.id == host.id
         if deletesActiveConnection {
+            terminalSessionCloseSuppressed = false
             invalidateConnectionAttempt()
             invalidatePanePickerPresentation()
             panePickerCoordinator = nil
@@ -481,12 +500,14 @@ extension RootViewModel {
     /// Manual refresh delegates to the same state machine used by the
     /// scheduler. RootViewModel does not perform a second discovery or join.
     func refreshPanePicker() async {
-        guard isPanePickerPresented,
+        guard !isSceneInactive,
+              isPanePickerPresented,
               let pickerCoordinator = self.panePickerCoordinator,
               let workflow
         else { return }
         let state = await pickerCoordinator.refreshPicker()
-        guard isPanePickerPresented,
+        guard !isSceneInactive,
+              isPanePickerPresented,
               isCurrentWorkflow(workflow),
               !Task.isCancelled
         else { return }
@@ -494,14 +515,17 @@ extension RootViewModel {
     }
 
     func selectPaneFromPicker(_ paneID: Pane.ID) {
-        guard isPanePickerPresented,
+        guard !isCreatingWorkspace,
+              isPanePickerPresented,
               let workflow,
               let pickerCoordinator = self.panePickerCoordinator
         else { return }
         let previousState = herdrState
+        terminalSessionCloseSuppressed = true
         cancelWorkflowTask()
         workflowTask = Task { [weak self, workflow, pickerCoordinator] in
             guard let self, !Task.isCancelled else { return }
+            defer { self.terminalSessionCloseSuppressed = false }
             let state = await pickerCoordinator.selectPane(paneID)
             guard !Task.isCancelled,
                   self.isCurrentWorkflow(workflow),
@@ -519,14 +543,17 @@ extension RootViewModel {
     }
 
     func selectOrdinaryTerminalFromPicker() {
-        guard isPanePickerPresented,
+        guard !isCreatingWorkspace,
+              isPanePickerPresented,
               let workflow,
               let pickerCoordinator = self.panePickerCoordinator
         else { return }
         let previousState = herdrState
+        terminalSessionCloseSuppressed = true
         cancelWorkflowTask()
         workflowTask = Task { [weak self, workflow, pickerCoordinator] in
             guard let self, !Task.isCancelled else { return }
+            defer { self.terminalSessionCloseSuppressed = false }
             let state = await pickerCoordinator.selectOrdinaryTerminal()
             guard !Task.isCancelled,
                   self.isCurrentWorkflow(workflow),
@@ -543,12 +570,56 @@ extension RootViewModel {
         }
     }
 
-    /// Handles both the explicit close button and an interactive dismissal of
-    /// the sheet/popover. A Host-origin picker owns its connection; a
-    /// terminal-origin picker restores the context that was visible before it.
+    /// Applies a native presentation Binding change. UIKit can report a
+    /// dismissal while a scene is becoming inactive; that is an interruption,
+    /// not an explicit Close, and must not tear down the connected context.
+    func panePickerPresentationBindingDidChange(
+        _ isPresented: Bool,
+        sceneIsActive: Bool
+    ) {
+        guard !isPresented,
+              isPanePickerPresented,
+              sceneIsActive,
+              !isSceneInactive
+        else { return }
+        dismissPanePicker()
+    }
+
+    /// Starts an explicit or system-driven Picker dismissal. The synchronous
+    /// presentation-state change prevents SwiftUI's Binding callback from
+    /// starting a second teardown while the awaitable operation is running.
     func dismissPanePicker() {
+        guard !panePickerDismissalInProgress else { return }
+        panePickerDismissalInProgress = true
+        isPanePickerPresented = false
+        Task { [weak self] in
+            await self?.performPanePickerDismissal()
+            self?.finishPanePickerDismissal()
+        }
+    }
+
+    /// Handles explicit Close and is also the awaitable boundary used by scene
+    /// lifecycle code. A Host-origin Picker owns its connection; a
+    /// terminal-origin Picker restores the context visible before it. Repeated
+    /// callers wait for the first operation rather than tearing down twice.
+    func dismissPanePickerAndWait() async {
+        if panePickerDismissalInProgress {
+            await withCheckedContinuation { continuation in
+                panePickerDismissalWaiters.append(continuation)
+            }
+            return
+        }
+        panePickerDismissalInProgress = true
+        isPanePickerPresented = false
+        await performPanePickerDismissal()
+        finishPanePickerDismissal()
+    }
+
+    private func performPanePickerDismissal() async {
+        terminalSessionCloseSuppressed = false
         guard let picker = panePicker else {
             invalidatePanePickerPresentation()
+            await panePickerCoordinator?.stopRefresh()
             return
         }
         guard let pickerCoordinator = self.panePickerCoordinator else {
@@ -563,59 +634,32 @@ extension RootViewModel {
         invalidatePanePickerPresentation()
         if origin == .host {
             returnToHosts()
-            Task {
-                await pickerCoordinator.dismissPicker()
-            }
+            _ = await pickerCoordinator.dismissPicker()
             return
         }
-        guard let workflow else { return }
-        Task { [weak self, workflow, pickerCoordinator] in
-            let state = await pickerCoordinator.dismissPicker()
-            guard let self,
-                  self.isCurrentWorkflow(workflow),
-                  !Task.isCancelled
-            else { return }
-            await self.applyPanePickerState(state, workflow: workflow)
-        }
-    }
-
-    func suspendPaneControl() {
-        invalidatePanePickerRefresh()
-
-        guard case .attached = herdrState, let workflow else { return }
-        isPaneControlSuspended = true
-        Task { [weak self, workflow] in
-            await workflow.suspendAttachedControl()
-            guard let self, !Task.isCancelled else { return }
-            self.isPaneControlSuspended = true
-        }
-    }
-
-    func resumePaneControl() {
-        guard isPaneControlSuspended, case .attached = herdrState, let workflow else {
-            isPaneControlSuspended = false
-            guard panePicker != nil, isPanePickerPresented else { return }
-            Task { [weak self] in
-                await self?.panePickerCoordinator?.restartRefresh()
-            }
+        guard let workflow else {
+            await pickerCoordinator.stopRefresh()
             return
         }
-        workflowTask?.cancel()
-        workflowTask = Task { [weak self, workflow] in
-            let state = await workflow.resumeAttachedControl()
-            guard !Task.isCancelled else { return }
-            guard let self else { return }
-            await self.applyWorkflowState(state, from: workflow)
-            guard !Task.isCancelled else { return }
-            self.isPaneControlSuspended = false
-            await self.panePickerCoordinator?.restartRefresh()
-        }
+        let state = await pickerCoordinator.dismissPicker()
+        guard isCurrentWorkflow(workflow), !Task.isCancelled else { return }
+        await applyPanePickerState(state, workflow: workflow)
+        await pickerCoordinator.stopRefresh()
+    }
+
+    private func finishPanePickerDismissal() {
+        panePickerDismissalInProgress = false
+        let waiters = panePickerDismissalWaiters
+        panePickerDismissalWaiters.removeAll()
+        waiters.forEach { $0.resume() }
     }
 
     /// Leaves the Herdr browser and returns to the saved-host list. The
     /// workflow is released before the SSH shell so an attached control
     /// session cannot outlive the host connection.
     func returnToHosts() {
+        terminalSessionCloseSuppressed = false
+        terminalKeyboardFocusActive = false
         let workflow = self.workflow
         invalidatePanePickerPresentation()
         invalidateConnectionAttempt()
@@ -631,6 +675,8 @@ extension RootViewModel {
     }
 
     func disconnect() {
+        terminalSessionCloseSuppressed = false
+        terminalKeyboardFocusActive = false
         let workflow = self.workflow
         invalidatePanePickerPresentation()
         invalidateConnectionAttempt()
@@ -698,7 +744,7 @@ extension RootViewModel {
             snapshot: HerdrSnapshot(sessions: []),
             isLoading: true
         )
-        isPanePickerPresented = true
+        isPanePickerPresented = !isSceneInactive
     }
 
     private var isAttachedState: Bool {
@@ -706,7 +752,7 @@ extension RootViewModel {
         return false
     }
 
-    private func applyPanePickerState(
+    func applyPanePickerState(
         _ state: PanePickerNavigationState,
         workflow: any HerdrWorkflowCoordinating,
         fallbackState: HerdrBrowserState? = nil
@@ -716,7 +762,11 @@ extension RootViewModel {
         switch state {
         case let .panePicker(picker):
             panePicker = picker
-            isPanePickerPresented = true
+            isPanePickerPresented = !isSceneInactive
+            if isSceneInactive {
+                panePickerCoordinator?.invalidateRefreshImmediately()
+                await panePickerCoordinator?.stopRefresh()
+            }
             let wasAttached: Bool
             if let fallbackState {
                 if case .attached = fallbackState {
@@ -776,12 +826,19 @@ extension RootViewModel {
     }
 
     private func invalidatePanePickerPresentation() {
+        workspaceCreationID = UUID()
+        workspaceCreationTask?.cancel()
+        workspaceCreationTask = nil
+        isCreatingWorkspace = false
+        terminalSessionCloseSuppressed = false
         isPanePickerPresented = false
         panePicker = nil
         invalidatePanePickerRefresh()
     }
 
     private func beginConnection(for hostID: Host.ID) -> UUID {
+        terminalSessionCloseSuppressed = false
+        terminalKeyboardFocusActive = false
         invalidatePanePickerPresentation()
         invalidateConnectionAttempt()
         panePickerCoordinator = nil
@@ -815,7 +872,7 @@ extension RootViewModel {
         connectionGeneration == generation
     }
 
-    private func applyWorkflowState(
+    func applyWorkflowState(
         _ state: HerdrBrowserState,
         from workflow: any HerdrWorkflowCoordinating
     ) async {
@@ -871,7 +928,7 @@ extension RootViewModel {
         }
     }
 
-    private func isCurrentWorkflow(
+    func isCurrentWorkflow(
         _ candidate: any HerdrWorkflowCoordinating
     ) -> Bool {
         guard let workflow else { return false }

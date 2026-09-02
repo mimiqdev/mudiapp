@@ -26,17 +26,54 @@ where Discovery == Phase3HerdrDiscovery, Transport == Phase3TerminalTransport {}
 
 /// A fake discovery boundary fed by decoded command transcripts. It keeps the
 /// coordinator tests independent of SSH while preserving real Herdr IDs.
-actor Phase3HerdrDiscovery: HerdrDiscovering {
+actor Phase3HerdrDiscovery: HerdrDiscovering, HerdrWorkspaceCreating {
     private let fixture: Phase3HerdrFixture
+    private let workspaceCreation: HerdrWorkspaceCreation?
+    private let snapshotAfterWorkspaceCreation: HerdrSnapshot?
+    private let workspaceCreationShouldFail: Bool
+    private let workspaceCreationGate: Phase2ConnectionGate?
+    private let workspaceCreationRecorder: Phase6WorkspaceCreationRecorder?
     private var requestedHosts: [Host] = []
+    private var didCreateWorkspace = false
 
-    init(fixture: Phase3HerdrFixture) {
+    init(
+        fixture: Phase3HerdrFixture,
+        workspaceCreation: HerdrWorkspaceCreation? = nil,
+        snapshotAfterWorkspaceCreation: HerdrSnapshot? = nil,
+        workspaceCreationShouldFail: Bool = false,
+        workspaceCreationGate: Phase2ConnectionGate? = nil,
+        workspaceCreationRecorder: Phase6WorkspaceCreationRecorder? = nil
+    ) {
         self.fixture = fixture
+        self.workspaceCreation = workspaceCreation
+        self.snapshotAfterWorkspaceCreation = snapshotAfterWorkspaceCreation
+        self.workspaceCreationShouldFail = workspaceCreationShouldFail
+        self.workspaceCreationGate = workspaceCreationGate
+        self.workspaceCreationRecorder = workspaceCreationRecorder
     }
 
     func snapshot(for host: Host) async throws -> HerdrSnapshot {
         requestedHosts.append(host)
+        if didCreateWorkspace, let snapshotAfterWorkspaceCreation {
+            return snapshotAfterWorkspaceCreation
+        }
         return HerdrSnapshot(sessions: fixture.sessions)
+    }
+
+    func createWorkspace() async throws -> HerdrWorkspaceCreation {
+        await workspaceCreationRecorder?.record()
+        if let workspaceCreationGate {
+            await workspaceCreationGate.markStarted()
+            await workspaceCreationGate.waitUntilReleased()
+        }
+        if workspaceCreationShouldFail {
+            throw Phase6WorkspaceCreationError.failed
+        }
+        guard let workspaceCreation else {
+            throw Phase6WorkspaceCreationError.unavailable
+        }
+        didCreateWorkspace = true
+        return workspaceCreation
     }
 
     func requests() -> [Host] {

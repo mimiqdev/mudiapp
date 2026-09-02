@@ -1,6 +1,59 @@
 import HerdrKit
 import SwiftUI
 
+struct PanePickerPresentationPolicy: Equatable {
+    enum CompactDetent: String, CaseIterable, Equatable {
+        case medium
+        case large
+
+        var presentationDetent: PresentationDetent {
+            switch self {
+            case .medium:
+                .medium
+            case .large:
+                .large
+            }
+        }
+    }
+
+    let compactDetents: [CompactDetent]
+    let showsDragIndicator: Bool
+    /// The system sheet/popover handles outside taps and swipe-down as a
+    /// user dismissal natively. Disabling that and re-adding it with custom
+    /// gesture bridges breaks detent dragging, so dismissal stays native and
+    /// flows through the presentation Binding into `dismissPanePicker()`.
+    let usesSystemInteractiveDismissal: Bool
+
+    static let compactSheet = PanePickerPresentationPolicy(
+        compactDetents: [.medium, .large],
+        showsDragIndicator: true,
+        usesSystemInteractiveDismissal: true
+    )
+
+    /// iPad popover sizing: a narrow but full-height side panel anchored at
+    /// the top-leading corner, rather than a small card floating in the
+    /// corner of a landscape screen.
+    struct PopoverContentSize: Equatable {
+        let width: CGFloat
+        let height: CGFloat
+    }
+
+    static func popoverContentSize(for container: CGSize) -> PopoverContentSize {
+        PopoverContentSize(
+            width: min(420, max(320, container.width * 0.36)),
+            height: max(420, container.height - 24)
+        )
+    }
+
+    var detents: Set<PresentationDetent> {
+        Set(compactDetents.map(\.presentationDetent))
+    }
+
+    var dragIndicator: Visibility {
+        showsDragIndicator ? .visible : .automatic
+    }
+}
+
 /// The one picker surface used after Host connection and from a terminal
 /// toolbar. It renders a repository/worktree tree and pane rows derived from
 /// the complete official discovery snapshot, while delegating all lifecycle
@@ -9,8 +62,11 @@ struct PanePickerView: View {
     let state: PanePickerState
     let onDismiss: () -> Void
     let onRefresh: () async -> Void
+    let onCreateWorkspace: () -> Void
+    let isCreatingWorkspace: Bool
     let onSelectPane: (Pane.ID) -> Void
     let onSelectOrdinaryTerminal: () -> Void
+    let onAppear: () -> Void
 
     var body: some View {
         NavigationStack {
@@ -85,7 +141,10 @@ struct PanePickerView: View {
                     Button("Close", systemImage: "xmark", action: onDismiss)
                         .accessibilityIdentifier("pane-picker-close")
                 }
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button("Create Workspace", systemImage: "plus", action: onCreateWorkspace)
+                        .disabled(isCreatingWorkspace)
+                        .accessibilityIdentifier("pane-picker-create-workspace")
                     Button("Refresh", systemImage: "arrow.clockwise") {
                         Task { await onRefresh() }
                     }
@@ -93,6 +152,7 @@ struct PanePickerView: View {
                 }
             }
         }
+        .onAppear(perform: onAppear)
         .accessibilityIdentifier("pane-picker")
     }
 

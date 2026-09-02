@@ -6,11 +6,34 @@ import HerdrKit
 /// The authenticated interactive shell remains exclusively owned by
 /// `TerminalViewContainer`. A command channel is opened by the underlying
 /// Citadel connection and is collected to completion before decoding.
-actor SSHHerdrDiscovery: HerdrDiscovering {
+actor SSHHerdrDiscovery: HerdrDiscovering, HerdrWorkspaceCreating {
     private let session: SSHShellSession
 
     init(session: SSHShellSession) {
         self.session = session
+    }
+
+    func createWorkspace() async throws -> HerdrWorkspaceCreation {
+        let data = try await session.execute(
+            SSHLoginShellCommand.wrap("herdr workspace create --no-focus")
+        )
+        let response = try decode(
+            SSHHerdrCLIResponse<SSHHerdrWorkspaceCreationPayload>.self,
+            from: data
+        )
+        guard response.id == "cli:workspace:create",
+              response.result.type == "workspace_created",
+              !response.result.workspace.workspaceID.isEmpty,
+              !response.result.tab.tabID.isEmpty,
+              !response.result.rootPane.paneID.isEmpty
+        else {
+            throw SSHHerdrDiscoveryError.invalidEnvelope("workspace create")
+        }
+        return HerdrWorkspaceCreation(
+            workspaceID: response.result.workspace.workspaceID,
+            tabID: response.result.tab.tabID,
+            rootPaneID: response.result.rootPane.paneID
+        )
     }
 
     func snapshot(for _: Host) async throws -> HerdrSnapshot {
@@ -292,5 +315,43 @@ private struct SSHHerdrAgentRecord: Decodable {
         case paneID = "pane_id"
         case name = "agent"
         case agentStatus = "agent_status"
+    }
+}
+
+private struct SSHHerdrWorkspaceCreationPayload: Decodable {
+    let type: String
+    let workspace: SSHHerdrCreatedWorkspace
+    let tab: SSHHerdrCreatedTab
+    let rootPane: SSHHerdrCreatedPane
+
+    enum CodingKeys: String, CodingKey {
+        case rootPane = "root_pane"
+        case tab
+        case type
+        case workspace
+    }
+}
+
+private struct SSHHerdrCreatedWorkspace: Decodable {
+    let workspaceID: String
+
+    enum CodingKeys: String, CodingKey {
+        case workspaceID = "workspace_id"
+    }
+}
+
+private struct SSHHerdrCreatedTab: Decodable {
+    let tabID: String
+
+    enum CodingKeys: String, CodingKey {
+        case tabID = "tab_id"
+    }
+}
+
+private struct SSHHerdrCreatedPane: Decodable {
+    let paneID: String
+
+    enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
     }
 }

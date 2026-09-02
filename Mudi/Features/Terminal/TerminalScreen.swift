@@ -1,6 +1,34 @@
 import HerdrKit
 import SwiftUI
 
+struct TerminalSessionErrorState: Equatable {
+    private(set) var sessionIdentity: ObjectIdentifier
+    private(set) var message: String?
+
+    init(sessionIdentity: ObjectIdentifier, message: String? = nil) {
+        self.sessionIdentity = sessionIdentity
+        self.message = message
+    }
+
+    mutating func updateSession(_ sessionIdentity: ObjectIdentifier) {
+        guard self.sessionIdentity != sessionIdentity else { return }
+        self.sessionIdentity = sessionIdentity
+        message = nil
+    }
+
+    mutating func receive(
+        _ message: String,
+        for sessionIdentity: ObjectIdentifier
+    ) {
+        guard self.sessionIdentity == sessionIdentity else { return }
+        self.message = message
+    }
+
+    mutating func clear() {
+        message = nil
+    }
+}
+
 struct TerminalScreen: View {
     let host: Host
     let session: SSHShellSession
@@ -9,11 +37,15 @@ struct TerminalScreen: View {
     let onDisconnect: () -> Void
     let onBackToBrowser: (() -> Void)?
     let onOpenPanePicker: (() -> Void)?
+    let onSessionClosed: ((ObjectIdentifier) -> Void)?
     let fontSize: Double
+    let isInputFocusAllowed: Bool
+    let shouldRestoreInputFocus: Bool
+    let onInputFocusChange: ((Bool) -> Void)?
     let suppressConnectionErrors: Bool
 
     @Environment(\.colorScheme) private var colorScheme
-    @State private var errorMessage: String?
+    @State private var terminalErrorState: TerminalSessionErrorState
     @State private var isLeaving = false
 
     init(
@@ -24,7 +56,11 @@ struct TerminalScreen: View {
         onDisconnect: @escaping () -> Void,
         onBackToBrowser: (() -> Void)? = nil,
         onOpenPanePicker: (() -> Void)? = nil,
+        onSessionClosed: ((ObjectIdentifier) -> Void)? = nil,
         fontSize: Double = 14,
+        isInputFocusAllowed: Bool = true,
+        shouldRestoreInputFocus: Bool = false,
+        onInputFocusChange: ((Bool) -> Void)? = nil,
         suppressConnectionErrors: Bool = false
     ) {
         self.host = host
@@ -34,7 +70,16 @@ struct TerminalScreen: View {
         self.onDisconnect = onDisconnect
         self.onBackToBrowser = onBackToBrowser
         self.onOpenPanePicker = onOpenPanePicker
+        self.onSessionClosed = onSessionClosed
+        _terminalErrorState = State(
+            initialValue: TerminalSessionErrorState(
+                sessionIdentity: ObjectIdentifier(session)
+            )
+        )
         self.fontSize = fontSize
+        self.isInputFocusAllowed = isInputFocusAllowed
+        self.shouldRestoreInputFocus = shouldRestoreInputFocus
+        self.onInputFocusChange = onInputFocusChange
         self.suppressConnectionErrors = suppressConnectionErrors
     }
 
@@ -43,14 +88,26 @@ struct TerminalScreen: View {
             TerminalViewContainer(
                 session: session,
                 fontSize: fontSize,
-                colorScheme: colorScheme
-            ) { message in
-                guard !suppressConnectionErrors, !isLeaving else { return }
-                errorMessage = message
-            }
+                colorScheme: colorScheme,
+                isInputFocusAllowed: isInputFocusAllowed,
+                shouldRestoreInputFocus: shouldRestoreInputFocus,
+                onInputFocusChange: onInputFocusChange,
+                onClosed: {
+                    guard !isLeaving else { return }
+                    terminalErrorState.clear()
+                    onSessionClosed?(ObjectIdentifier(session))
+                },
+                onError: { message in
+                    guard !suppressConnectionErrors, !isLeaving else { return }
+                    terminalErrorState.receive(
+                        message,
+                        for: ObjectIdentifier(session)
+                    )
+                }
+            )
             .background(Color(uiColor: terminalAppearance.background))
 
-            if let errorMessage {
+            if let errorMessage = terminalErrorState.message {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
                     .foregroundStyle(.white)
@@ -66,6 +123,11 @@ struct TerminalScreen: View {
         .background(Color(uiColor: terminalAppearance.background))
         .onAppear {
             isLeaving = false
+            terminalErrorState.clear()
+        }
+        .onChange(of: ObjectIdentifier(session)) { _, newIdentity in
+            isLeaving = false
+            terminalErrorState.updateSession(newIdentity)
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
@@ -84,6 +146,7 @@ struct TerminalScreen: View {
             if let onOpenPanePicker {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Switch Pane", systemImage: "rectangle.stack") {
+                        terminalErrorState.clear()
                         onOpenPanePicker()
                     }
                     .accessibilityIdentifier("open-pane-picker")
@@ -110,7 +173,7 @@ struct TerminalScreen: View {
 
     private func beginLeaving(_ action: () -> Void) {
         isLeaving = true
-        errorMessage = nil
+        terminalErrorState.clear()
         action()
     }
 
