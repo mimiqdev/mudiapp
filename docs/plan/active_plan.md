@@ -1,57 +1,51 @@
-# 8. Terminal 字体与配色
+# Active plan — 网络韧性
 
-**出口：** 用户能选择适合 Light/Dark 的经典 terminal 配色和预装字体，也能导入自己的字体；ANSI 色彩与 Nerd Font 符号正确显示。
+**出口：** Wi-Fi、蜂窝（5G）、Tailscale-over-cellular 等真实网络组合下，Mudi 连接稳定、切换无感；已知连接失败场景全部消除或有明确解释。
 
-## 配色
+阶段 8 已完成 terminal 外观。本步只做网络连接的可靠性，发布准备不在本阶段。
 
-- 内置 Mudi Default Light / Dark
-- 内置 Solarized Light / Dark
-- 内置 Catppuccin Latte / Mocha；评估是否同时提供 Frappé / Macchiato
-- 内置经典 Monokai（Dark）；不虚构不存在的官方 Monokai Light
-- 至少再提供一组许可清晰的经典 Light / Dark 方案，最终清单实现前确认
-- 每套配色定义 ANSI 16 色锚点、默认前景/背景、粗体、cursor、selection，并明确 16–255 的扩展 palette 策略；不得把 terminal 实际显示限制为 16 色
-- 完整支持 ANSI 256 色输入（`38;5` / `48;5`）和 24-bit True Color（`38;2` / `48;2`）；True Color 按程序指定 RGB 原样渲染
-- SwiftTerm 当前以 16 色调用 `installColors`，再通过 `base16Lab` / xterm 策略生成扩展 palette；若内置主题需要官方 256 色表，再增加显式 256 palette 支持，不能静默降级
-- 审核 SSH / Mosh 的 `TERM=xterm-256color` 与 `COLORTERM=truecolor` 能力声明，确保远端程序会正确选择 256 色或 True Color
-- 支持 Automatic pair：跟随 App/System Light/Dark 自动选择成对主题
-- 也允许固定选择一个 Light 或 Dark palette，并记住设置
-- 设置页提供真实 terminal preview，不只显示色块
-- 颜色值、名称与许可取自各主题官方仓库；禁止凭印象抄色值
-- 真机预览和自动化色表覆盖 ANSI 0–15、16–255、前景/背景 indexed color 与 True Color，验证主题切换不会破坏程序指定 RGB
+## 范围内
 
-## 字体
-
-- 预装若干可分发的免费等宽字体，并带 Nerd Font 符号
-- 用户可导入 `.ttf` / `.otf`
-- 可选字族、字号；SwiftTerm 必须真正用到所选字体（阶段 4 的 Symbols cascade 在真机上是方块，不能当做成了）
-- 配色和字体设置彼此独立，但在同一 Terminal Appearance 设置区域预览
+- **首先复现并修复**：5G 蜂窝 + Tailscale（tailnet 内设备）连接超时失败——其他终端 App 在同样条件下可连，这是 Mudi 的 bug，不是环境限制
+  - 排查方向：IPv6/IPv4 解析与 Happy Eyeballs（NIO connect 路径）、Tailscale MagicDNS 解析、连接超时与重试、Mosh UDP 在 tailnet 上的路径、tailnet 隧道未就绪时的行为
+- 多网络组合真机验收：Wi-Fi、蜂窝、Wi-Fi↔蜂窝切换、Wi-Fi/蜂窝 ↔ Tailscale 的交叉组合
+- 网络切换/短暂断网后的 Mosh session 恢复与 transparent reconnect 行为
+- 无 `mosh-server` Host 的 Auto → SSH 回退在真实网络下的验证
+- SSH control 与 Mosh transport 的边界在网络异常下的行为一致性
+- 连接失败文案：超时/不可达/拒绝的本地化与可区分性
 
 ## 不在本步
 
-- 付费字体商店
-- 第一版不导入第三方 terminal theme 文件
-- 不改变 App 的 System / Light / Dark 导航外观逻辑
+- TestFlight、签名、隐私说明、发布材料（独立阶段）
+- Herdr 协议变更
+- 通知推送（future/11）
+- 触屏光标重做（future/12）
 
 ## 测试
 
-先写自动化测试并确认失败，再实现。主题/字体的真机渲染与预览以手工验收（模拟器截图比对为主，真机仅你要求时）。
+先写自动化测试并确认失败，再实现。真实网络组合以真机手工验收为准。
 
 ### 自动化
 
-- 每套内置配色包含 ANSI 16 锚点 + fg/bg/bold/cursor/selection + 16–255 扩展策略；名称与许可来源记录
-- 主题切换应用到 SwiftTerm 后：0–15 精确为锚点值；16–255 按声明策略；`38;2/48;2` True Color 渲染为程序指定 RGB 原值，不受主题影响
-- `TERM=xterm-256color`、`COLORTERM=truecolor` 的 PTY 声明测试
-- 偏好持久化：主题选择（含 Automatic pair）、字体族/字号重启后恢复
-- 预装字体加载并真正被 SwiftTerm 使用（字形度量非 fallback）；用户导入 .ttf/.otf 注册后可选用
+- 连接路径的地址族处理：IPv6-only / IPv4-only / 双栈地址列表的连接策略（Happy Eyeballs 或等效竞速/回退）有模型测试
+- 连接超时可配置且有合理默认值；蜂窝级别的慢连接不会过早超时
+- Auto 模式 Mosh 失败回退 SSH 的判定覆盖"UDP 被 tailnet/运营商阻断"的情形
+- 网络中断恢复：transport 层断开与重连的状态机测试（复用阶段 7 transparent reconnect 接缝）
 - `make test-core` 和 Mudi XCTest 通过（模拟器）
 
 ### 手工（出口）
 
-- 设置页 terminal preview 显示真实转义输出，不是色块
-- Nerd Font 符号（如目录/图标字形）不再渲染为方块
-- Automatic 跟随系统 Light/Dark 切换配色
+- 5G + Tailscale 连接成功且稳定
+- Wi-Fi ↔ 蜂窝切换后 session 恢复（透明重连不打扰）
+- 断网 → 恢复 → 回到原 pane，无错误残留
+- 无 mosh-server 的 Host 走 SSH 正常
 
 ## 切片
 
-- `TerminalAppearance` 扩展为主题注册表（锚点 + 扩展策略 + 能力声明），设置页选择 + preview。
-- 字体注册/导入/持久化，SwiftTerm 字体接入修正。
+- 诊断并修复 tailnet 连接失败（地址解析/竞速/超时）。
+- 连接策略（地址族竞速、超时、回退）做成可测 policy。
+- 多网络组合真机矩阵验收。
+
+## 完成后
+
+归档为 `archive/09-network-resilience.md`，将 `future/10-release.md` 提升为 `active_plan.md`。
