@@ -21,8 +21,9 @@
   - 点组合键 → 发送对应 Ctrl 控制字节 → 解除 latch 并收起弹出
   - latch 后直接敲键盘字符：沿用现有修饰键行为
 - terminal 顶部工具栏：leading 改为 chevron 返回 Hosts（走 returnToHosts 语义），移除 trailing 的 Disconnect（语义重复）；Picker 入口由 Jump To 承担
-- 研究触屏定位远端 terminal 光标：mouse-reporting 程序发送 mouse event；普通 shell 只在能可靠取得 SwiftTerm grid cursor 时按列发送方向键，否则提供相对拖动，不猜位置
+- 触屏光标定位：第一版真机无效，已整体移除，重做记入 future/11-touch-cursor-positioning.md（不在本阶段）
 - Settings 里从 Dark/Light 切回 System 时，已打开的 Settings sheet 不刷新的问题（SwiftUI `preferredColorScheme(nil)` 刷新不了已 present 的 sheet）
+- 锁屏恢复透明重连：解锁发现 SSH 控制面/基础会话已断时，后台静默重连（Keychain 凭据 + 已记住 TOFU）、重新 discovery、自动 retakeover 原 pane，terminal 页面保持不动并显示轻量 Reconnecting 提示；重连失败才回 Hosts，错误必须本地化（NIOSSH 原始错误不得上屏）。普通 terminal + Mosh 路径锁屏恢复行为同步验证
 
 ## 不在本步
 
