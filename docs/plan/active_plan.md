@@ -1,59 +1,66 @@
-# Active plan — 统一 Herdr Pane Picker
+# Active plan — 初次使用与终端体验打磨
 
-**出口：** 不再经过独立 Herdr 页面；点 Host 或在 terminal 切换 pane 都使用同一个 Pane Picker。
+**出口：** 首次权限流程不打断连接；常用 terminal 输入能通过紧凑的触屏交互完成。
 
-阶段 5 已建立 SSH bootstrap / Mosh Host 上下文。本步只统一 Herdr 选择与切换导航，不改 transport 或官方控制协议。
+阶段 6 已统一 Herdr Pane Picker 导航。本步只打磨首次使用流程与 terminal 触屏交互，不改 Herdr/Mosh 协议。
 
 ## 范围内
 
-- 点 Host 后建立连接并弹出 Pane Picker；加载、空状态和失败都在弹层内
-- 按 session / workspace 展示 pane、agent 名和状态
-- Picker 可见时刷新官方 Herdr 状态，关闭后停止刷新，并提供手动刷新
-- 选 pane 直接 takeover；普通 terminal 作为明确选项
-- terminal 工具栏提供切换入口，复用同一个 Picker 和选择逻辑
-- Picker 内切换 pane 时释放旧 control，再 takeover 新 pane
-- 切换、打开或关闭 terminal 内 Picker 时保持 SSH bootstrap / Mosh，不重复连接
-- 从 Host 首次打开 Picker 后未选择就关闭：断开该 Host
-- 从 terminal 打开 Picker 后关闭：留在当前 pane
-- 返回 Host 列表或 Disconnect：关闭 SSH / Mosh
-- iPhone 使用 sheet，iPad 使用 popover
+- 首次启动说明为何需要本地网络权限，再主动触发 iOS 的本地网络授权（不是定位）
+- 授权完成后再进入连接表单 / Host 列表，避免第一次 SSH 和系统弹窗抢跑
+- 收集并打磨同类首次使用摩擦（权限、空白状态、失败文案）
+- Host 编辑入口可发现性：编辑功能已存在但只在长按 context menu；在滑动操作中也暴露 Edit
+- Shortcut bar **常驻显示**（不随键盘隐藏），单行单页（废弃两页模型），键位固定为：
+  - `Esc`、`Tab`、`Ctrl`（latch）、方向按钮、粘贴、Jump To、收键盘（固定）
+  - 短标签、SF Symbols、较小字体
+  - 不放"复制"键：复制由文字选择流程负责；粘贴保留快捷键
+  - Jump To 复用 terminal 工具栏 Switch Pane 的同一 Picker 入口，图标一致，不新增选择逻辑
+- 方向按钮弹出悬浮 D-pad（可遮挡 terminal 内容）：
+  - 四方向键 + 中心 Enter + PgUp/PgDn
+- Ctrl latch：点一下变选中态并弹出常见组合键按钮 `C D L A E U K W`：
+  - 点组合键 → 发送对应 Ctrl 控制字节 → 解除 latch 并收起弹出
+  - latch 后直接敲键盘字符：沿用现有修饰键行为
+- terminal 顶部工具栏：leading 改为 chevron 返回 Hosts（走 returnToHosts 语义），移除 trailing 的 Disconnect（语义重复）；Picker 入口由 Jump To 承担
+- 研究触屏定位远端 terminal 光标：mouse-reporting 程序发送 mouse event；普通 shell 只在能可靠取得 SwiftTerm grid cursor 时按列发送方向键，否则提供相对拖动，不猜位置
+- Settings 里从 Dark/Light 切回 System 时，已打开的 Settings sheet 不刷新的问题（SwiftUI `preferredColorScheme(nil)` 刷新不了已 present 的 sheet）
 
 ## 不在本步
 
-- 改 Herdr discovery / takeover 命令或 JSON
-- 网络切换和发布验收（阶段 9）
-- 首次本地网络权限与通用 UX polish（阶段 7）
+- 改 Herdr discovery / takeover / workspace 命令或 JSON
+- 网络切换与发布验收（阶段 9）
 - terminal 字体与配色（阶段 8）
+- Pane Picker 的布局与导航行为（阶段 6 已定）
 - Chat UI、通知、Live Activity
 
 ## 测试
 
-先写自动化测试并确认失败，再实现。sheet / popover 外观和真机切换手工验收。
+先写自动化测试并确认失败，再实现。权限弹窗、D-pad 悬浮交互与触屏光标定位以真机手工验收。
 
 ### 自动化
 
-- 点 Host 成功连接后呈现 Picker，而不是独立 Herdr 页面
-- Picker 按真实 snapshot 保留 session / workspace / pane 归属和 agent 状态
-- Picker 刷新使用官方 discovery 结果，pane ID 不串状态；关闭后停止刷新
-- 从 Host 打开的 Picker 未选择即关闭，会断开 Host
-- 从 terminal 打开的 Picker 关闭后仍附着当前 pane
-- 从当前 pane 选择另一 pane，先 release 旧 control，再 takeover 新 pane
-- 普通 terminal 选项不 attach pane
-- RootViewModel 使用同一 Picker state machine；Host 关闭断开，失败切换恢复旧 terminal 且 Picker 刷新继续
+- 首次启动且未授予本地网络权限时，呈现权限说明页而不是 Host 列表；授权后进入 Host 列表；已授权或后续启动不受影响（状态持久化）
+- Shortcut bar 单行单页，键位恰好为 Esc、Tab、Ctrl、方向、粘贴、Jump To、收键盘，高度与现有单行一致；bar 在键盘隐藏时也保持可见
+- Jump To 触发与 terminal 工具栏 Switch Pane 相同的 Picker 打开入口
+- terminal 工具栏 leading 为返回 Hosts 按钮，触发 returnToHosts；不再提供独立 Disconnect 按钮
+- 方向按钮切换 D-pad 悬浮层显隐；D-pad 含上/下/左/右/中心 Enter/PgUp/PgDn，各键经现有 terminal input 路径发送正确字节
+- Ctrl latch：选中态弹出 C/D/L/A/E/U/K/W 组合按钮；点组合键发送对应控制字节（C=0x03、D=0x04、L=0x0C、A=0x01、E=0x05、U=0x15、K=0x0B、W=0x17）并解除 latch、收起弹出；未 latch 时无弹出
+- 键发送复用现有 terminal.input 路径，不新增协议
+- Host 列表滑动操作同时暴露 Edit 与 Delete；Edit 打开现有编辑表单并保存生效
 - `make test-core` 和 Mudi XCTest 通过
 
 ### 手工（出口）
 
-- iPhone 点 Host 后直接看到 Picker，能进 pane 或普通 terminal
-- terminal 内打开同一 Picker 并切换 pane，不重新连接 Host
-- 状态会刷新，不再保留进入页面时的旧快照
-- iPad 以 popover 呈现且可操作
+- 删除重装后首次连接，先看到权限说明，授权后顺利完成首次 SSH
+- D-pad 悬浮层打开/关闭、各键在远端生效，收键盘按钮始终可用
+- Ctrl latch 弹出组合键，发送与解除行为正确
+- 触屏光标定位在 mouse-reporting 程序与普通 shell 下的行为符合预期
 
 ## 切片
 
-- 以生产 `HerdrPanePickerCoordinator` 和 `PanePickerView` 统一 Host/terminal 选择、刷新与 release 顺序。
-- `RootViewModel` 在连接后呈现 picker overlay，terminal toolbar 复用该入口，并保留 SSH/Mosh 会话上下文。
+- Root 启动流程插入一次性权限引导（状态持久化），连接入口在授权后开放。
+- `MudiTerminalShortcutBar` 改单页六键模型 + D-pad 悬浮层 + Ctrl 组合键弹出，键发送复用现有 input 路径。
+- 光标定位先做 mouse-reporting 探测与发送，普通 shell 视 SwiftTerm cursor 可得性决定方向键方案。
 
 ## 完成后
 
-归档为 `archive/06-herdr-pane-picker.md`，将 `future/07-ux-polish.md` 提升为 `active_plan.md`。
+归档为 `archive/07-ux-polish.md`，将 `future/08-terminal-appearance.md` 提升为 `active_plan.md`。

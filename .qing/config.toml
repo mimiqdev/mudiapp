@@ -1,0 +1,9 @@
+schema = 1
+
+[coding]
+model = "zai-coding-cn/glm-5.3-flash"
+thinking = "high"
+
+[review]
+model = "xai/grok-4.6"
+thinking = "high"
