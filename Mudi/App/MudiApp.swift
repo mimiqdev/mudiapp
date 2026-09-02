@@ -4,7 +4,9 @@ import SwiftUI
 struct MudiApp: App {
     var body: some Scene {
         WindowGroup {
-            RootView()
+            RootView(
+                localNetworkPermissionGate: SystemLocalNetworkPermissionGate()
+            )
         }
     }
 }

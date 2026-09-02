@@ -68,6 +68,16 @@ struct Phase4KnownHostKeyStore: KnownHostKeyStore {
     }
 }
 
+private struct Phase4DeadPTY: PTYChannel {
+    func send(_: [UInt8]) async throws {
+        throw Phase3TransportError.paneUnavailable
+    }
+
+    func resize(columns _: Int, rows _: Int) async throws {}
+
+    func close() async {}
+}
+
 /// A terminal transport used by a production HerdrWorkflowCoordinator. The
 /// base SSH session is supplied by the RootViewModel's application coordinator
 /// and is returned for the attached terminal just like the real transport's
@@ -76,6 +86,7 @@ actor Phase4TerminalTransport: TerminalTransport, HerdrTerminalSessionProviding 
     nonisolated let kind: ActiveTransport = .ssh
 
     private var missingPaneIDs: Set<Pane.ID>
+    private var failNextConnect = false
     private var baseSession: SSHShellSession?
     private var terminalSessionValue: SSHShellSession?
     private var connectedHosts: [Host] = []
@@ -89,12 +100,36 @@ actor Phase4TerminalTransport: TerminalTransport, HerdrTerminalSessionProviding 
         missingPaneIDs = paneIDs
     }
 
+    /// A session whose channel throws on send (dead NIOSSH channel).
+    static func makeDeadSession() -> SSHShellSession {
+        SSHShellSession(connectedChannel: Phase4DeadPTY())
+    }
+
+    /// Makes the next transport connect throw (control plane unavailable).
+    func failNextConnectAttempt() {
+        failNextConnect = true
+    }
+
+    /// Simulates a dead SSH base session: sends on the session throw,
+    /// mirroring a closed NIOSSH channel after a lock-screen network drop.
+    func simulateBaseSessionDeath() async {
+        let deadSession = SSHShellSession(
+            connectedChannel: Phase4DeadPTY()
+        )
+        terminalSessionValue = deadSession
+        baseSession = deadSession
+    }
+
     func setTerminalSession(_ session: SSHShellSession) {
         baseSession = session
         terminalSessionValue = session
     }
 
     func connect(to host: Host) async throws {
+        if failNextConnect {
+            failNextConnect = false
+            throw Phase3TransportError.paneUnavailable
+        }
         connectedHosts.append(host)
     }
 
@@ -235,6 +270,9 @@ final class Phase4NavigationApplication {
     let transport: Phase4TerminalTransport
     let panePickerScheduler: Phase6TestScheduler
     let workspaceCreationRecorder: Phase6WorkspaceCreationRecorder
+    /// Gates the transparent-reconnect bootstrap attempt (mid-attempt
+    /// assertions in the reconnect tests).
+    let reconnectGate: Phase2ConnectionGate?
 
     private let knownHostKeys: Phase4KnownHostKeys
     private let hostKeyFingerprint = "SHA256:phase4-test-key"
@@ -250,6 +288,7 @@ final class Phase4NavigationApplication {
         ),
         moshTransport: any MoshTransportBootstrapping = SwiftMoshAdapter(),
         preferencesStore: (any PreferencesStore)? = nil,
+        reconnectGate: Phase2ConnectionGate? = nil,
         panePickerScheduler: Phase6TestScheduler = Phase6TestScheduler(),
         workspaceCreation: HerdrWorkspaceCreation? = nil,
         workspaceSnapshotAfterCreation: HerdrSnapshot? = nil,
@@ -257,11 +296,12 @@ final class Phase4NavigationApplication {
         workspaceCreationGate: Phase2ConnectionGate? = nil,
         workspaceCreationRecorder: Phase6WorkspaceCreationRecorder = Phase6WorkspaceCreationRecorder(),
         rememberedPaneID: Pane.ID? = nil,
-        rememberedPaneHostID: Host.ID? = nil
+        rememberedPaneHostID: Host.ID? = nil,
     ) {
         self.transport = transport
         self.panePickerScheduler = panePickerScheduler
         self.workspaceCreationRecorder = workspaceCreationRecorder
+        self.reconnectGate = reconnectGate
         self.knownHostKeys = knownHostKeys
         coordinator = ApplicationCoordinator(
             hostStore: JSONHostStore(fileURL: hostFileURL),
@@ -284,7 +324,7 @@ final class Phase4NavigationApplication {
             preferencesStore: preferencesStore ?? UserDefaultsPreferencesStore(),
             panePickerScheduler: panePickerScheduler,
             rememberedPaneID: rememberedPaneID,
-            rememberedPaneHostID: rememberedPaneHostID
+            rememberedPaneHostID: rememberedPaneHostID,
         )
     }
 
@@ -313,6 +353,7 @@ func makePhase4NavigationApplication(
     ),
     moshTransport: any MoshTransportBootstrapping = SwiftMoshAdapter(),
     preferencesStore: (any PreferencesStore)? = nil,
+    reconnectGate: Phase2ConnectionGate? = nil,
     panePickerScheduler: Phase6TestScheduler = Phase6TestScheduler(),
     workspaceCreation: HerdrWorkspaceCreation? = nil,
     workspaceSnapshotAfterCreation: HerdrSnapshot? = nil,
@@ -331,6 +372,7 @@ func makePhase4NavigationApplication(
         client: client,
         moshTransport: moshTransport,
         preferencesStore: preferencesStore,
+        reconnectGate: reconnectGate,
         panePickerScheduler: panePickerScheduler,
         workspaceCreation: workspaceCreation,
         workspaceSnapshotAfterCreation: workspaceSnapshotAfterCreation,

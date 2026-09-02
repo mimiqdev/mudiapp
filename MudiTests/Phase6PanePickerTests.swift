@@ -3,7 +3,7 @@ import HerdrKit
 import XCTest
 @testable import Mudi
 
-final class Phase6PanePickerTests: XCTestCase {
+final class Phase6PanePickerTests: XCTestCase {  // pi-lens-ignore: type_body_length
     func testPanePickerCompactPresentationUsesMediumLargeAndDragIndicator() {
         let policy = PanePickerPresentationPolicy.compactSheet
 
@@ -22,28 +22,19 @@ final class Phase6PanePickerTests: XCTestCase {
         )
     }
 
-    func testIPadPopoverUsesFullHeightSidePanel() {
-        // iPad Pro 11" landscape: a narrow full-height panel, not a small
-        // card floating in the top-leading corner.
-        let landscape = PanePickerPresentationPolicy.popoverContentSize(
-            for: CGSize(width: 1180, height: 820)
+    func testIPadSheetUsesCenteredWidthCap() {
+        // iPad presents the Picker as a bottom sheet (same model as
+        // iPhone): centered with a content-capped width; height is driven
+        // by the medium/large detents.
+        let landscape = PanePickerPresentationPolicy.popoverContentWidth(
+            for: 1180
         )
-        XCTAssertEqual(landscape.width, 420)
-        XCTAssertEqual(landscape.height, 796)
+        XCTAssertEqual(landscape, 420)
 
-        // Portrait: width is floored to a readable minimum, height still
-        // fills the screen.
-        let portrait = PanePickerPresentationPolicy.popoverContentSize(
-            for: CGSize(width: 820, height: 1180)
+        let portrait = PanePickerPresentationPolicy.popoverContentWidth(
+            for: 820
         )
-        XCTAssertEqual(portrait.width, 320)
-        XCTAssertEqual(portrait.height, 1156)
-
-        // Odd/small containers keep a usable minimum height.
-        let small = PanePickerPresentationPolicy.popoverContentSize(
-            for: CGSize(width: 375, height: 400)
-        )
-        XCTAssertEqual(small.height, 420)
+        XCTAssertEqual(portrait, 320)
     }
 
     func testSuccessfulHostConnectionPresentsPanePickerInsteadOfLegacyHerdrBrowser() async throws {

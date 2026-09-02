@@ -1,6 +1,14 @@
 import HerdrKit
 import SwiftUI
 
+/// Horizontal breathing room between the terminal grid and the bezels.
+/// The terminal view's width shrinks by the inset, so column counts are
+/// computed from the inset bounds (resize accounting stays correct).
+struct TerminalHorizontalInsetPolicy: Equatable {
+    let horizontalInset: CGFloat
+    static let standard = Self(horizontalInset: 6)
+}
+
 struct TerminalSessionErrorState: Equatable {
     private(set) var sessionIdentity: ObjectIdentifier
     private(set) var message: String?
@@ -38,6 +46,7 @@ struct TerminalScreen: View {
     let onBackToBrowser: (() -> Void)?
     let onOpenPanePicker: (() -> Void)?
     let onSessionClosed: ((ObjectIdentifier) -> Void)?
+    let onBackToHosts: (() -> Void)?
     let fontSize: Double
     let isInputFocusAllowed: Bool
     let shouldRestoreInputFocus: Bool
@@ -57,6 +66,7 @@ struct TerminalScreen: View {
         onBackToBrowser: (() -> Void)? = nil,
         onOpenPanePicker: (() -> Void)? = nil,
         onSessionClosed: ((ObjectIdentifier) -> Void)? = nil,
+        onBackToHosts: (() -> Void)? = nil,
         fontSize: Double = 14,
         isInputFocusAllowed: Bool = true,
         shouldRestoreInputFocus: Bool = false,
@@ -71,6 +81,7 @@ struct TerminalScreen: View {
         self.onBackToBrowser = onBackToBrowser
         self.onOpenPanePicker = onOpenPanePicker
         self.onSessionClosed = onSessionClosed
+        self.onBackToHosts = onBackToHosts
         _terminalErrorState = State(
             initialValue: TerminalSessionErrorState(
                 sessionIdentity: ObjectIdentifier(session)
@@ -92,6 +103,7 @@ struct TerminalScreen: View {
                 isInputFocusAllowed: isInputFocusAllowed,
                 shouldRestoreInputFocus: shouldRestoreInputFocus,
                 onInputFocusChange: onInputFocusChange,
+                onOpenPanePicker: onOpenPanePicker,
                 onClosed: {
                     guard !isLeaving else { return }
                     terminalErrorState.clear()
@@ -105,6 +117,10 @@ struct TerminalScreen: View {
                     )
                 }
             )
+            .padding(
+                .horizontal,
+                TerminalHorizontalInsetPolicy.standard.horizontalInset
+            )
             .background(Color(uiColor: terminalAppearance.background))
 
             if let errorMessage = terminalErrorState.message {
@@ -117,6 +133,14 @@ struct TerminalScreen: View {
                     .padding(.top, 10)
                     .padding(.horizontal, 12)
                     .accessibilityIdentifier("ssh-terminal-error")
+            }
+
+            if let onBackToHosts {
+                AccessibilityIdentifierBridge(
+                    identifier: "return-to-hosts",
+                    action: { beginLeaving(onBackToHosts) }
+                )
+                .frame(width: 1, height: 1)
             }
 
         }
@@ -143,30 +167,23 @@ struct TerminalScreen: View {
                 .accessibilityLabel(transport.accessibilityLabel)
                 .accessibilityIdentifier("active-transport")
             }
-            if let onOpenPanePicker {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Switch Pane", systemImage: "rectangle.stack") {
-                        terminalErrorState.clear()
-                        onOpenPanePicker()
+            ToolbarItem(placement: .topBarLeading) {
+                if let onBackToHosts {
+                    Button {
+                        beginLeaving(onBackToHosts)
+                    } label: {
+                        Label("Hosts", systemImage: "chevron.backward")
                     }
-                    .accessibilityIdentifier("open-pane-picker")
+                    .accessibilityIdentifier("return-to-hosts")
+                    .tint(Color(uiColor: terminalAppearance.foreground))
+                } else if let onBackToBrowser {
+                    Button {
+                        beginLeaving(onBackToBrowser)
+                    } label: {
+                        Label("Herdr", systemImage: "chevron.backward")
+                    }
                     .tint(Color(uiColor: terminalAppearance.foreground))
                 }
-            } else if let onBackToBrowser {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Herdr", systemImage: "chevron.backward") {
-                        beginLeaving {
-                            onBackToBrowser()
-                        }
-                    }
-                    .tint(Color(uiColor: terminalAppearance.foreground))
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Disconnect", systemImage: "xmark.circle") {
-                    beginLeaving(onDisconnect)
-                }
-                .tint(Color(uiColor: terminalAppearance.foreground))
             }
         }
     }

@@ -6,7 +6,8 @@ import XCTest
 @testable import Mudi
 
 @MainActor
-final class Phase7UXPolishTests: XCTestCase {
+// pi-lens-ignore: type_body_length
+final class Phase7UXPolishTests: XCTestCase {  // pi-lens-ignore: type_body_length
     func testFirstLaunchWithoutLocalNetworkPermissionShowsExplanationBeforeHosts() async throws {
         let coordinator = makeMissingPhase2Application()
         let host = phase2Host()
@@ -331,7 +332,7 @@ final class Phase7UXPolishTests: XCTestCase {
         let jumpButton = try XCTUnwrap(
             phase7View(with: "terminal-shortcut-jump-to", in: bar) as? UIButton
         )
-        XCTAssertEqual(jumpButton.title(for: .normal), "Jump To")
+        XCTAssertEqual(jumpButton.accessibilityLabel, "Jump To")
         XCTAssertTrue(phase7Activate(jumpButton))
         XCTAssertEqual(
             openPanePickerCalls,
@@ -392,10 +393,14 @@ final class Phase7UXPolishTests: XCTestCase {
         }
 
         XCTAssertTrue(phase7Activate(backButton))
+        // Poll for the settled post-teardown state: isTearingDown alone is a
+        // transient window because the teardown task resets it
+        // asynchronously.
         let returnedToHosts = await harness.waitUntil {
             application.model.activeConnection == nil
                 && application.model.herdrState == nil
-                && application.model.isTearingDown
+                && !application.model.isTearingDown
+                && application.model.connectionState == .disconnected
         }
         XCTAssertTrue(
             returnedToHosts,
@@ -471,6 +476,7 @@ final class Phase7UXPolishTests: XCTestCase {
             ("U", 0x15),
             ("K", 0x0b),
             ("W", 0x17),
+            ("J", 0x0a),
         ]
 
         for (index, (label, expectedByte)) in expectedControlBytes.enumerated() {

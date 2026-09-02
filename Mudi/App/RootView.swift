@@ -4,7 +4,7 @@ import SwiftUI
 @MainActor
 final class RootViewModel: ObservableObject {
     @Published private(set) var hosts: [Host] = []
-    @Published private(set) var activeConnection: ActiveSSHConnection?
+    @Published internal(set) var activeConnection: ActiveSSHConnection?
     @Published private(set) var herdrState: HerdrBrowserState?
     @Published var panePicker: PanePickerState?
     @Published var isPanePickerPresented = false
@@ -13,10 +13,18 @@ final class RootViewModel: ObservableObject {
     @Published private(set) var hasMultipleHerdrSessions = false
     @Published private(set) var isTearingDown = false
     @Published var isPaneControlSuspended = false
-    @Published private(set) var connectionState: ConnectionState = .idle
-    @Published private(set) var activeTransport: ActiveTransport?
-    @Published private(set) var preferences = TerminalPreferences()
+    @Published internal(set) var connectionState: ConnectionState = .idle
+    @Published internal(set) var activeTransport: ActiveTransport?
+    @Published internal(set) var preferences = TerminalPreferences()
+    /// `nil` while the local-network check runs, so Hosts cannot flash early.
+    @Published internal(set) var isLocalNetworkOnboardingRequired: Bool?
+    var isRequestingLocalNetworkPermission = false
     @Published var errorMessage: String?
+    @Published var isTransparentlyReconnecting = false
+    /// One reconnect attempt per scene interruption.
+    var transparentReconnectAttemptsUsed = 0
+    /// Per-host cache of the last discovery snapshot (stale-while-revalidate).
+    var pickerSnapshotCache: [Host.ID: HerdrSnapshot] = [:]
     @Published var editor: HostEditorContext?
     @Published var hostKeyPrompt: HostKeyPrompt?
 
@@ -27,10 +35,10 @@ final class RootViewModel: ObservableObject {
     private let panePickerScheduler: any PanePickerRefreshScheduling
     var workflow: (any HerdrWorkflowCoordinating)?
     var panePickerCoordinator: (any PanePickerCoordinating)?
-    private var pendingHostKeyDecision: CheckedContinuation<HostKeyDecision, Never>?
-    private var pendingHostKeyPromptID: UUID?
+    var pendingHostKeyDecision: CheckedContinuation<HostKeyDecision, Never>?
+    var pendingHostKeyPromptID: UUID?
     private var stateTask: Task<Void, Never>?
-    private var connectionTask: Task<Void, Never>?
+    var connectionTask: Task<Void, Never>?
     private var teardownTask: Task<Void, Never>?
     private var teardownID: UUID?
     var workflowTask: Task<Void, Never>?
@@ -40,17 +48,21 @@ final class RootViewModel: ObservableObject {
     var panePickerDismissalWaiters: [CheckedContinuation<Void, Never>] = []
     var connectionGeneration = UUID()
     private var lastHostID: Host.ID?
-    private var lastPaneID: Pane.ID?
+    var lastPaneID: Pane.ID?
     private var lastPaneHostID: Host.ID?
-    private var baseSession: SSHShellSession?
-    private var baseTerminalSession: SSHShellSession?
+    var baseSession: SSHShellSession?
+    var baseTerminalSession: SSHShellSession?
     var isSceneInactive = false
     var sceneLifecycleGeneration = UUID()
     var terminalSessionCloseSuppressed = false
-    /// Whether the terminal held keyboard focus. UIKit preserves first
-    /// responder across app switching natively; this flag covers the case
-    /// where a background control retakeover replaces the terminal session
-    /// and recreates the view, so focus can be restored on the new view.
+    /// Identity of a terminal session whose close surfaced during a scene
+    /// interruption (or while a reconnect was already in flight). The next
+    /// activation consumes it to run the one-shot transparent recovery;
+    /// cleared whenever the connection context changes or proves alive.
+    var pendingTerminalCloseIdentity: ObjectIdentifier?
+    /// Whether the terminal held keyboard focus. Covers background
+    /// retakeovers that replace the terminal session and recreate the view,
+    /// so focus can be restored on the new view.
     var terminalKeyboardFocusActive = false
 
     func terminalInputFocusDidChange(_ isFocused: Bool) {
@@ -699,55 +711,19 @@ extension RootViewModel {
 }
 
 extension RootViewModel {
-    func requestHostKeyDecision(
-        for fingerprint: String,
-        generation: UUID
-    ) async -> HostKeyDecision {
-        guard connectionGeneration == generation,
-              connectionState == .connecting
-        else {
-            return .reject
-        }
-
-        return await withCheckedContinuation { continuation in
-            guard connectionGeneration == generation,
-                  connectionState == .connecting
-            else {
-                continuation.resume(returning: .reject)
-                return
-            }
-            pendingHostKeyDecision?.resume(returning: .reject)
-            pendingHostKeyDecision = continuation
-            let prompt = HostKeyPrompt(fingerprint: fingerprint)
-            pendingHostKeyPromptID = prompt.id
-            hostKeyPrompt = prompt
-        }
-    }
-
-    func answerHostKeyPrompt(_ decision: HostKeyDecision, for promptID: UUID? = nil) {
-        guard promptID == nil || promptID == pendingHostKeyPromptID else { return }
-        guard let pendingHostKeyDecision else {
-            hostKeyPrompt = nil
-            pendingHostKeyPromptID = nil
-            return
-        }
-        self.pendingHostKeyDecision = nil
-        pendingHostKeyPromptID = nil
-        hostKeyPrompt = nil
-        pendingHostKeyDecision.resume(returning: decision)
-    }
-
-}
-
-extension RootViewModel {
-    private func showLoadingPanePicker(for host: Host) {
+    func showLoadingPanePicker(for host: Host) {
         panePicker = PanePickerState(
             host: host,
             origin: .host,
             snapshot: HerdrSnapshot(sessions: []),
             isLoading: true
         )
-        isPanePickerPresented = !isSceneInactive
+        // Present regardless of the inactive flag: sheets persist across
+        // scene transitions natively, and system alerts (Local Network,
+        // Keychain) mark the scene inactive WITHOUT a scenePhase change -
+        // suppressing here stranded the first-connect flow on
+        // "Choose a terminal..." with no re-presenting path.
+        isPanePickerPresented = true
     }
 
     private var isAttachedState: Bool {
@@ -765,7 +741,14 @@ extension RootViewModel {
         switch state {
         case let .panePicker(picker):
             panePicker = picker
-            isPanePickerPresented = !isSceneInactive
+            // Same rule as showLoadingPanePicker: presentation is never
+            // suppressed by the inactive flag; dismissal of an
+            // interruption-driven sheet change stays guarded separately in
+            // panePickerPresentationBindingDidChange.
+            isPanePickerPresented = true
+            if picker.message == nil, !picker.isLoading {
+                pickerSnapshotCache[picker.host.id] = picker.snapshot
+            }
             if isSceneInactive {
                 panePickerCoordinator?.invalidateRefreshImmediately()
                 await panePickerCoordinator?.stopRefresh()
@@ -806,7 +789,7 @@ extension RootViewModel {
         }
     }
 
-    private func makePanePickerCoordinator(
+    func makePanePickerCoordinator(
         for workflow: any HerdrWorkflowCoordinating,
         transport: ActiveTransport
     ) -> any PanePickerCoordinating {
@@ -839,7 +822,7 @@ extension RootViewModel {
         invalidatePanePickerRefresh()
     }
 
-    private func beginConnection(for hostID: Host.ID) -> UUID {
+    func beginConnection(for hostID: Host.ID) -> UUID {
         terminalSessionCloseSuppressed = false
         terminalKeyboardFocusActive = false
         invalidatePanePickerPresentation()
@@ -969,7 +952,7 @@ extension RootViewModel {
         teardownTask = task
     }
 
-    private func makeWorkflow(
+    func makeWorkflow(
         for session: SSHShellSession,
         hostID: Host.ID
     ) async -> any HerdrWorkflowCoordinating {
@@ -980,7 +963,7 @@ extension RootViewModel {
         )
     }
 
-    private func persistPreferences() {
+    func persistPreferences() {
         let preferences = self.preferences
         let preferencesStore = self.preferencesStore
         Task { [weak self] in
@@ -993,8 +976,6 @@ extension RootViewModel {
     }
 
     private struct MissingCredentialsError: LocalizedError {
-        var errorDescription: String? {
-            "No saved SSH credentials. Edit this host to add a password or private key."
-        }
+        var errorDescription: String? { "No saved SSH credentials. Edit this host to add a password or private key." }
     }
 }

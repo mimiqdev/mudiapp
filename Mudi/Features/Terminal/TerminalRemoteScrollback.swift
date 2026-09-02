@@ -17,28 +17,6 @@ extension ShellTerminalView {
         }
     }
 
-    func pageUpFromShortcut() {
-        if remoteScrollbackEnabled {
-            enqueueRemoteScroll(
-                direction: .up,
-                lines: max(getTerminal().rows, 1)
-            )
-        } else {
-            pageUp()
-        }
-    }
-
-    func pageDownFromShortcut() {
-        if remoteScrollbackEnabled {
-            enqueueRemoteScroll(
-                direction: .down,
-                lines: max(getTerminal().rows, 1)
-            )
-        } else {
-            pageDown()
-        }
-    }
-
     private func setRemoteScrollbackEnabled(_ enabled: Bool) {
         remoteScrollbackEnabled = enabled
         if enabled {
@@ -260,8 +238,15 @@ extension ShellTerminalView {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
+        // Cursor-positioning taps coexist with SwiftTerm's own tap: their
+        // responsibilities are disjoint (the positioning planner stays out
+        // of SwiftTerm's context-menu band and mouse-reporting mode).
+        if gestureRecognizer is UITapGestureRecognizer,
+           otherGestureRecognizer is UITapGestureRecognizer {
+            return true
+        }
         // A vertical scroll must be owned by one recognizer, never duplicated
         // as terminal mouse motion and a remote history request.
-        false
+        return false
     }
 }

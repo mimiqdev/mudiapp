@@ -11,13 +11,41 @@ enum AppearancePreference: String, CaseIterable, Codable, Equatable, Sendable {
 struct TerminalPreferences: Codable, Equatable, Sendable {
     var appearance: AppearancePreference
     var fontSize: Double
+    /// Whether the first-launch local-network onboarding already ran. Once
+    /// set, later launches open the Host list without touching the system
+    /// permission surface again.
+    var hasCompletedLocalNetworkOnboarding: Bool
 
     init(
         appearance: AppearancePreference = .system,
-        fontSize: Double = 14
+        fontSize: Double = 14,
+        hasCompletedLocalNetworkOnboarding: Bool = false
     ) {
         self.appearance = appearance
         self.fontSize = fontSize
+        self.hasCompletedLocalNetworkOnboarding = hasCompletedLocalNetworkOnboarding
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        appearance = try container.decodeIfPresent(
+            AppearancePreference.self,
+            forKey: .appearance
+        ) ?? .system
+        fontSize = try container.decodeIfPresent(
+            Double.self,
+            forKey: .fontSize
+        ) ?? 14
+        hasCompletedLocalNetworkOnboarding = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .hasCompletedLocalNetworkOnboarding
+        ) ?? false
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case appearance
+        case fontSize
+        case hasCompletedLocalNetworkOnboarding
     }
 }
 

@@ -82,14 +82,25 @@ final class Phase7TerminalViewHarness {
     let controller: UIViewController
     let terminalView: ShellTerminalView
 
-    init(terminalView: ShellTerminalView) {
+    init(
+        terminalView: ShellTerminalView,
+        chromeView: TerminalChromeView? = nil
+    ) {
         self.terminalView = terminalView
         window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         controller = UIViewController()
         controller.view.frame = window.bounds
-        terminalView.frame = controller.view.bounds
-        terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        controller.view.addSubview(terminalView)
+        // Production hosts the terminal inside the chrome (which reserves
+        // the shortcut-bar strip); the plain path keeps legacy hosting.
+        let host: UIView
+        if let chromeView {
+            host = chromeView
+        } else {
+            host = terminalView
+        }
+        host.frame = controller.view.bounds
+        host.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        controller.view.addSubview(host)
         window.rootViewController = controller
         window.makeKeyAndVisible()
     }
@@ -113,7 +124,7 @@ final class Phase7TerminalScreenHarness {
         onBackToBrowser: (() -> Void)? = nil,
         onOpenPanePicker: (() -> Void)? = nil
     ) {
-        window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window = Self.makeWindow()
         controller = UIHostingController(
             rootView: AnyView(
                 NavigationStack {
@@ -133,6 +144,23 @@ final class Phase7TerminalScreenHarness {
         window.makeKeyAndVisible()
         controller.view.frame = window.bounds
         controller.loadViewIfNeeded()
+        Self.kickAppearance(of: controller)
+    }
+
+    /// iOS 26+ no longer mounts SwiftUI content in manually constructed
+    /// windows unless the window is attached to the foreground scene and the
+    /// root controller's appearance transition runs explicitly.
+    static func makeWindow() -> UIWindow {
+        if let scene = UIApplication.shared.connectedScenes
+            .first(where: { $0 is UIWindowScene }) as? UIWindowScene {
+            return UIWindow(windowScene: scene)
+        }
+        return UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    }
+
+    static func kickAppearance(of controller: UIViewController) {
+        controller.beginAppearanceTransition(true, animated: false)
+        controller.endAppearanceTransition()
     }
 
     func terminal() async -> ShellTerminalView? {
@@ -165,12 +193,13 @@ final class Phase7RootViewHarness {
     let controller: UIHostingController<RootView>
 
     init(rootView: RootView) {
-        window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window = Phase7TerminalScreenHarness.makeWindow()
         controller = UIHostingController(rootView: rootView)
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.view.frame = window.bounds
         controller.loadViewIfNeeded()
+        Phase7TerminalScreenHarness.kickAppearance(of: controller)
     }
 
     func close() {

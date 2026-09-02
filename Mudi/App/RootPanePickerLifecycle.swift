@@ -32,9 +32,40 @@ extension RootViewModel {
         guard isSceneInactive else { return }
         isSceneInactive = false
         sceneLifecycleGeneration = UUID()
+        noteTransparentReconnectBudgetReset()
         await resumePaneControlNow()
         guard !Task.isCancelled else { return }
+        // A close that surfaced during the interruption (ordinary terminal,
+        // or a reconnect aborted mid-flight after its disconnect) left the
+        // coordinator dead with the terminal mounted: run the same one-shot
+        // recovery now that the budget has been re-armed.
+        await recoverInterruptedTerminalAfterActivation()
+        guard !Task.isCancelled else { return }
         await restartPanePickerRefreshIfPresent()
+    }
+
+    /// Activation-side recovery for a close that was suppressed by an
+    /// interruption. Only fires when the pending close still matches the
+    /// terminal session on screen; a successful resume clears the pending
+    /// close itself (a live control proves it was stale).
+    private func recoverInterruptedTerminalAfterActivation() async {
+        guard let activeConnection,
+              pendingTerminalCloseIdentity
+                  == ObjectIdentifier(activeConnection.session)
+        else {
+            pendingTerminalCloseIdentity = nil
+            return
+        }
+        pendingTerminalCloseIdentity = nil
+        if case .attached = herdrState {
+            await transparentControlPlaneReconnect(
+                restoring: .rememberedPane
+            )
+        } else if herdrState == .ordinaryTerminal {
+            await transparentControlPlaneReconnect(
+                restoring: .ordinaryTerminal
+            )
+        }
     }
 
     /// Called by PanePickerView after its app-owned or item-driven content is
@@ -57,17 +88,28 @@ extension RootViewModel {
         for sessionIdentity: ObjectIdentifier? = nil
     ) async {
         guard !isTearingDown,
-              !isSceneInactive,
-              !isPaneControlSuspended,
-              !terminalSessionCloseSuppressed,
-              let activeConnection,
-              let workflow,
-              let pickerCoordinator = self.panePickerCoordinator
+              let activeConnection
         else { return }
-        if let sessionIdentity,
-           ObjectIdentifier(activeConnection.session) != sessionIdentity {
+        guard !terminalSessionCloseSuppressed else { return }
+        let closedIdentity = sessionIdentity
+            ?? ObjectIdentifier(activeConnection.session)
+        guard ObjectIdentifier(activeConnection.session) == closedIdentity
+        else { return }
+
+        // An interruption (scene inactive, suspended control, or a
+        // reconnect already in flight) hides the close: record it so the
+        // next activation runs the one-shot recovery instead of leaving a
+        // dead terminal mounted with a torn-down coordinator.
+        if isSceneInactive
+            || isPaneControlSuspended
+            || isTransparentlyReconnecting {
+            pendingTerminalCloseIdentity = closedIdentity
             return
         }
+
+        guard let workflow,
+              let pickerCoordinator = self.panePickerCoordinator
+        else { return }
 
         if isPanePickerPresented {
             let hasAttachedTerminal: Bool
@@ -117,15 +159,17 @@ extension RootViewModel {
         }
 
         if herdrState == .ordinaryTerminal, activeTransport != .mosh {
-            errorMessage = Self.terminalConnectionLostMessage
-            returnToHosts()
+            await transparentControlPlaneReconnect(
+                restoring: .ordinaryTerminal
+            )
             return
         }
 
-        // The closed control session must not remain the terminal context for
-        // a terminal-origin Picker. Otherwise dismissing that Picker restores
-        // the dead pane, remounts TerminalScreen, and immediately opens the
-        // Picker again. Recover through the ordinary bootstrap terminal.
+        // The closed control session must not remain the terminal context
+        // for a terminal-origin Picker (normal shell exit). Recover through
+        // the ordinary bootstrap terminal + shared Picker. Transport
+        // failures after a scene interruption are handled by the
+        // resumePaneControlNow path (transparent reconnect), not here.
         await recoverTerminalThroughPicker(workflow: workflow)
     }
 
@@ -212,18 +256,24 @@ extension RootViewModel {
         let state = await workflow.resumeAttachedControl()
         guard !Task.isCancelled else { return }
         guard case .attached = state else {
-            // The released control could not be retaken — e.g. the
-            // connection did not survive device auto-lock. Applying the
-            // failed browser state would strand the UI on a dead
-            // "Choose a terminal…" surface with no way out, so recover
-            // through the shared Picker instead.
+            // The released control could not be retaken. After a scene
+            // interruption the SSH base session is stale (NIOSSH write
+            // probing cannot reliably distinguish dead from alive - TCP
+            // writes are buffered), so ALWAYS attempt ONE transparent
+            // reconnect. The one-shot budget prevents retry loops; a live
+            // connection reconnects quickly, a dead one falls back to
+            // Hosts with a localized message.
             isPaneControlSuspended = false
-            await recoverTerminalThroughPicker(workflow: workflow)
+            await transparentControlPlaneReconnect(
+                restoring: .rememberedPane
+            )
             return
         }
         await applyWorkflowState(state, from: workflow)
         guard !Task.isCancelled else { return }
         isPaneControlSuspended = false
+        // The control channel is live again: any recorded close was stale.
+        pendingTerminalCloseIdentity = nil
         await restartPanePickerRefreshIfPresent()
     }
 

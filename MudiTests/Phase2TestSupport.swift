@@ -140,6 +140,9 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
     private let callbackStartedGate: Phase2ConnectionGate?
     private let failureGate: Phase2ConnectionGate?
     private let failAfterStartingHostKeyDecision: Bool
+    /// Gates the second (transparent-reconnect) attempt so tests can assert
+    /// the model state mid-reconnect.
+    let reconnectGate: Phase2ConnectionGate?
 
     init(
         presentedFingerprint: String,
@@ -147,7 +150,8 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
         firstConnectionGate: Phase2ConnectionGate? = nil,
         callbackStartedGate: Phase2ConnectionGate? = nil,
         failureGate: Phase2ConnectionGate? = nil,
-        failAfterStartingHostKeyDecision: Bool = false
+        failAfterStartingHostKeyDecision: Bool = false,
+        reconnectGate: Phase2ConnectionGate? = nil
     ) {
         self.presentedFingerprint = presentedFingerprint
         self.outcomes = outcomes
@@ -155,6 +159,7 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
         self.callbackStartedGate = callbackStartedGate
         self.failureGate = failureGate
         self.failAfterStartingHostKeyDecision = failAfterStartingHostKeyDecision
+        self.reconnectGate = reconnectGate
     }
 
     func connect(
@@ -169,6 +174,11 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
         if attempt == 1, let firstConnectionGate {
             await firstConnectionGate.markStarted()
             await firstConnectionGate.waitUntilReleased()
+        }
+
+        if attempt >= 2, let reconnectGate {
+            await reconnectGate.markStarted()
+            await reconnectGate.waitUntilReleased()
         }
 
         if attempt == 1, failAfterStartingHostKeyDecision {

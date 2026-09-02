@@ -2,6 +2,53 @@ import HerdrKit
 @preconcurrency import SwiftTerm
 import SwiftUI
 
+/// UIKit container that hosts the terminal scroll view and reserves the
+/// persistent shortcut-bar strip below it: the scroll view's bottom edge
+/// sits above the bar, so SwiftTerm lays out grid rows only in the truly
+/// visible region, `terminal.resize` receives the true visible rows, and
+/// the bar can never cover content (keyboard up or down).
+final class TerminalChromeView: UIView {
+    private(set) var terminalView: ShellTerminalView!
+    private var terminalBottomConstraint: NSLayoutConstraint!
+
+    init(terminalView: ShellTerminalView) {
+        super.init(frame: .zero)
+        self.terminalView = terminalView
+        terminalView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(terminalView)
+        terminalBottomConstraint = terminalView.bottomAnchor.constraint(
+            equalTo: bottomAnchor
+        )
+        NSLayoutConstraint.activate([
+            terminalView.topAnchor.constraint(equalTo: topAnchor),
+            terminalView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            terminalView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            terminalBottomConstraint,
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// Reserves `height` points above the chrome's bottom edge for the
+    /// shortcut-bar strip (its riding offset plus the bar height). The
+    /// terminal scroll view shrinks accordingly, so its grid rows always
+    /// end above the bar.
+    func setReservedBottom(_ height: CGFloat) {
+        let constant = -max(height, 0)
+        guard abs(terminalBottomConstraint.constant - constant) > 0.25
+        else { return }
+        terminalBottomConstraint.constant = constant
+    }
+}
+
+@MainActor
+final class TerminalViewCoordinator {
+    var terminalView: ShellTerminalView?
+}
+
 struct TerminalViewContainer: UIViewRepresentable {
     let session: SSHShellSession
     let fontSize: Double
@@ -9,6 +56,7 @@ struct TerminalViewContainer: UIViewRepresentable {
     let isInputFocusAllowed: Bool
     let shouldRestoreInputFocus: Bool
     let onInputFocusChange: ((Bool) -> Void)?
+    let onOpenPanePicker: (() -> Void)?
     let onError: (String) -> Void
     let onClosed: () -> Void
 
@@ -19,6 +67,7 @@ struct TerminalViewContainer: UIViewRepresentable {
         isInputFocusAllowed: Bool = true,
         shouldRestoreInputFocus: Bool = false,
         onInputFocusChange: ((Bool) -> Void)? = nil,
+        onOpenPanePicker: (() -> Void)? = nil,
         onClosed: @escaping () -> Void = {},
         onError: @escaping (String) -> Void
     ) {
@@ -28,30 +77,39 @@ struct TerminalViewContainer: UIViewRepresentable {
         self.isInputFocusAllowed = isInputFocusAllowed
         self.shouldRestoreInputFocus = shouldRestoreInputFocus
         self.onInputFocusChange = onInputFocusChange
+        self.onOpenPanePicker = onOpenPanePicker
         self.onError = onError
         self.onClosed = onClosed
     }
 
-    func makeUIView(context: Context) -> ShellTerminalView {
+    func makeCoordinator() -> TerminalViewCoordinator {
+        TerminalViewCoordinator()
+    }
+
+    func makeUIView(context: Context) -> TerminalChromeView {
         let terminalView = ShellTerminalView(frame: .zero)
         terminalView.updateAppearance(for: colorScheme)
         terminalView.updateFontSize(fontSize)
         terminalView.shouldRestoreInputFocus = shouldRestoreInputFocus
         terminalView.onInputFocusChange = onInputFocusChange
+        terminalView.onOpenPanePicker = onOpenPanePicker
         terminalView.start(
             session: session,
             onError: onError,
             onClosed: onClosed
         )
         terminalView.updateInputFocus(isAllowed: isInputFocusAllowed)
-        return terminalView
+        context.coordinator.terminalView = terminalView
+        return TerminalChromeView(terminalView: terminalView)
     }
 
-    func updateUIView(_ terminalView: ShellTerminalView, context: Context) {
+    func updateUIView(_ chromeView: TerminalChromeView, context: Context) {
+        guard let terminalView = context.coordinator.terminalView else { return }
         terminalView.updateAppearance(for: colorScheme)
         terminalView.updateFontSize(fontSize)
         terminalView.shouldRestoreInputFocus = shouldRestoreInputFocus
         terminalView.onInputFocusChange = onInputFocusChange
+        terminalView.onOpenPanePicker = onOpenPanePicker
         terminalView.updateInputFocus(isAllowed: isInputFocusAllowed)
         terminalView.updateSession(
             session: session,
@@ -60,8 +118,11 @@ struct TerminalViewContainer: UIViewRepresentable {
         )
     }
 
-    static func dismantleUIView(_ terminalView: ShellTerminalView, coordinator: ()) {
-        terminalView.stop()
+    static func dismantleUIView(
+        _ chromeView: TerminalChromeView,
+        coordinator: TerminalViewCoordinator
+    ) {
+        coordinator.terminalView?.stop()
     }
 }
 
@@ -72,12 +133,13 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     var sessionIdentity: ObjectIdentifier?
     /// Exposes the bar independently of UIKit's first-responder presentation.
     private(set) lazy var shortcutBar: MudiTerminalShortcutBar? = {
-        MudiTerminalShortcutBar(
-            terminalView: self,
-            onPageUp: { [weak self] in self?.pageUpFromShortcut() },
-            onPageDown: { [weak self] in self?.pageDownFromShortcut() }
-        )
+        MudiTerminalShortcutBar(terminalView: self) { [weak self] in
+            self?.onOpenPanePicker?()
+        }
     }()
+    /// Invoked by the shortcut bar's Jump To button; wired to the pane
+    /// picker callback owned by the hosting screen.
+    var onOpenPanePicker: (() -> Void)?
     private(set) var isInputFocusAllowed = true
     /// Mirrors UIKit's own state restoration: when the terminal had keyboard
     /// focus before a background retakeover replaced its control session,
@@ -87,8 +149,13 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     private var suppressFocusCallbacks = false
     private(set) var becomeFirstResponderRequestCount = 0
     private(set) var resignFirstResponderRequestCount = 0
+    /// Bottom pin for the persistent shortcut bar; managed by the
+    /// TerminalPersistentShortcutBar extension.
+    var shortcutBarBottomConstraint: NSLayoutConstraint?
+    /// Most recent keyboard frame from the keyboard notifications.
+    var lastKeyboardFrameEnd: CGRect?
     private var outputTask: Task<Void, Never>?
-    private var didCloseNormally = false
+    var didCloseNormally = false
     var onError: ((String) -> Void)?
     var onClosed: (() -> Void)?
     private var compositionInputDelegate: TerminalCompositionInputDelegate?
@@ -118,12 +185,42 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         alwaysBounceVertical = true
         inputAssistantItem.leadingBarButtonGroups = []
         inputAssistantItem.trailingBarButtonGroups = []
-        inputAccessoryView = shortcutBar
+        // The shortcut bar is persistent (always pinned above the bottom
+        // edge) rather than a keyboard accessory, so SwiftTerm's stock
+        // accessory must not come back when the keyboard appears.
+        inputAccessoryView = nil
+        installKeyboardFrameObserver()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else { return }
+        ensureShortcutBarAttached()
+    }
+
+    override func layoutSubviews() {
+        ensureShortcutBarAttached()
+        super.layoutSubviews()
+    }
+
+    override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        updateShortcutBarOffset()
+    }
+
+    // MARK: Persistent shortcut bar lifecycle hooks
+
+    // The pin/install/keyboard-riding implementation lives in the
+    // TerminalPersistentShortcutBar extension so this class stays focused
+    // on session and composition concerns.
 
     override func becomeFirstResponder() -> Bool {
         becomeFirstResponderRequestCount += 1
@@ -168,39 +265,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         loadRemoteScrollbackCapability(for: session, identity: sessionIdentity)
 
         outputTask = Task { [weak self, session, sessionIdentity] in
-            let output = await session.outputStream()
-            do {
-                for try await bytes in output {
-                    guard !Task.isCancelled else { return }
-                    guard let self,
-                          self.sessionIdentity == sessionIdentity
-                    else { return }
-                    guard !bytes.isEmpty else { continue }
-                    self.feed(byteArray: bytes[...])
-                }
-            } catch {
-                guard !Task.isCancelled,
-                      let self,
-                      self.sessionIdentity == sessionIdentity
-                else { return }
-                await session.disconnect()
-                guard !Task.isCancelled,
-                      self.sessionIdentity == sessionIdentity
-                else { return }
-                self.report(error)
-                return
-            }
-
-            guard !Task.isCancelled,
-                  let self,
-                  self.sessionIdentity == sessionIdentity
-            else { return }
-            self.didCloseNormally = true
-            await session.disconnect()
-            guard !Task.isCancelled,
-                  self.sessionIdentity == sessionIdentity
-            else { return }
-            self.onClosed?()
+            await self?.consumeOutput(of: session, identity: sessionIdentity)
         }
 
         DispatchQueue.main.async { [weak self] in

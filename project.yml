@@ -42,6 +42,7 @@ targets:
       - path: Mudi
         excludes:
           - "**/README.md"
+          - "Info.plist"
     resources:
       - path: Mudi/Resources/Assets.xcassets
       - path: Mudi/Resources/SymbolsNerdFontMono-Regular.ttf
@@ -60,6 +61,11 @@ targets:
         PRODUCT_NAME: Mudi
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: "YES"
+        # Merged with the generated content; carries the keys without an
+        # INFOPLIST_KEY_* build setting (NSBonjourServices - Bonjour
+        # browsing only triggers the Local Network alert for declared
+        # service types, and the gate probes exactly these two).
+        INFOPLIST_FILE: Mudi/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Mudi
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: >-
           Mudi connects to SSH servers on your local network.

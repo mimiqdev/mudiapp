@@ -44,6 +44,7 @@ struct RootView: View {
                                 )
                             }
                         },
+                        onBackToHosts: model.returnToHosts,
                         fontSize: model.preferences.fontSize,
                         isInputFocusAllowed: !model.isPanePickerPresented,
                         shouldRestoreInputFocus: model
@@ -71,6 +72,7 @@ struct RootView: View {
                                 )
                             }
                         },
+                        onBackToHosts: model.returnToHosts,
                         fontSize: model.preferences.fontSize,
                         isInputFocusAllowed: !model.isPanePickerPresented,
                         shouldRestoreInputFocus: model
@@ -91,6 +93,15 @@ struct RootView: View {
                 ProgressView("Disconnecting…")
             } else if model.activeConnection != nil {
                 ProgressView("Discovering Herdr…")
+            } else if model.isLocalNetworkOnboardingRequired == true {
+                LocalNetworkPermissionOnboardingView(
+                    onContinue: model.completeLocalNetworkOnboarding
+                )
+            } else if model.isLocalNetworkOnboardingRequired == nil {
+                // The local-network gate has not decided yet; showing an
+                // empty surface prevents the Host list from flashing before
+                // the onboarding decision lands.
+                ProgressView()
             } else {
                 HostListView(
                     hosts: model.hosts,
@@ -133,14 +144,37 @@ struct RootView: View {
             // .active and be mistaken for an explicit Close.
             model.sceneWillResignActive()
         }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIApplication.didBecomeActiveNotification
+            )
+        ) { _ in
+            // Balances the willResignActive hook: system alerts (Local
+            // Network permission, Keychain prompts) resign active WITHOUT
+            // a scenePhase transition, so scenePhase's .active onChange
+            // may never fire and isSceneInactive would stay stuck.
+            // sceneDidBecomeActive no-ops unless the flag is set.
+            Task { await model.sceneDidBecomeActive() }
+        }
         .task {
             await model.loadHosts()
             await model.loadPreferences()
+            await model.checkLocalNetworkPermission()
         }
         .sheet(isPresented: $isSettingsPresented) {
             NavigationStack {
                 SettingsView(model: model)
             }
+            // An already-presented sheet does not re-resolve traits when the
+            // presenting hierarchy switches to preferredColorScheme(nil);
+            // anchoring the scheme here plus the window override below lets
+            // Dark/Light→System refresh the open sheet immediately.
+            .preferredColorScheme(model.preferences.appearance.colorScheme)
+            .background(
+                InterfaceStyleOverride(
+                    colorScheme: model.preferences.appearance.colorScheme
+                )
+            )
         }
         .sheet(item: $model.editor) { context in
             NavigationStack {
@@ -152,14 +186,29 @@ struct RootView: View {
                 )
             }
         }
-        .popover(isPresented: panePickerBinding, arrowEdge: .top) {
+        .overlay(alignment: .top) {
+            if model.isTransparentlyReconnecting {
+                Label("Reconnecting…", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.blue.opacity(0.85), in: Capsule())
+                    .padding(.top, 60)
+                    .accessibilityIdentifier("transparent-reconnect-overlay")
+                    .transition(.opacity)
+            }
+        }
+        .sheet(isPresented: panePickerBinding) {
             if let state = model.panePicker {
                 panePickerPresentation(
                     panePickerContentFrame(
                         PanePickerView(
                             state: state,
                             onDismiss: model.dismissPanePicker,
-                            onRefresh: { await model.refreshPanePicker() },
+                            onRefresh: {
+                                await model.refreshPanePicker()
+                            },
                             onCreateWorkspace: model.createWorkspaceFromPicker,
                             isCreatingWorkspace: model.isCreatingWorkspace,
                             onSelectPane: model.selectPaneFromPicker,
@@ -216,10 +265,12 @@ struct RootView: View {
         if UIDevice.current.userInterfaceIdiom == .pad,
            containerSize != .zero
         {
-            let size = PanePickerPresentationPolicy.popoverContentSize(
-                for: containerSize
+            // iPad: centered sheet with a content-capped width; height is
+            // driven by the medium/large detents.
+            let width = PanePickerPresentationPolicy.popoverContentWidth(
+                for: containerSize.width
             )
-            content.frame(width: size.width, height: size.height)
+            content.frame(width: width)
         } else {
             content.frame(minWidth: 320, minHeight: 420)
         }
@@ -240,7 +291,7 @@ struct RootView: View {
     }
 }
 
-private extension AppearancePreference {
+extension AppearancePreference {
     var colorScheme: ColorScheme? {
         switch self {
         case .system:

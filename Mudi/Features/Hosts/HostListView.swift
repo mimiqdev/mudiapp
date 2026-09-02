@@ -17,7 +17,7 @@ struct HostListSwipeActionDescriptor {
 struct HostListActionPolicy: Equatable {
     let swipeActions: [HostListSwipeAction]
 
-    static let current = HostListActionPolicy(swipeActions: [.delete])
+    static let current = HostListActionPolicy(swipeActions: [.edit, .delete])
 
     func swipeActionDescriptors(
         for host: Host,
@@ -113,6 +113,12 @@ struct HostListView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("host-connect-\(host.id.uuidString)")
+                        .overlay(alignment: .topLeading) {
+                            AccessibilityIdentifierBridge(
+                                identifier: "host-connect-\(host.id.uuidString)"
+                            )
+                            .frame(width: 1, height: 1)
+                        }
                         .contextMenu {
                             Button("Edit", systemImage: "pencil") {
                                 onEdit(host)

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	    Merged into the generated Info.plist (GENERATE_INFOPLIST_FILE=YES
+	    + INFOPLIST_FILE). Bonjour browsing only triggers the iOS Local
+	    Network alert (and only works at all) when the browsed service
+	    types are declared here; there is no INFOPLIST_KEY_* build setting
+	    for this key, so it lives in this file. The local-network gate
+	    probes exactly these two types (SystemLocalNetworkPermissionGate).
+	-->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_services._dns-sd._udp</string>
+		<string>_ssh._tcp</string>
+	</array>
+</dict>
+</plist>

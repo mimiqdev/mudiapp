@@ -30,19 +30,11 @@ struct PanePickerPresentationPolicy: Equatable {
         usesSystemInteractiveDismissal: true
     )
 
-    /// iPad popover sizing: a narrow but full-height side panel anchored at
-    /// the top-leading corner, rather than a small card floating in the
-    /// corner of a landscape screen.
-    struct PopoverContentSize: Equatable {
-        let width: CGFloat
-        let height: CGFloat
-    }
-
-    static func popoverContentSize(for container: CGSize) -> PopoverContentSize {
-        PopoverContentSize(
-            width: min(420, max(320, container.width * 0.36)),
-            height: max(420, container.height - 24)
-        )
+    /// iPad sheet width cap: the sheet is centered with a content-capped
+    /// width (not full width); height is driven by the medium/large
+    /// detents.
+    static func popoverContentWidth(for containerWidth: CGFloat) -> CGFloat {
+        min(420, max(320, containerWidth * 0.36))
     }
 
     var detents: Set<PresentationDetent> {
