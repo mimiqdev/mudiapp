@@ -1,67 +1,57 @@
-# Active plan — 初次使用与终端体验打磨
+# 8. Terminal 字体与配色
 
-**出口：** 首次权限流程不打断连接；常用 terminal 输入能通过紧凑的触屏交互完成。
+**出口：** 用户能选择适合 Light/Dark 的经典 terminal 配色和预装字体，也能导入自己的字体；ANSI 色彩与 Nerd Font 符号正确显示。
 
-阶段 6 已统一 Herdr Pane Picker 导航。本步只打磨首次使用流程与 terminal 触屏交互，不改 Herdr/Mosh 协议。
+## 配色
 
-## 范围内
+- 内置 Mudi Default Light / Dark
+- 内置 Solarized Light / Dark
+- 内置 Catppuccin Latte / Mocha；评估是否同时提供 Frappé / Macchiato
+- 内置经典 Monokai（Dark）；不虚构不存在的官方 Monokai Light
+- 至少再提供一组许可清晰的经典 Light / Dark 方案，最终清单实现前确认
+- 每套配色定义 ANSI 16 色锚点、默认前景/背景、粗体、cursor、selection，并明确 16–255 的扩展 palette 策略；不得把 terminal 实际显示限制为 16 色
+- 完整支持 ANSI 256 色输入（`38;5` / `48;5`）和 24-bit True Color（`38;2` / `48;2`）；True Color 按程序指定 RGB 原样渲染
+- SwiftTerm 当前以 16 色调用 `installColors`，再通过 `base16Lab` / xterm 策略生成扩展 palette；若内置主题需要官方 256 色表，再增加显式 256 palette 支持，不能静默降级
+- 审核 SSH / Mosh 的 `TERM=xterm-256color` 与 `COLORTERM=truecolor` 能力声明，确保远端程序会正确选择 256 色或 True Color
+- 支持 Automatic pair：跟随 App/System Light/Dark 自动选择成对主题
+- 也允许固定选择一个 Light 或 Dark palette，并记住设置
+- 设置页提供真实 terminal preview，不只显示色块
+- 颜色值、名称与许可取自各主题官方仓库；禁止凭印象抄色值
+- 真机预览和自动化色表覆盖 ANSI 0–15、16–255、前景/背景 indexed color 与 True Color，验证主题切换不会破坏程序指定 RGB
 
-- 首次启动说明为何需要本地网络权限，再主动触发 iOS 的本地网络授权（不是定位）
-- 授权完成后再进入连接表单 / Host 列表，避免第一次 SSH 和系统弹窗抢跑
-- 收集并打磨同类首次使用摩擦（权限、空白状态、失败文案）
-- Host 编辑入口可发现性：编辑功能已存在但只在长按 context menu；在滑动操作中也暴露 Edit
-- Shortcut bar **常驻显示**（不随键盘隐藏），单行单页（废弃两页模型），键位固定为：
-  - `Esc`、`Tab`、`Ctrl`（latch）、方向按钮、粘贴、Jump To、收键盘（固定）
-  - 短标签、SF Symbols、较小字体
-  - 不放"复制"键：复制由文字选择流程负责；粘贴保留快捷键
-  - Jump To 复用 terminal 工具栏 Switch Pane 的同一 Picker 入口，图标一致，不新增选择逻辑
-- 方向按钮弹出悬浮 D-pad（可遮挡 terminal 内容）：
-  - 四方向键 + 中心 Enter + PgUp/PgDn
-- Ctrl latch：点一下变选中态并弹出常见组合键按钮 `C D L A E U K W`：
-  - 点组合键 → 发送对应 Ctrl 控制字节 → 解除 latch 并收起弹出
-  - latch 后直接敲键盘字符：沿用现有修饰键行为
-- terminal 顶部工具栏：leading 改为 chevron 返回 Hosts（走 returnToHosts 语义），移除 trailing 的 Disconnect（语义重复）；Picker 入口由 Jump To 承担
-- 触屏光标定位：第一版真机无效，已整体移除，重做记入 future/11-touch-cursor-positioning.md（不在本阶段）
-- Settings 里从 Dark/Light 切回 System 时，已打开的 Settings sheet 不刷新的问题（SwiftUI `preferredColorScheme(nil)` 刷新不了已 present 的 sheet）
-- 锁屏恢复透明重连：解锁发现 SSH 控制面/基础会话已断时，后台静默重连（Keychain 凭据 + 已记住 TOFU）、重新 discovery、自动 retakeover 原 pane，terminal 页面保持不动并显示轻量 Reconnecting 提示；重连失败才回 Hosts，错误必须本地化（NIOSSH 原始错误不得上屏）。普通 terminal + Mosh 路径锁屏恢复行为同步验证
+## 字体
+
+- 预装若干可分发的免费等宽字体，并带 Nerd Font 符号
+- 用户可导入 `.ttf` / `.otf`
+- 可选字族、字号；SwiftTerm 必须真正用到所选字体（阶段 4 的 Symbols cascade 在真机上是方块，不能当做成了）
+- 配色和字体设置彼此独立，但在同一 Terminal Appearance 设置区域预览
 
 ## 不在本步
 
-- 改 Herdr discovery / takeover / workspace 命令或 JSON
-- 网络切换与发布验收（阶段 9）
-- terminal 字体与配色（阶段 8）
-- Pane Picker 的布局与导航行为（阶段 6 已定）
-- Chat UI、通知、Live Activity
+- 付费字体商店
+- 第一版不导入第三方 terminal theme 文件
+- 不改变 App 的 System / Light / Dark 导航外观逻辑
 
 ## 测试
 
-先写自动化测试并确认失败，再实现。权限弹窗、D-pad 悬浮交互与触屏光标定位以真机手工验收。
+先写自动化测试并确认失败，再实现。主题/字体的真机渲染与预览以手工验收（模拟器截图比对为主，真机仅你要求时）。
 
 ### 自动化
 
-- 首次启动且未授予本地网络权限时，呈现权限说明页而不是 Host 列表；授权后进入 Host 列表；已授权或后续启动不受影响（状态持久化）
-- Shortcut bar 单行单页，键位恰好为 Esc、Tab、Ctrl、方向、粘贴、Jump To、收键盘，高度与现有单行一致；bar 在键盘隐藏时也保持可见
-- Jump To 触发与 terminal 工具栏 Switch Pane 相同的 Picker 打开入口
-- terminal 工具栏 leading 为返回 Hosts 按钮，触发 returnToHosts；不再提供独立 Disconnect 按钮
-- 方向按钮切换 D-pad 悬浮层显隐；D-pad 含上/下/左/右/中心 Enter/PgUp/PgDn，各键经现有 terminal input 路径发送正确字节
-- Ctrl latch：选中态弹出 C/D/L/A/E/U/K/W 组合按钮；点组合键发送对应控制字节（C=0x03、D=0x04、L=0x0C、A=0x01、E=0x05、U=0x15、K=0x0B、W=0x17）并解除 latch、收起弹出；未 latch 时无弹出
-- 键发送复用现有 terminal.input 路径，不新增协议
-- Host 列表滑动操作同时暴露 Edit 与 Delete；Edit 打开现有编辑表单并保存生效
-- `make test-core` 和 Mudi XCTest 通过
+- 每套内置配色包含 ANSI 16 锚点 + fg/bg/bold/cursor/selection + 16–255 扩展策略；名称与许可来源记录
+- 主题切换应用到 SwiftTerm 后：0–15 精确为锚点值；16–255 按声明策略；`38;2/48;2` True Color 渲染为程序指定 RGB 原值，不受主题影响
+- `TERM=xterm-256color`、`COLORTERM=truecolor` 的 PTY 声明测试
+- 偏好持久化：主题选择（含 Automatic pair）、字体族/字号重启后恢复
+- 预装字体加载并真正被 SwiftTerm 使用（字形度量非 fallback）；用户导入 .ttf/.otf 注册后可选用
+- `make test-core` 和 Mudi XCTest 通过（模拟器）
 
 ### 手工（出口）
 
-- 删除重装后首次连接，先看到权限说明，授权后顺利完成首次 SSH
-- D-pad 悬浮层打开/关闭、各键在远端生效，收键盘按钮始终可用
-- Ctrl latch 弹出组合键，发送与解除行为正确
-- 触屏光标定位在 mouse-reporting 程序与普通 shell 下的行为符合预期
+- 设置页 terminal preview 显示真实转义输出，不是色块
+- Nerd Font 符号（如目录/图标字形）不再渲染为方块
+- Automatic 跟随系统 Light/Dark 切换配色
 
 ## 切片
 
-- Root 启动流程插入一次性权限引导（状态持久化），连接入口在授权后开放。
-- `MudiTerminalShortcutBar` 改单页六键模型 + D-pad 悬浮层 + Ctrl 组合键弹出，键发送复用现有 input 路径。
-- 光标定位先做 mouse-reporting 探测与发送，普通 shell 视 SwiftTerm cursor 可得性决定方向键方案。
-
-## 完成后
-
-归档为 `archive/07-ux-polish.md`，将 `future/08-terminal-appearance.md` 提升为 `active_plan.md`。
+- `TerminalAppearance` 扩展为主题注册表（锚点 + 扩展策略 + 能力声明），设置页选择 + preview。
+- 字体注册/导入/持久化，SwiftTerm 字体接入修正。
