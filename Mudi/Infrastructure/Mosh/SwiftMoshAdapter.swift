@@ -68,7 +68,8 @@ actor SwiftMoshAdapter: MoshTransportBootstrapping {
     }
 
     private static let serverCommand = SSHLoginShellCommand.wrap(
-        "mosh-server new -s"
+        "mosh-server new -s",
+        environment: TerminalPTYCapabilities.environment
     )
 }
 

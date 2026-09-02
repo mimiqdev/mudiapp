@@ -10,6 +10,8 @@ enum AppearancePreference: String, CaseIterable, Codable, Equatable, Sendable {
 
 struct TerminalPreferences: Codable, Equatable, Sendable {
     var appearance: AppearancePreference
+    var themeSelection: TerminalThemeSelection
+    var fontFamily: String
     var fontSize: Double
     /// Whether the first-launch local-network onboarding already ran. Once
     /// set, later launches open the Host list without touching the system
@@ -18,12 +20,30 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
 
     init(
         appearance: AppearancePreference = .system,
+        themeSelection: TerminalThemeSelection = TerminalThemeRegistry.defaultSelection,
+        fontFamily: String = "JetBrainsMono Nerd Font Mono",
         fontSize: Double = 14,
         hasCompletedLocalNetworkOnboarding: Bool = false
     ) {
         self.appearance = appearance
+        self.themeSelection = themeSelection
+        self.fontFamily = fontFamily
         self.fontSize = fontSize
         self.hasCompletedLocalNetworkOnboarding = hasCompletedLocalNetworkOnboarding
+    }
+
+    /// Source-compatible initializer for callers that only know the original
+    /// appearance and size preference fields.
+    init(
+        appearance: AppearancePreference,
+        fontSize: Double,
+        hasCompletedLocalNetworkOnboarding: Bool = false
+    ) {
+        self.init(
+            appearance: appearance,
+            fontSize: fontSize,
+            hasCompletedLocalNetworkOnboarding: hasCompletedLocalNetworkOnboarding
+        )
     }
 
     init(from decoder: Decoder) throws {
@@ -32,6 +52,14 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
             AppearancePreference.self,
             forKey: .appearance
         ) ?? .system
+        themeSelection = try container.decodeIfPresent(
+            TerminalThemeSelection.self,
+            forKey: .themeSelection
+        ) ?? TerminalThemeRegistry.defaultSelection
+        fontFamily = try container.decodeIfPresent(
+            String.self,
+            forKey: .fontFamily
+        ) ?? "JetBrainsMono Nerd Font Mono"
         fontSize = try container.decodeIfPresent(
             Double.self,
             forKey: .fontSize
@@ -44,6 +72,8 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case appearance
+        case themeSelection
+        case fontFamily
         case fontSize
         case hasCompletedLocalNetworkOnboarding
     }

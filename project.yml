@@ -47,6 +47,8 @@ targets:
       - path: Mudi/Resources/Assets.xcassets
       - path: Mudi/Resources/SymbolsNerdFontMono-Regular.ttf
       - path: Mudi/Resources/SymbolsNerdFontMono-LICENSE.txt
+      - path: Mudi/Resources/JetBrainsMonoNerdFontMono-Regular.ttf
+      - path: Mudi/Resources/JetBrainsMonoNerdFontMono-LICENSE.txt
     dependencies:
       - package: HerdrKit
       - package: SwiftTerm
@@ -92,6 +94,9 @@ targets:
     platform: iOS
     sources:
       - path: MudiTests
+    resources:
+      - path: MudiTests/Resources/Hack-Regular.ttf
+      - path: MudiTests/Resources/Hack-LICENSE.txt
     dependencies:
       - target: Mudi
       - package: HerdrKit

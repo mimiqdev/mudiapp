@@ -1,5 +1,90 @@
 import HerdrKit
 import SwiftUI
+import UIKit
+
+/// The transport badge is deliberately kept in a surface corner below the
+/// navigation bar, rather than in the toolbar or the bottom shortcut-bar
+/// strip. This keeps it visible without competing with either system chrome.
+enum TerminalTransportBadgeCorner: Equatable {
+    case topTrailing
+}
+
+struct TerminalTransportBadgePlacementPolicy: Equatable {
+    let corner: TerminalTransportBadgeCorner
+    let horizontalInset: CGFloat
+    let topInset: CGFloat
+
+    static let phone = Self(
+        corner: .topTrailing,
+        horizontalInset: 12,
+        topInset: 8
+    )
+    static let pad = Self(
+        corner: .topTrailing,
+        horizontalInset: 20,
+        topInset: 12
+    )
+
+    static func resolved(for idiom: UIUserInterfaceIdiom) -> Self {
+        idiom == .pad ? .pad : .phone
+    }
+
+    var alignment: Alignment {
+        switch corner {
+        case .topTrailing:
+            .topTrailing
+        }
+    }
+}
+
+/// Solid info-semantic colors for the transport badge. ANSI 4 is the
+/// theme's normal blue anchor; the text uses whichever of the theme's
+/// foreground/background anchors has the greater relative-luminance contrast.
+struct TerminalTransportBadgeStyle: Equatable {
+    let fill: TerminalRGBColor
+    let text: TerminalRGBColor
+
+    static func resolved(for theme: TerminalTheme) -> Self {
+        let fill = theme.ansi16.count > 4
+            ? theme.ansi16[4]
+            : theme.defaultForeground
+        let candidates = [theme.defaultForeground, theme.defaultBackground]
+        let text = candidates.max {
+            contrastRatio(between: $0, and: fill)
+                < contrastRatio(between: $1, and: fill)
+        } ?? theme.defaultForeground
+        return Self(fill: fill, text: text)
+    }
+
+    var contrastRatio: Double {
+        Self.contrastRatio(between: text, and: fill)
+    }
+
+    static func contrastRatio(
+        between lhs: TerminalRGBColor,
+        and rhs: TerminalRGBColor
+    ) -> Double {
+        let lhsLuminance = relativeLuminance(lhs)
+        let rhsLuminance = relativeLuminance(rhs)
+        let lighter = max(lhsLuminance, rhsLuminance)
+        let darker = min(lhsLuminance, rhsLuminance)
+        return (lighter + 0.05) / (darker + 0.05)
+    }
+
+    private static func relativeLuminance(_ color: TerminalRGBColor) -> Double {
+        0.2126 * luminanceComponent(color.red)
+            + 0.7152 * luminanceComponent(color.green)
+            + 0.0722 * luminanceComponent(color.blue)
+    }
+
+    private static func luminanceComponent(_ value: UInt8) -> Double {
+        let normalized = Double(value) / 255
+        if normalized <= 0.03928 {
+            return normalized / 12.92
+        }
+        return pow((normalized + 0.055) / 1.055, 2.4)
+    }
+}
 
 /// Horizontal breathing room between the terminal grid and the bezels.
 /// The terminal view's width shrinks by the inset, so column counts are
@@ -37,6 +122,7 @@ struct TerminalSessionErrorState: Equatable {
     }
 }
 
+@MainActor
 struct TerminalScreen: View {
     let host: Host
     let session: SSHShellSession
@@ -47,6 +133,9 @@ struct TerminalScreen: View {
     let onOpenPanePicker: (() -> Void)?
     let onSessionClosed: ((ObjectIdentifier) -> Void)?
     let onBackToHosts: (() -> Void)?
+    @ObservedObject var settingsModel: RootViewModel
+    let themeSelection: TerminalThemeSelection
+    let fontFamily: String
     let fontSize: Double
     let isInputFocusAllowed: Bool
     let shouldRestoreInputFocus: Bool
@@ -56,6 +145,7 @@ struct TerminalScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var terminalErrorState: TerminalSessionErrorState
     @State private var isLeaving = false
+    @State private var isTerminalSettingsPresented = false
 
     init(
         host: Host,
@@ -67,6 +157,9 @@ struct TerminalScreen: View {
         onOpenPanePicker: (() -> Void)? = nil,
         onSessionClosed: ((ObjectIdentifier) -> Void)? = nil,
         onBackToHosts: (() -> Void)? = nil,
+        settingsModel: RootViewModel? = nil,
+        themeSelection: TerminalThemeSelection = TerminalThemeRegistry.defaultSelection,
+        fontFamily: String = TerminalFontRegistry.defaultFamilyName,
         fontSize: Double = 14,
         isInputFocusAllowed: Bool = true,
         shouldRestoreInputFocus: Bool = false,
@@ -82,6 +175,17 @@ struct TerminalScreen: View {
         self.onOpenPanePicker = onOpenPanePicker
         self.onSessionClosed = onSessionClosed
         self.onBackToHosts = onBackToHosts
+        let resolvedSettingsModel = settingsModel ?? RootViewModel()
+        if settingsModel == nil {
+            resolvedSettingsModel.preferences.themeSelection = themeSelection
+            resolvedSettingsModel.preferences.fontFamily = fontFamily
+            resolvedSettingsModel.preferences.fontSize = fontSize
+        }
+        _settingsModel = ObservedObject(
+            wrappedValue: resolvedSettingsModel
+        )
+        self.themeSelection = themeSelection
+        self.fontFamily = fontFamily
         _terminalErrorState = State(
             initialValue: TerminalSessionErrorState(
                 sessionIdentity: ObjectIdentifier(session)
@@ -98,7 +202,9 @@ struct TerminalScreen: View {
         ZStack(alignment: .top) {
             TerminalViewContainer(
                 session: session,
-                fontSize: fontSize,
+                fontSize: currentFontSize,
+                fontFamily: currentFontFamily,
+                theme: terminalAppearance.theme,
                 colorScheme: colorScheme,
                 isInputFocusAllowed: isInputFocusAllowed,
                 shouldRestoreInputFocus: shouldRestoreInputFocus,
@@ -143,8 +249,31 @@ struct TerminalScreen: View {
                 .frame(width: 1, height: 1)
             }
 
+            // SwiftUI toolbar/text identifiers are not guaranteed to
+            // materialize as UIKit views for automation. These inert bridges
+            // keep the surface and sheet contracts discoverable without
+            // duplicating any state or visible controls.
+            AccessibilityIdentifierBridge(
+                identifier: "terminal-transport-badge",
+                accessibilityLabel: transport.accessibilityLabel
+            )
+            .frame(width: 1, height: 1)
+            AccessibilityIdentifierBridge(
+                identifier: "terminal-settings",
+                action: { isTerminalSettingsPresented = true }
+            )
+            .frame(width: 1, height: 1)
+
         }
         .background(Color(uiColor: terminalAppearance.background))
+        .overlay(alignment: terminalTransportBadgePolicy.alignment) {
+            transportBadge
+                .padding(.top, terminalTransportBadgePolicy.topInset)
+                .padding(
+                    .trailing,
+                    terminalTransportBadgePolicy.horizontalInset
+                )
+        }
         .onAppear {
             isLeaving = false
             terminalErrorState.clear()
@@ -157,15 +286,14 @@ struct TerminalScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Label {
-                    Text(transport.displayName)
-                } icon: {
-                    Image(systemName: transport.systemImage)
+                Button {
+                    isTerminalSettingsPresented = true
+                } label: {
+                    Image(systemName: "gearshape")
                 }
-                .labelStyle(.titleAndIcon)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(transport.accessibilityLabel)
-                .accessibilityIdentifier("active-transport")
+                .accessibilityLabel("Terminal Settings")
+                .accessibilityIdentifier("terminal-settings")
+                .tint(Color(uiColor: terminalAppearance.foreground))
             }
             ToolbarItem(placement: .topBarLeading) {
                 if let onBackToHosts {
@@ -186,6 +314,17 @@ struct TerminalScreen: View {
                 }
             }
         }
+        .sheet(isPresented: $isTerminalSettingsPresented) {
+            NavigationStack {
+                TerminalAppearanceSettingsView(model: settingsModel)
+            }
+            .preferredColorScheme(settingsModel.preferences.appearance.colorScheme)
+            .background(
+                InterfaceStyleOverride(
+                    colorScheme: settingsModel.preferences.appearance.colorScheme
+                )
+            )
+        }
     }
 
     private func beginLeaving(_ action: () -> Void) {
@@ -195,7 +334,48 @@ struct TerminalScreen: View {
     }
 
     private var terminalAppearance: TerminalAppearance {
-        TerminalAppearance.colors(for: colorScheme)
+        let variant: TerminalThemeVariant = colorScheme == .dark ? .dark : .light
+        let theme = TerminalThemeRegistry.resolve(
+            currentThemeSelection,
+            for: variant
+        ) ?? TerminalAppearance.colors(for: colorScheme).theme
+        return TerminalAppearance(theme: theme)
+    }
+
+    private var currentThemeSelection: TerminalThemeSelection {
+        settingsModel.preferences.themeSelection
+    }
+
+    private var currentFontFamily: String {
+        settingsModel.preferences.fontFamily
+    }
+
+    private var currentFontSize: Double {
+        settingsModel.preferences.fontSize
+    }
+
+    private var terminalTransportBadgePolicy: TerminalTransportBadgePlacementPolicy {
+        TerminalTransportBadgePlacementPolicy.resolved(
+            for: UIDevice.current.userInterfaceIdiom
+        )
+    }
+
+    private var transportBadgeStyle: TerminalTransportBadgeStyle {
+        .resolved(for: terminalAppearance.theme)
+    }
+
+    private var transportBadge: some View {
+        Text(transport.displayName)
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(Color(uiColor: transportBadgeStyle.text.uiColor))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(
+                Color(uiColor: transportBadgeStyle.fill.uiColor),
+                in: Capsule()
+            )
+            .accessibilityLabel(transport.accessibilityLabel)
+            .accessibilityIdentifier("terminal-transport-badge")
     }
 }
 
@@ -206,15 +386,6 @@ private extension ActiveTransport {
             "Mosh"
         case .ssh:
             "SSH"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .mosh:
-            "antenna.radiowaves.left.and.right"
-        case .ssh:
-            "network"
         }
     }
 

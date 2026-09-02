@@ -122,7 +122,8 @@ final class Phase7TerminalScreenHarness {
         session: SSHShellSession,
         onDisconnect: @escaping () -> Void,
         onBackToBrowser: (() -> Void)? = nil,
-        onOpenPanePicker: (() -> Void)? = nil
+        onOpenPanePicker: (() -> Void)? = nil,
+        settingsModel: RootViewModel? = nil
     ) {
         window = Self.makeWindow()
         controller = UIHostingController(
@@ -135,7 +136,8 @@ final class Phase7TerminalScreenHarness {
                         onDisconnect: onDisconnect,
                         onBackToBrowser: onBackToBrowser,
                         onOpenPanePicker: onOpenPanePicker,
-                        onSessionClosed: { _ in }
+                        onSessionClosed: { _ in },
+                        settingsModel: settingsModel
                     )
                 }
             )

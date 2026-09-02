@@ -1,3 +1,4 @@
+import HerdrKit
 import SwiftUI
 import UIKit
 import XCTest
@@ -51,6 +52,65 @@ final class Phase7ReviewFollowUpTests: XCTestCase {
         XCTAssertTrue(
             restoredToSystem,
             "Switching Dark→System must refresh the presented Settings sheet"
+        )
+    }
+
+    func testTerminalAppearanceSheetFollowsSelectedAppAppearance() async {
+        let model = RootViewModel(
+            coordinator: makeMissingPhase2Application(),
+            preferencesStore: Phase7PreferencesStore()
+        )
+        let harness = Phase7TerminalScreenHarness(
+            host: phase2Host(),
+            session: SSHShellSession(connectedChannel: Phase4OutputChannel()),
+            onDisconnect: {},
+            settingsModel: model
+        )
+        defer { harness.close() }
+
+        var settingsView: UIView?
+        for _ in 0..<200 {
+            settingsView = phase7View(
+                with: "terminal-settings",
+                in: harness.controller.view
+            )
+            if settingsView != nil { break }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        guard let settingsView else {
+            XCTFail("The terminal settings control did not mount")
+            return
+        }
+        XCTAssertTrue(phase7Activate(settingsView))
+
+        var sheetWindow: UIWindow?
+        for _ in 0..<200 {
+            sheetWindow = harness.controller.presentedViewController?
+                .viewIfLoaded?.window
+            if sheetWindow != nil { break }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        guard let sheetWindow else {
+            XCTFail("The terminal appearance sheet did not present")
+            return
+        }
+
+        model.updateAppearance(.dark)
+        let darkApplied = await pollUntil {
+            sheetWindow.overrideUserInterfaceStyle == .dark
+        }
+        XCTAssertTrue(
+            darkApplied,
+            "The terminal appearance sheet must follow the app's Dark setting"
+        )
+
+        model.updateAppearance(.system)
+        let restoredToSystem = await pollUntil {
+            sheetWindow.overrideUserInterfaceStyle == .unspecified
+        }
+        XCTAssertTrue(
+            restoredToSystem,
+            "Switching the terminal appearance sheet back to System must clear its override"
         )
     }
 

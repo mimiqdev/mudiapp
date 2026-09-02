@@ -131,6 +131,16 @@ extension RootViewModel {
         persistPreferences()
     }
 
+    func updateThemeSelection(_ selection: TerminalThemeSelection) {
+        preferences.themeSelection = selection
+        persistPreferences()
+    }
+
+    func updateFontFamily(_ familyName: String) {
+        preferences.fontFamily = familyName
+        persistPreferences()
+    }
+
     func addHost() {
         editor = HostEditorContext(host: nil, credentials: nil)
     }

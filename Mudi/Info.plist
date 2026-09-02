@@ -15,5 +15,10 @@
 		<string>_services._dns-sd._udp</string>
 		<string>_ssh._tcp</string>
 	</array>
+	<key>UIAppFonts</key>
+	<array>
+		<string>SymbolsNerdFontMono-Regular.ttf</string>
+		<string>JetBrainsMonoNerdFontMono-Regular.ttf</string>
+	</array>
 </dict>
 </plist>

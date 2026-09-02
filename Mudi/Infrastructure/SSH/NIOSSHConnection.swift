@@ -396,6 +396,17 @@ private actor CitadelInteractivePTYChannel: PTYOutputChannel {
 
         self.childChannel = childChannel
         do {
+            for (name, value) in TerminalPTYCapabilities.environment.sorted(
+                by: { $0.key < $1.key }
+            ) {
+                try await childChannel.triggerUserOutboundEvent(
+                    SSHChannelRequestEvent.EnvironmentRequest(
+                        wantReply: false,
+                        name: name,
+                        value: value
+                    )
+                )
+            }
             try await childChannel.triggerUserOutboundEvent(
                 SSHChannelRequestEvent.ExecRequest(command: command, wantReply: true)
             )
@@ -660,6 +671,17 @@ actor CitadelPTYChannel: PTYOutputChannel, SSHCommandExecutingChannel, SSHIntera
         }
 
         try await childChannel.triggerUserOutboundEvent(Self.ptyRequest)
+        for (name, value) in TerminalPTYCapabilities.environment.sorted(
+            by: { $0.key < $1.key }
+        ) {
+            try await childChannel.triggerUserOutboundEvent(
+                SSHChannelRequestEvent.EnvironmentRequest(
+                    wantReply: false,
+                    name: name,
+                    value: value
+                )
+            )
+        }
         try await childChannel.triggerUserOutboundEvent(
             SSHChannelRequestEvent.ShellRequest(wantReply: true)
         )

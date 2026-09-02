@@ -45,6 +45,9 @@ struct RootView: View {
                             }
                         },
                         onBackToHosts: model.returnToHosts,
+                        settingsModel: model,
+                        themeSelection: model.preferences.themeSelection,
+                        fontFamily: model.preferences.fontFamily,
                         fontSize: model.preferences.fontSize,
                         isInputFocusAllowed: !model.isPanePickerPresented,
                         shouldRestoreInputFocus: model
@@ -73,6 +76,9 @@ struct RootView: View {
                             }
                         },
                         onBackToHosts: model.returnToHosts,
+                        settingsModel: model,
+                        themeSelection: model.preferences.themeSelection,
+                        fontFamily: model.preferences.fontFamily,
                         fontSize: model.preferences.fontSize,
                         isInputFocusAllowed: !model.isPanePickerPresented,
                         shouldRestoreInputFocus: model

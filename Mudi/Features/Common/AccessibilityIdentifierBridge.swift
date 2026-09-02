@@ -12,22 +12,36 @@ import UIKit
 struct AccessibilityIdentifierBridge: UIViewRepresentable {
     let identifier: String
     var action: (() -> Void)?
+    var accessibilityLabel: String?
+
+    init(
+        identifier: String,
+        action: (() -> Void)? = nil,
+        accessibilityLabel: String? = nil
+    ) {
+        self.identifier = identifier
+        self.action = action
+        self.accessibilityLabel = accessibilityLabel
+    }
 
     func makeUIView(context: Context) -> UIView {
         if let action {
             let control = BridgeControl()
             control.accessibilityIdentifier = identifier
+            control.accessibilityLabel = accessibilityLabel
             control.onActivated = action
             return control
         }
         let view = UIView()
         view.accessibilityIdentifier = identifier
+        view.accessibilityLabel = accessibilityLabel
         view.isUserInteractionEnabled = false
         return view
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
         uiView.accessibilityIdentifier = identifier
+        uiView.accessibilityLabel = accessibilityLabel
         (uiView as? BridgeControl)?.onActivated = action
     }
 

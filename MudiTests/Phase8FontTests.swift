@@ -115,6 +115,37 @@ final class Phase8FontTests: XCTestCase {
         )
     }
 
+    func testDocumentPickerKeepsLatinOnlyFamilyAndAddsNerdCascade() throws {
+        let source = try XCTUnwrap(
+            Bundle(for: Phase8FontTests.self).url(
+                forResource: "Hack-Regular",
+                withExtension: "ttf"
+            )
+        )
+        let importedURL = try phase8TemporaryFontURL(
+            source: source,
+            fileExtension: "ttf"
+        )
+        defer { try? FileManager.default.removeItem(at: importedURL) }
+
+        let familyName = try XCTUnwrap(
+            TerminalFontRegistry.registerImportedFont(at: importedURL),
+            "The Latin-only fixture should register as a selectable family"
+        )
+        XCTAssertNotEqual(familyName, TerminalFontRegistry.defaultFamilyName)
+        let font = try XCTUnwrap(
+            TerminalFontRegistry.font(
+                familyName: familyName,
+                pointSize: 16
+            )
+        )
+        XCTAssertEqual(font.familyName, familyName)
+        XCTAssertTrue(
+            TerminalFont.hasSymbolsCascade(in: font),
+            "A Latin-only imported face should receive the bundled Nerd cascade"
+        )
+    }
+
     func testDocumentPickerCallbackRegistersARealTTFFontAsSelectableFamily() throws {
         let source = try XCTUnwrap(
             phase8AppBundle().url(

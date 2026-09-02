@@ -184,7 +184,8 @@ actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProvidin
         sessionOption: String,
         size: HerdrTerminalSize
     ) -> String {
-        "exec herdr \(sessionOption)terminal session control \(target) --takeover --cols \(size.columns) --rows \(size.rows)"
+        let command = "exec herdr \(sessionOption)terminal session control \(target) --takeover --cols \(size.columns) --rows \(size.rows)"
+        return "\(TerminalPTYCapabilities.shellExportPrefix); \(command)"
     }
 
     func recordTerminalSize(columns: Int, rows: Int) {

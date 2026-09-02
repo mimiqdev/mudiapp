@@ -11,8 +11,21 @@ enum SSHLoginShellCommand {
     /// than assuming a package-manager prefix. Discovery can use an exit code
     /// of zero when no usable shell is available so ordinary SSH remains an
     /// option; interactive attach keeps the default failure code.
-    static func wrap(_ command: String, fallbackExitCode: Int = 127) -> String {
-        let quotedCommand = shellQuote(command)
+    static func wrap(
+        _ command: String,
+        fallbackExitCode: Int = 127,
+        environment: [String: String] = [:]
+    ) -> String {
+        let commandWithEnvironment: String
+        if environment.isEmpty {
+            commandWithEnvironment = command
+        } else {
+            let exports = environment.keys.sorted().map { name in
+                "export \(name)=\(shellQuote(environment[name] ?? ""))"
+            }.joined(separator: "; ")
+            commandWithEnvironment = "\(exports); \(command)"
+        }
+        let quotedCommand = shellQuote(commandWithEnvironment)
         return """
         SHELL="${SHELL:-}"
         if [ -z "$SHELL" ] || [ ! -x "$SHELL" ]; then
