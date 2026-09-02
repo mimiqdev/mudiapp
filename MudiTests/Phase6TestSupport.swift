@@ -2,38 +2,14 @@ import Foundation
 import HerdrKit
 @testable import Mudi
 
-/// The navigation contract for the tests-first Phase 6 slice. The production
-/// implementation can replace this compile-only seam with the root model and
-/// one shared Pane Picker without changing the observations under test.
-enum Phase6NavigationState: Equatable, Sendable {
-    case hosts([Host])
-    case legacyHerdrBrowser(HerdrBrowserState)
-    case panePicker(Phase6PanePickerState)
-    case terminal(Phase6TerminalContext)
-}
-
-enum Phase6PickerOrigin: Equatable, Sendable {
-    case host
-    case terminal
-}
-
-struct Phase6PanePickerState: Equatable, Sendable {
-    let host: Host
-    let origin: Phase6PickerOrigin
-    let snapshot: HerdrSnapshot
-    let attachedTerminal: Phase6AttachedTerminal?
-}
-
-struct Phase6AttachedTerminal: Equatable, Sendable {
-    let host: Host
-    let session: HerdrSession
-    let pane: Pane
-}
-
-enum Phase6TerminalContext: Equatable, Sendable {
-    case ordinary(host: Host)
-    case attached(Phase6AttachedTerminal)
-}
+/// These aliases keep the phase contract focused on observations while the
+/// implementation lives in the app target. The same production state is used
+/// by RootViewModel and the shared Pane Picker view.
+typealias Phase6NavigationState = PanePickerNavigationState
+typealias Phase6PickerOrigin = PanePickerOrigin
+typealias Phase6PanePickerState = PanePickerState
+typealias Phase6AttachedTerminal = PanePickerAttachedTerminal
+typealias Phase6TerminalContext = PanePickerTerminalContext
 
 protocol Phase6PanePickerApplication: Sendable {
     func connect(to host: Host) async throws -> Phase6NavigationState
@@ -88,7 +64,7 @@ actor Phase6TestScheduler {
     private var jobOrder: [UUID] = []
 
     @discardableResult
-    func schedule(every interval: Int, _ work: @escaping Work) -> UUID {
+    func schedule(every interval: Int, _ work: @escaping Work) async -> UUID {
         precondition(interval > 0)
         let id = UUID()
         jobs[id] = Job(
@@ -100,7 +76,7 @@ actor Phase6TestScheduler {
         return id
     }
 
-    func cancel(_ id: UUID) {
+    func cancel(_ id: UUID) async {
         jobs[id] = nil
         jobOrder.removeAll { $0 == id }
     }
@@ -219,228 +195,21 @@ actor Phase6PaneControlTransport: TerminalTransport,
     }
 }
 
-protocol Phase6PaneControlReleasing: Sendable {
-    func releaseControl(for paneID: Pane.ID) async
-}
+typealias Phase6PaneControlReleasing = HerdrPaneControlReleasing
 
-/// Compile-only scaffold for the tests-first step. It keeps the old browser
-/// result, drops recorded agent fields in its temporary Picker projection, and
-/// leaves refresh/release/dismiss behavior incomplete so the Phase 6 tests are
-/// red until the production navigation and coordinator are implemented.
-actor MissingPhase6PanePickerApplication: Phase6PanePickerApplication {
-    let discovery: Phase6HerdrDiscovery
-    let transport: Phase6PaneControlTransport
-    let scheduler: Phase6TestScheduler
+typealias MissingPhase6PanePickerApplication = HerdrPanePickerCoordinator<
+    Phase6HerdrDiscovery,
+    Phase6PaneControlTransport,
+    Phase6TestScheduler
+>
 
-    private var connectedHost: Host?
-    private var latestSnapshot: HerdrSnapshot?
-    private var navigationState: Phase6NavigationState = .hosts([])
-    private var scheduledRefreshID: UUID?
+extension Phase6TestScheduler: PanePickerRefreshScheduling {}
 
-    init(
-        discovery: Phase6HerdrDiscovery,
-        transport: Phase6PaneControlTransport,
-        scheduler: Phase6TestScheduler
-    ) {
-        self.discovery = discovery
-        self.transport = transport
-        self.scheduler = scheduler
-    }
-
-    func connect(to host: Host) async throws -> Phase6NavigationState {
-        connectedHost = host
-        try await transport.connect(to: host)
-        do {
-            latestSnapshot = try await discovery.snapshot(for: host)
-        } catch {
-            latestSnapshot = nil
-        }
-        navigationState = .legacyHerdrBrowser(
-            legacyBrowserState(for: latestSnapshot ?? HerdrSnapshot(sessions: []))
-        )
-        return navigationState
-    }
-
-    func openPicker(from origin: Phase6PickerOrigin) async -> Phase6NavigationState {
-        await cancelRefresh()
-        guard let host = connectedHost else {
-            navigationState = .panePicker(
-                Phase6PanePickerState(
-                    host: phase6Host(),
-                    origin: origin,
-                    snapshot: HerdrSnapshot(sessions: []),
-                    attachedTerminal: nil
-                )
-            )
-            return navigationState
-        }
-
-        let attachedTerminal: Phase6AttachedTerminal?
-        if origin == .terminal,
-           case let .terminal(.attached(attached)) = navigationState {
-            attachedTerminal = attached
-        } else {
-            attachedTerminal = nil
-        }
-
-        let picker = Phase6PanePickerState(
-            host: host,
-            origin: origin,
-            snapshot: incompleteProjection(
-                from: latestSnapshot ?? HerdrSnapshot(sessions: [])
-            ),
-            attachedTerminal: attachedTerminal
-        )
-        navigationState = .panePicker(picker)
-
-        // The future product must replace this no-op with scheduled discovery.
-        scheduledRefreshID = await scheduler.schedule(every: 1) {}
-        return navigationState
-    }
-
-    func refreshPicker() async -> Phase6NavigationState {
-        // Deliberately no-op until the Picker owns the official discovery path.
-        navigationState
-    }
-
-    func dismissPicker() async -> Phase6NavigationState {
-        guard case let .panePicker(picker) = navigationState else {
-            return navigationState
-        }
-        await cancelRefresh()
-
-        switch picker.origin {
-        case .host:
-            // The missing product disconnects neither the Host nor its shell.
-            navigationState = .hosts([picker.host])
-        case .terminal:
-            // The old navigation loses pane context instead of restoring it.
-            if let attachedTerminal = picker.attachedTerminal {
-                navigationState = .terminal(
-                    .ordinary(host: attachedTerminal.host)
-                )
-            } else {
-                navigationState = .hosts([picker.host])
-            }
-        }
-        return navigationState
-    }
-
-    func selectPane(_ paneID: Pane.ID) async -> Phase6NavigationState {
-        guard case let .panePicker(picker) = navigationState,
-              let location = paneLocation(
-                  in: picker.snapshot,
-                  paneID: paneID
-              )
-        else {
-            return navigationState
-        }
-
-        // Deliberately missing: the old control must be released first.
-        try? await transport.attach(to: location.pane, in: location.session)
-        await cancelRefresh()
-        navigationState = .terminal(
-            .attached(
-                Phase6AttachedTerminal(
-                    host: picker.host,
-                    session: location.session,
-                    pane: location.pane
-                )
-            )
-        )
-        return navigationState
-    }
-
-    func selectOrdinaryTerminal() async -> Phase6NavigationState {
-        guard case let .panePicker(picker) = navigationState,
-              let location = paneLocation(in: picker.snapshot, paneID: firstPaneID(in: picker.snapshot))
-        else {
-            return navigationState
-        }
-
-        // Deliberately models the pre-picker mistake: ordinary terminal takes
-        // over a pane instead of using the existing Host shell directly.
-        try? await transport.attach(to: location.pane, in: location.session)
-        await cancelRefresh()
-        navigationState = .terminal(
-            .attached(
-                Phase6AttachedTerminal(
-                    host: picker.host,
-                    session: location.session,
-                    pane: location.pane
-                )
-            )
-        )
-        return navigationState
-    }
-
-    func currentState() -> Phase6NavigationState {
-        navigationState
-    }
-
-    private func cancelRefresh() async {
-        guard let scheduledRefreshID else { return }
-        await scheduler.cancel(scheduledRefreshID)
-        self.scheduledRefreshID = nil
-    }
-
-    private func legacyBrowserState(for snapshot: HerdrSnapshot) -> HerdrBrowserState {
-        switch snapshot.sessions.count {
-        case 0:
-            return .empty
-        case 1:
-            return .panes(session: snapshot.sessions[0], message: nil)
-        default:
-            return .sessions(snapshot.sessions.map(HerdrSessionSummary.init(session:)))
-        }
-    }
-
-    private func incompleteProjection(from snapshot: HerdrSnapshot) -> HerdrSnapshot {
-        HerdrSnapshot(
-            sessions: snapshot.sessions.map { session in
-                HerdrSession(
-                    id: session.id,
-                    name: session.name,
-                    isDefault: session.isDefault,
-                    workspaces: session.workspaces.map { workspace in
-                        Workspace(
-                            id: workspace.id,
-                            name: workspace.name,
-                            tabs: workspace.tabs.map { tab in
-                                Tab(
-                                    id: tab.id,
-                                    name: tab.name,
-                                    panes: tab.panes.map { pane in
-                                        Pane(id: pane.id, title: pane.title)
-                                    }
-                                )
-                            }
-                        )
-                    }
-                )
-            }
-        )
-    }
-
-    private func firstPaneID(in snapshot: HerdrSnapshot) -> Pane.ID? {
-        snapshot.sessions
-            .flatMap(phase6Panes(in:))
-            .first?.id
-    }
-
-    private func paneLocation(
-        in snapshot: HerdrSnapshot,
-        paneID: Pane.ID?
-    ) -> (session: HerdrSession, pane: Pane)? {
-        guard let paneID else { return nil }
-        for session in snapshot.sessions {
-            if let pane = phase6Panes(in: session).first(where: { $0.id == paneID }) {
-                return (session, pane)
-            }
-        }
-        return nil
-    }
-}
+extension HerdrPanePickerCoordinator: Phase6PanePickerApplication
+where
+    Discovery == Phase6HerdrDiscovery,
+    Transport == Phase6PaneControlTransport,
+    Scheduler == Phase6TestScheduler {}
 
 func makeMissingPhase6Application(
     snapshots: [HerdrSnapshot],

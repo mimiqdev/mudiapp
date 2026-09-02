@@ -8,6 +8,7 @@ struct TerminalScreen: View {
     let transport: ActiveTransport
     let onDisconnect: () -> Void
     let onBackToBrowser: (() -> Void)?
+    let onOpenPanePicker: (() -> Void)?
     let fontSize: Double
     let suppressConnectionErrors: Bool
 
@@ -22,6 +23,7 @@ struct TerminalScreen: View {
         transport: ActiveTransport = .ssh,
         onDisconnect: @escaping () -> Void,
         onBackToBrowser: (() -> Void)? = nil,
+        onOpenPanePicker: (() -> Void)? = nil,
         fontSize: Double = 14,
         suppressConnectionErrors: Bool = false
     ) {
@@ -31,6 +33,7 @@ struct TerminalScreen: View {
         self.transport = transport
         self.onDisconnect = onDisconnect
         self.onBackToBrowser = onBackToBrowser
+        self.onOpenPanePicker = onOpenPanePicker
         self.fontSize = fontSize
         self.suppressConnectionErrors = suppressConnectionErrors
     }
@@ -78,7 +81,15 @@ struct TerminalScreen: View {
                 .accessibilityLabel(transport.accessibilityLabel)
                 .accessibilityIdentifier("active-transport")
             }
-            if let onBackToBrowser {
+            if let onOpenPanePicker {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Switch Pane", systemImage: "rectangle.stack") {
+                        onOpenPanePicker()
+                    }
+                    .accessibilityIdentifier("open-pane-picker")
+                    .tint(Color(uiColor: terminalAppearance.foreground))
+                }
+            } else if let onBackToBrowser {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Herdr", systemImage: "chevron.backward") {
                         beginLeaving {

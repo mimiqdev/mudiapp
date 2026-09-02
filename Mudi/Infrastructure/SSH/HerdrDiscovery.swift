@@ -104,7 +104,12 @@ actor SSHHerdrDiscovery: HerdrDiscovering {
                     .map { pane in makePane(from: pane, agents: agents) }
             )
         }
-        return Workspace(id: record.workspaceID, name: record.label, tabs: tabs)
+        return Workspace(
+            id: record.workspaceID,
+            name: record.label,
+            tabs: tabs,
+            worktree: record.worktree
+        )
     }
 
     private func makePane(
@@ -240,11 +245,13 @@ private struct SSHHerdrWorkspaceRecord: Decodable {
     let activeTabID: String
     let label: String
     let workspaceID: String
+    let worktree: WorktreeMetadata?
 
     enum CodingKeys: String, CodingKey {
         case activeTabID = "active_tab_id"
         case label
         case workspaceID = "workspace_id"
+        case worktree
     }
 }
 

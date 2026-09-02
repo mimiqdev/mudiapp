@@ -159,7 +159,7 @@ private struct PaneList: View {
                             Button {
                                 onSelectPane(pane.id)
                             } label: {
-                                PaneRow(pane: pane)
+                                HerdrPaneRow(pane: pane)
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("herdr-pane-\(pane.id)")
@@ -171,50 +171,5 @@ private struct PaneList: View {
             }
         }
         .navigationTitle(session.isDefault ? "Herdr" : session.name)
-    }
-}
-
-private struct PaneRow: View {
-    let pane: Pane
-
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(pane.agent?.name ?? pane.title)
-                Text(pane.title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            if let state = pane.agent?.state {
-                Text(state.label)
-                    .font(.caption)
-                    .foregroundStyle(state.color)
-            }
-        }
-        .contentShape(Rectangle())
-    }
-}
-
-private extension AgentState {
-    var label: String {
-        switch self {
-        case .working: "Working"
-        case .waitingForInput: "Needs input"
-        case .idle: "Idle"
-        case .done: "Done"
-        case .unknown: "Unknown"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .working: .blue
-        case .waitingForInput: .orange
-        case .idle, .unknown: .gray
-        case .done: .green
-        }
     }
 }

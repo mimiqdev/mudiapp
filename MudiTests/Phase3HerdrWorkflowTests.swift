@@ -41,7 +41,7 @@ final class Phase3HerdrWorkflowTests: XCTestCase {
         let fixture = try Phase3HerdrFixtures.single()
         let session = try recordedSession(in: fixture, id: "default")
         let agentPane = try recordedPane(in: session, id: "w55:p1")
-        let shellPane = try recordedPane(in: session, id: "w58:p1")
+        let shellPane = try recordedPane(in: session, id: "w56:p1")
         let application = makePhase3Application(fixture: fixture)
 
         XCTAssertTrue(session.isDefault)
@@ -68,7 +68,8 @@ final class Phase3HerdrWorkflowTests: XCTestCase {
         let secondSession = try recordedSession(in: fixture, id: "phase3-cli-fixture")
         let firstPane = try recordedPane(in: firstSession, id: "w55:p1")
         let secondDefaultPane = try recordedPane(in: firstSession, id: "w56:p1")
-        let thirdDefaultPane = try recordedPane(in: firstSession, id: "w58:p1")
+        let thirdDefaultPane = try recordedPane(in: firstSession, id: "w5R:p1")
+        let fourthDefaultPane = try recordedPane(in: firstSession, id: "w5R:p2")
         let secondPane = try recordedPane(in: secondSession, id: "w1:p1")
         let application = makePhase3Application(fixture: fixture)
 
@@ -103,7 +104,7 @@ final class Phase3HerdrWorkflowTests: XCTestCase {
         XCTAssertEqual(listedSession, firstSession)
         XCTAssertEqual(
             phase3Panes(in: listedSession),
-            [firstPane, secondDefaultPane, thirdDefaultPane]
+            [firstPane, secondDefaultPane, thirdDefaultPane, fourthDefaultPane]
         )
         XCTAssertFalse(phase3Panes(in: listedSession).contains(secondPane))
     }

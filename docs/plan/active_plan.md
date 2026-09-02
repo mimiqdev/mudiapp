@@ -23,7 +23,7 @@
 - 改 Herdr discovery / takeover 命令或 JSON
 - 网络切换和发布验收（阶段 9）
 - 首次本地网络权限与通用 UX polish（阶段 7）
-- terminal 字体（阶段 8）
+- terminal 字体与配色（阶段 8）
 - Chat UI、通知、Live Activity
 
 ## 测试
@@ -39,6 +39,7 @@
 - 从 terminal 打开的 Picker 关闭后仍附着当前 pane
 - 从当前 pane 选择另一 pane，先 release 旧 control，再 takeover 新 pane
 - 普通 terminal 选项不 attach pane
+- RootViewModel 使用同一 Picker state machine；Host 关闭断开，失败切换恢复旧 terminal 且 Picker 刷新继续
 - `make test-core` 和 Mudi XCTest 通过
 
 ### 手工（出口）
@@ -50,7 +51,8 @@
 
 ## 切片
 
-自动化测试已在仓库里且失败之后再写。
+- 以生产 `HerdrPanePickerCoordinator` 和 `PanePickerView` 统一 Host/terminal 选择、刷新与 release 顺序。
+- `RootViewModel` 在连接后呈现 picker overlay，terminal toolbar 复用该入口，并保留 SSH/Mosh 会话上下文。
 
 ## 完成后
 

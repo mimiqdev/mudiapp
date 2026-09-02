@@ -6,6 +6,8 @@ final class RootViewModel: ObservableObject {
     @Published private(set) var hosts: [Host] = []
     @Published private(set) var activeConnection: ActiveSSHConnection?
     @Published private(set) var herdrState: HerdrBrowserState?
+    @Published private(set) var panePicker: PanePickerState?
+    @Published private(set) var isPanePickerPresented = false
     @Published private(set) var hasLastPane = false
     @Published private(set) var hasMultipleHerdrSessions = false
     @Published private(set) var isTearingDown = false
@@ -20,7 +22,9 @@ final class RootViewModel: ObservableObject {
     let coordinator: ApplicationCoordinator
     let preferencesStore: any PreferencesStore
     private let workflowFactory: any HerdrWorkflowFactory
+    private let panePickerScheduler: any PanePickerRefreshScheduling
     private var workflow: (any HerdrWorkflowCoordinating)?
+    private var panePickerCoordinator: (any PanePickerCoordinating)?
     private var pendingHostKeyDecision: CheckedContinuation<HostKeyDecision, Never>?
     private var pendingHostKeyPromptID: UUID?
     private var stateTask: Task<Void, Never>?
@@ -39,12 +43,14 @@ final class RootViewModel: ObservableObject {
         coordinator: ApplicationCoordinator = ApplicationCoordinator(),
         workflowFactory: any HerdrWorkflowFactory = SSHHerdrWorkflowFactory(),
         preferencesStore: any PreferencesStore = UserDefaultsPreferencesStore(),
+        panePickerScheduler: any PanePickerRefreshScheduling = LivePanePickerRefreshScheduler(),
         rememberedPaneID: Pane.ID? = nil,
         rememberedPaneHostID: Host.ID? = nil
     ) {
         self.coordinator = coordinator
         self.workflowFactory = workflowFactory
         self.preferencesStore = preferencesStore
+        self.panePickerScheduler = panePickerScheduler
         self.lastPaneID = rememberedPaneID
         self.lastPaneHostID = rememberedPaneHostID
         stateTask = Task { [weak self, coordinator] in
@@ -132,6 +138,8 @@ extension RootViewModel {
             || activeConnection?.host.id == host.id
         if deletesActiveConnection {
             invalidateConnectionAttempt()
+            invalidatePanePickerPresentation()
+            panePickerCoordinator = nil
             workflow = nil
             herdrState = nil
             hasLastPane = false
@@ -208,20 +216,20 @@ extension RootViewModel {
                     for: bootstrapSession,
                     hostID: host.id
                 )
-                let browserState: HerdrBrowserState
-                do {
-                    browserState = try await workflow.discover(on: host)
-                } catch {
-                    // A missing or incompatible Herdr installation must not
-                    // take away the ordinary SSH terminal.
-                    browserState = .empty
-                }
+                self.showLoadingPanePicker(for: host)
+                let pickerCoordinator = self.makePanePickerCoordinator(
+                    for: workflow,
+                    transport: selectedTransport
+                )
+                let pickerState = try await pickerCoordinator.connect(to: host)
                 guard self.isCurrentConnection(generation), !Task.isCancelled else {
+                    await pickerCoordinator.stopRefresh()
                     await coordinator.disconnect()
                     return
                 }
                 self.workflow = workflow
-                self.herdrState = browserState
+                self.panePickerCoordinator = pickerCoordinator
+                self.herdrState = await workflow.currentState()
                 self.hasLastPane = await workflow.hasRememberedPane()
                 self.hasMultipleHerdrSessions = await workflow.hasMultipleSessions()
                 self.baseSession = bootstrapSession
@@ -234,8 +242,13 @@ extension RootViewModel {
                 )
                 self.connectionState = state
                 self.connectionTask = nil
+                await self.applyPanePickerState(
+                    pickerState,
+                    workflow: workflow
+                )
             } catch {
                 guard let self, self.isCurrentConnection(generation) else { return }
+                self.invalidatePanePickerPresentation()
                 self.answerHostKeyPrompt(.reject)
                 self.workflow = nil
                 self.herdrState = nil
@@ -300,18 +313,20 @@ extension RootViewModel {
                     for: bootstrapSession,
                     hostID: host.id
                 )
-                let browserState: HerdrBrowserState
-                do {
-                    browserState = try await workflow.discover(on: host)
-                } catch {
-                    browserState = .empty
-                }
+                self.showLoadingPanePicker(for: host)
+                let pickerCoordinator = self.makePanePickerCoordinator(
+                    for: workflow,
+                    transport: selectedTransport
+                )
+                let pickerState = try await pickerCoordinator.connect(to: host)
                 guard self.isCurrentConnection(generation), !Task.isCancelled else {
+                    await pickerCoordinator.stopRefresh()
                     await coordinator.disconnect()
                     return
                 }
                 self.workflow = workflow
-                self.herdrState = browserState
+                self.panePickerCoordinator = pickerCoordinator
+                self.herdrState = await workflow.currentState()
                 self.hasLastPane = await workflow.hasRememberedPane()
                 self.hasMultipleHerdrSessions = await workflow.hasMultipleSessions()
                 self.baseSession = bootstrapSession
@@ -324,8 +339,13 @@ extension RootViewModel {
                 )
                 self.connectionState = state
                 self.connectionTask = nil
+                await self.applyPanePickerState(
+                    pickerState,
+                    workflow: workflow
+                )
             } catch {
                 guard let self, self.isCurrentConnection(generation) else { return }
+                self.invalidatePanePickerPresentation()
                 self.answerHostKeyPrompt(.reject)
                 self.workflow = nil
                 self.herdrState = nil
@@ -364,6 +384,10 @@ extension RootViewModel {
     }
 
     func selectPane(_ paneID: Pane.ID) {
+        if isPanePickerPresented {
+            selectPaneFromPicker(paneID)
+            return
+        }
         guard let workflow else { return }
         cancelWorkflowTask()
         workflowTask = Task { [weak self, workflow] in
@@ -374,11 +398,20 @@ extension RootViewModel {
     }
 
     func openOrdinaryTerminal() {
+        if isPanePickerPresented {
+            selectOrdinaryTerminalFromPicker()
+            return
+        }
         guard let workflow else { return }
         cancelWorkflowTask()
         workflowTask = Task { [weak self, workflow] in
             do {
-                let state = try await workflow.openOrdinaryTerminal()
+                let state: HerdrBrowserState
+                if let transition = workflow as? any HerdrExistingConnectionTerminalOpening {
+                    state = try await transition.openOrdinaryTerminalWithoutReconnect()
+                } else {
+                    state = try await workflow.openOrdinaryTerminal()
+                }
                 guard !Task.isCancelled else { return }
                 await self?.applyWorkflowState(state, from: workflow)
                 guard let self,
@@ -407,16 +440,148 @@ extension RootViewModel {
     }
 
     func returnToHerdrBrowser() {
-        guard let workflow else { return }
+        openPanePickerFromTerminal()
+    }
+
+    /// Opens the shared picker without touching the already authenticated SSH
+    /// bootstrap or the selected Mosh terminal session.
+    func openPanePickerFromTerminal() {
+        guard let workflow,
+              let activeConnection,
+              let pickerCoordinator = self.panePickerCoordinator,
+              herdrState == .ordinaryTerminal || isAttachedState
+        else { return }
+        let generation = connectionGeneration
+        let host = activeConnection.host
+        let terminalContext: PanePickerTerminalContext
+        if case let .attached(session, pane) = herdrState {
+            terminalContext = .attached(
+                PanePickerAttachedTerminal(
+                    host: host,
+                    session: session,
+                    pane: pane
+                )
+            )
+        } else {
+            terminalContext = .ordinary(host: host)
+        }
+        Task { [weak self, workflow, pickerCoordinator, terminalContext] in
+            await pickerCoordinator.synchronizeTerminalContext(terminalContext)
+            let state = await pickerCoordinator.openPicker(from: .terminal)
+            guard let self,
+                  self.connectionGeneration == generation,
+                  self.isCurrentWorkflow(workflow),
+                  self.activeConnection?.host.id == host.id,
+                  !Task.isCancelled
+            else { return }
+            await self.applyPanePickerState(state, workflow: workflow)
+        }
+    }
+
+    /// Manual refresh delegates to the same state machine used by the
+    /// scheduler. RootViewModel does not perform a second discovery or join.
+    func refreshPanePicker() async {
+        guard isPanePickerPresented,
+              let pickerCoordinator = self.panePickerCoordinator,
+              let workflow
+        else { return }
+        let state = await pickerCoordinator.refreshPicker()
+        guard isPanePickerPresented,
+              isCurrentWorkflow(workflow),
+              !Task.isCancelled
+        else { return }
+        await applyPanePickerState(state, workflow: workflow)
+    }
+
+    func selectPaneFromPicker(_ paneID: Pane.ID) {
+        guard isPanePickerPresented,
+              let workflow,
+              let pickerCoordinator = self.panePickerCoordinator
+        else { return }
+        let previousState = herdrState
         cancelWorkflowTask()
-        workflowTask = Task { [weak self, workflow] in
-            let state = await workflow.returnToBrowser()
-            guard !Task.isCancelled else { return }
-            await self?.applyWorkflowState(state, from: workflow)
+        workflowTask = Task { [weak self, workflow, pickerCoordinator] in
+            guard let self, !Task.isCancelled else { return }
+            let state = await pickerCoordinator.selectPane(paneID)
+            guard !Task.isCancelled,
+                  self.isCurrentWorkflow(workflow),
+                  self.isPanePickerPresented
+            else { return }
+            await self.applyPanePickerState(
+                state,
+                workflow: workflow,
+                fallbackState: previousState
+            )
+            if case .panePicker = state {
+                await pickerCoordinator.restartRefresh()
+            }
+        }
+    }
+
+    func selectOrdinaryTerminalFromPicker() {
+        guard isPanePickerPresented,
+              let workflow,
+              let pickerCoordinator = self.panePickerCoordinator
+        else { return }
+        let previousState = herdrState
+        cancelWorkflowTask()
+        workflowTask = Task { [weak self, workflow, pickerCoordinator] in
+            guard let self, !Task.isCancelled else { return }
+            let state = await pickerCoordinator.selectOrdinaryTerminal()
+            guard !Task.isCancelled,
+                  self.isCurrentWorkflow(workflow),
+                  self.isPanePickerPresented
+            else { return }
+            await self.applyPanePickerState(
+                state,
+                workflow: workflow,
+                fallbackState: previousState
+            )
+            if case .panePicker = state {
+                await pickerCoordinator.restartRefresh()
+            }
+        }
+    }
+
+    /// Handles both the explicit close button and an interactive dismissal of
+    /// the sheet/popover. A Host-origin picker owns its connection; a
+    /// terminal-origin picker restores the context that was visible before it.
+    func dismissPanePicker() {
+        guard let picker = panePicker else {
+            invalidatePanePickerPresentation()
+            return
+        }
+        guard let pickerCoordinator = self.panePickerCoordinator else {
+            invalidatePanePickerPresentation()
+            if picker.origin == .host {
+                returnToHosts()
+            }
+            return
+        }
+        let origin = picker.origin
+        let workflow = self.workflow
+        invalidatePanePickerPresentation()
+        if origin == .host {
+            returnToHosts()
+            Task {
+                await pickerCoordinator.dismissPicker()
+            }
+            return
+        }
+        guard let workflow else { return }
+        Task { [weak self, workflow, pickerCoordinator] in
+            let state = await pickerCoordinator.dismissPicker()
+            guard let self,
+                  self.isCurrentWorkflow(workflow),
+                  !Task.isCancelled
+            else { return }
+            await self.applyPanePickerState(state, workflow: workflow)
         }
     }
 
     func suspendPaneControl() {
+        invalidatePanePickerRefresh()
+
         guard case .attached = herdrState, let workflow else { return }
         isPaneControlSuspended = true
         Task { [weak self, workflow] in
@@ -429,14 +594,21 @@ extension RootViewModel {
     func resumePaneControl() {
         guard isPaneControlSuspended, case .attached = herdrState, let workflow else {
             isPaneControlSuspended = false
+            guard panePicker != nil, isPanePickerPresented else { return }
+            Task { [weak self] in
+                await self?.panePickerCoordinator?.restartRefresh()
+            }
             return
         }
         workflowTask?.cancel()
         workflowTask = Task { [weak self, workflow] in
             let state = await workflow.resumeAttachedControl()
             guard !Task.isCancelled else { return }
-            await self?.applyWorkflowState(state, from: workflow)
-            self?.isPaneControlSuspended = false
+            guard let self else { return }
+            await self.applyWorkflowState(state, from: workflow)
+            guard !Task.isCancelled else { return }
+            self.isPaneControlSuspended = false
+            await self.panePickerCoordinator?.restartRefresh()
         }
     }
 
@@ -445,7 +617,9 @@ extension RootViewModel {
     /// session cannot outlive the host connection.
     func returnToHosts() {
         let workflow = self.workflow
+        invalidatePanePickerPresentation()
         invalidateConnectionAttempt()
+        self.panePickerCoordinator = nil
         self.workflow = nil
         herdrState = nil
         hasLastPane = false
@@ -458,7 +632,9 @@ extension RootViewModel {
 
     func disconnect() {
         let workflow = self.workflow
+        invalidatePanePickerPresentation()
         invalidateConnectionAttempt()
+        self.panePickerCoordinator = nil
         self.workflow = nil
         herdrState = nil
         hasLastPane = false
@@ -515,8 +691,100 @@ extension RootViewModel {
 }
 
 extension RootViewModel {
+    private func showLoadingPanePicker(for host: Host) {
+        panePicker = PanePickerState(
+            host: host,
+            origin: .host,
+            snapshot: HerdrSnapshot(sessions: []),
+            isLoading: true
+        )
+        isPanePickerPresented = true
+    }
+
+    private var isAttachedState: Bool {
+        if case .attached = herdrState { return true }
+        return false
+    }
+
+    private func applyPanePickerState(
+        _ state: PanePickerNavigationState,
+        workflow: any HerdrWorkflowCoordinating,
+        fallbackState: HerdrBrowserState? = nil
+    ) async {
+        guard isCurrentWorkflow(workflow), !Task.isCancelled else { return }
+
+        switch state {
+        case let .panePicker(picker):
+            panePicker = picker
+            isPanePickerPresented = true
+            let wasAttached: Bool
+            if let fallbackState {
+                if case .attached = fallbackState {
+                    wasAttached = true
+                } else {
+                    wasAttached = false
+                }
+            } else {
+                wasAttached = isAttachedState
+            }
+            if let attached = picker.attachedTerminal, wasAttached {
+                await applyWorkflowState(
+                    .attached(session: attached.session, pane: attached.pane),
+                    from: workflow
+                )
+                return
+            }
+            guard picker.origin == .terminal, fallbackState != nil else { return }
+            // If rollback could not restore the old control, keep a usable
+            // bootstrap terminal under the still-visible picker rather
+            // than leaving a disconnected attached session on screen.
+            await applyWorkflowState(.ordinaryTerminal, from: workflow)
+        case let .terminal(.attached(attached)):
+            await applyWorkflowState(
+                .attached(session: attached.session, pane: attached.pane),
+                from: workflow
+            )
+            invalidatePanePickerPresentation()
+        case .terminal(.ordinary):
+            await applyWorkflowState(.ordinaryTerminal, from: workflow)
+            invalidatePanePickerPresentation()
+        case .hosts, .legacyHerdrBrowser:
+            invalidatePanePickerPresentation()
+        }
+    }
+
+    private func makePanePickerCoordinator(
+        for workflow: any HerdrWorkflowCoordinating,
+        transport: ActiveTransport
+    ) -> any PanePickerCoordinating {
+        HerdrPanePickerCoordinator(
+            discovery: RootPanePickerDiscovery(workflow: workflow),
+            transport: RootPanePickerTransport(
+                workflow: workflow,
+                kind: transport
+            ),
+            scheduler: AnyPanePickerRefreshScheduler(panePickerScheduler)
+        )
+    }
+
+    private func invalidatePanePickerRefresh() {
+        guard let panePickerCoordinator = self.panePickerCoordinator else { return }
+        panePickerCoordinator.invalidateRefreshImmediately()
+        Task {
+            await panePickerCoordinator.stopRefresh()
+        }
+    }
+
+    private func invalidatePanePickerPresentation() {
+        isPanePickerPresented = false
+        panePicker = nil
+        invalidatePanePickerRefresh()
+    }
+
     private func beginConnection(for hostID: Host.ID) -> UUID {
+        invalidatePanePickerPresentation()
         invalidateConnectionAttempt()
+        panePickerCoordinator = nil
         if let lastPaneHostID, lastPaneHostID != hostID {
             lastPaneID = nil
             self.lastPaneHostID = nil
@@ -552,6 +820,18 @@ extension RootViewModel {
         from workflow: any HerdrWorkflowCoordinating
     ) async {
         guard isCurrentWorkflow(workflow), !Task.isCancelled else { return }
+        if isPanePickerPresented,
+           isAttachedState || herdrState == .ordinaryTerminal {
+            switch state {
+            case .empty, .sessions, .panes:
+                // A terminal-origin picker keeps the terminal as its backing
+                // surface even if an older browser callback reports a failed
+                // or incomplete selection.
+                return
+            case .ordinaryTerminal, .attached:
+                break
+            }
+        }
 
         let rememberedPane = await workflow.hasRememberedPane()
         let multipleSessions = await workflow.hasMultipleSessions()
@@ -568,14 +848,12 @@ extension RootViewModel {
 
         switch state {
         case let .attached(_, pane):
-            guard let activeConnection,
-                  let terminalSession
-            else { return }
+            guard let activeConnection else { return }
             lastPaneID = pane.id
             lastPaneHostID = activeConnection.host.id
             self.activeConnection = ActiveSSHConnection(
                 host: activeConnection.host,
-                session: terminalSession,
+                session: terminalSession ?? activeConnection.session,
                 terminalTitle: pane.terminalTitle,
                 transport: activeConnection.transport
             )
@@ -657,168 +935,6 @@ extension RootViewModel {
     private struct MissingCredentialsError: LocalizedError {
         var errorDescription: String? {
             "No saved SSH credentials. Edit this host to add a password or private key."
-        }
-    }
-}
-
-struct HostKeyPrompt: Identifiable, Equatable {
-    let id = UUID()
-    let fingerprint: String
-}
-
-struct HostEditorContext: Identifiable {
-    let id: UUID
-    let host: Host?
-    let credentials: SSHCredentials?
-
-    init(host: Host?, credentials: SSHCredentials?) {
-        id = host?.id ?? UUID()
-        self.host = host
-        self.credentials = credentials
-    }
-}
-
-struct RootView: View {
-    @StateObject private var model: RootViewModel
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var isSettingsPresented = false
-
-    init(coordinator: ApplicationCoordinator = ApplicationCoordinator()) {
-        _model = StateObject(wrappedValue: RootViewModel(coordinator: coordinator))
-    }
-
-    var body: some View {
-        NavigationStack {
-            Group {
-                if let activeConnection = model.activeConnection,
-                   let herdrState = model.herdrState {
-                    switch herdrState {
-                    case .ordinaryTerminal:
-                        TerminalScreen(
-                            host: activeConnection.host,
-                            session: activeConnection.session,
-                            transport: activeConnection.transport,
-                            onDisconnect: model.disconnect,
-                            fontSize: model.preferences.fontSize
-                        )
-                    case let .attached(_, pane):
-                        TerminalScreen(
-                            host: activeConnection.host,
-                            session: activeConnection.session,
-                            title: activeConnection.terminalTitle ?? pane.terminalTitle,
-                            transport: activeConnection.transport,
-                            onDisconnect: model.disconnect,
-                            onBackToBrowser: model.returnToHerdrBrowser,
-                            fontSize: model.preferences.fontSize,
-                            suppressConnectionErrors: model.isPaneControlSuspended
-                        )
-                    case .empty, .sessions, .panes:
-                        HerdrBrowserView(
-                            state: herdrState,
-                            hasLastPane: model.hasLastPane,
-                            canSwitchSessions: model.hasMultipleHerdrSessions,
-                            onReturnToHosts: model.returnToHosts,
-                            onSelectSession: model.selectSession,
-                            onSelectPane: model.selectPane,
-                            onShowSessions: model.showHerdrSessions,
-                            onOpenOrdinaryTerminal: model.openOrdinaryTerminal,
-                            onRestoreLastPane: model.restoreLastPane
-                        )
-                    }
-                } else if model.isTearingDown {
-                    ProgressView("Disconnecting…")
-                } else if model.activeConnection != nil {
-                    ProgressView("Discovering Herdr…")
-                } else {
-                    HostListView(
-                        hosts: model.hosts,
-                        connectionState: model.connectionState,
-                        errorMessage: model.errorMessage,
-                        onConnect: model.connect,
-                        onReconnect: model.reconnect,
-                        onAdd: model.addHost,
-                        onEdit: model.edit,
-                        onDelete: model.delete,
-                        onSettings: { isSettingsPresented = true }
-                    )
-                }
-            }
-        }
-        .preferredColorScheme(model.preferences.appearance.colorScheme)
-        .onChange(of: scenePhase) { _, phase in
-            switch phase {
-            case .background:
-                model.suspendPaneControl()
-            case .active:
-                model.resumePaneControl()
-            default:
-                break
-            }
-        }
-        .task {
-            await model.loadHosts()
-            await model.loadPreferences()
-        }
-        .sheet(isPresented: $isSettingsPresented) {
-            NavigationStack {
-                SettingsView(model: model)
-            }
-        }
-        .sheet(item: $model.editor) { context in
-            NavigationStack {
-                SSHConnectionForm(
-                    host: context.host,
-                    credentials: context.credentials,
-                    onSave: model.save,
-                    onCancel: model.cancelEditing
-                )
-            }
-        }
-        .alert(item: $model.hostKeyPrompt) { prompt in
-            Alert(
-                title: Text("Verify SSH host key"),
-                message: Text(
-                    "The server presented this fingerprint:\n\n\(prompt.fingerprint)\n\nAccept only if it matches a fingerprint you trust."
-                ),
-                primaryButton: .destructive(Text("Reject")) {
-                    model.answerHostKeyPrompt(.reject, for: prompt.id)
-                },
-                secondaryButton: .default(Text("Accept")) {
-                    model.answerHostKeyPrompt(.accept, for: prompt.id)
-                }
-            )
-        }
-    }
-}
-
-struct ActiveSSHConnection {
-    let host: Host
-    let session: SSHShellSession
-    let terminalTitle: String?
-    let transport: ActiveTransport
-
-    init(
-        host: Host,
-        session: SSHShellSession,
-        terminalTitle: String? = nil,
-        transport: ActiveTransport = .ssh
-    ) {
-        self.host = host
-        self.session = session
-        self.terminalTitle = terminalTitle
-        self.transport = transport
-    }
-}
-
-private extension AppearancePreference {
-    var colorScheme: ColorScheme? {
-        switch self {
-        case .system:
-            nil
-        case .light:
-            .light
-        case .dark:
-            .dark
         }
     }
 }

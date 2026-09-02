@@ -32,6 +32,31 @@ protocol HerdrTerminalSessionProviding: Sendable {
     func releaseTerminalSession() async
 }
 
+/// Exposes the unmodified official snapshot to the shared Pane Picker. The
+/// browser state remains available for compatibility with older callers, but
+/// the picker never reconstructs hierarchy from summaries.
+protocol HerdrSnapshotProviding: Sendable {
+    func currentSnapshot() async -> HerdrSnapshot?
+    func refreshSnapshot(on host: Host) async throws -> HerdrSnapshot
+}
+
+/// Selects a pane while retaining the current attached-control context until
+/// the new takeover has been ordered. This avoids losing the old pane when a
+/// picker displays panes from more than one session.
+protocol HerdrSessionPaneSelecting: Sendable {
+    func selectPane(
+        _ paneID: Pane.ID,
+        in sessionID: HerdrSession.ID
+    ) async -> HerdrBrowserState
+}
+
+/// Transitions to the already connected shell without asking a transport to
+/// establish another connection. The older workflow API remains available
+/// for standalone Phase 3 callers that provide their own connect boundary.
+protocol HerdrExistingConnectionTerminalOpening: Sendable {
+    func openOrdinaryTerminalWithoutReconnect() async throws -> HerdrBrowserState
+}
+
 /// Lets a Herdr transport select the named server that owns a pane. Legacy
 /// transports can continue to use the pane-only TerminalTransport method.
 protocol HerdrSessionAwareTerminalTransport: Sendable {
@@ -41,6 +66,9 @@ protocol HerdrSessionAwareTerminalTransport: Sendable {
 /// The narrow application boundary used by the root UI and by workflow tests.
 protocol HerdrWorkflowCoordinating: AnyObject, Sendable {
     func discover(on host: Host) async throws -> HerdrBrowserState
+    func currentSnapshot() async -> HerdrSnapshot?
+    func refreshSnapshot(on host: Host) async throws -> HerdrSnapshot
+    func currentState() async -> HerdrBrowserState
     func selectSession(_ sessionID: HerdrSession.ID) async -> HerdrBrowserState
     func selectPane(_ paneID: Pane.ID) async -> HerdrBrowserState
     func showSessions() async -> HerdrBrowserState
@@ -118,6 +146,7 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
     private var selectedSessionID: HerdrSession.ID?
     private var lastPaneID: Pane.ID?
     private var browserState: HerdrBrowserState = .empty
+    private var controlWasReleased = false
 
     init(
         discovery: Discovery,
@@ -134,6 +163,7 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
         snapshot = nil
         selectedSessionID = nil
         browserState = .empty
+        controlWasReleased = false
         let discoveredSnapshot = try await discovery.snapshot(for: host)
         snapshot = discoveredSnapshot
         selectedSessionID = discoveredSnapshot.sessions.count == 1
@@ -141,6 +171,67 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
             : nil
         browserState = makeBrowserState()
         return browserState
+    }
+
+    func currentSnapshot() -> HerdrSnapshot? {
+        snapshot
+    }
+
+    func refreshSnapshot(on host: Host) async throws -> HerdrSnapshot {
+        connectedHost = host
+        let previousState = browserState
+        let discoveredSnapshot = try await discovery.snapshot(for: host)
+        snapshot = discoveredSnapshot
+        if let selectedSessionID,
+           discoveredSnapshot.sessions.contains(where: { $0.id == selectedSessionID }) {
+            self.selectedSessionID = selectedSessionID
+        } else {
+            self.selectedSessionID = discoveredSnapshot.sessions.count == 1
+                ? discoveredSnapshot.sessions.first?.id
+                : nil
+        }
+
+        // Refreshing the picker must not turn the terminal behind it back into
+        // a browser state. When an attached pane still exists, use its ID to
+        // carry forward the refreshed title/agent fields and its session.
+        switch previousState {
+        case let .attached(previousSession, previousPane):
+            if let refreshedSession = discoveredSnapshot.sessions.first(where: {
+                $0.id == previousSession.id
+            }),
+               let refreshedPane = panes(in: refreshedSession).first(where: {
+                   $0.id == previousPane.id
+               }) {
+                browserState = .attached(
+                    session: refreshedSession,
+                    pane: refreshedPane
+                )
+            } else {
+                browserState = .attached(
+                    session: previousSession,
+                    pane: previousPane
+                )
+            }
+        case .ordinaryTerminal:
+            browserState = .ordinaryTerminal
+        case .empty, .sessions, .panes:
+            browserState = makeBrowserState()
+        }
+        return discoveredSnapshot
+    }
+
+    func selectPane(
+        _ paneID: Pane.ID,
+        in sessionID: HerdrSession.ID
+    ) async -> HerdrBrowserState {
+        guard let snapshot,
+              snapshot.sessions.contains(where: { $0.id == sessionID })
+        else {
+            browserState = makeBrowserState()
+            return browserState
+        }
+        selectedSessionID = sessionID
+        return await selectPane(paneID)
     }
 
     func selectSession(_ sessionID: HerdrSession.ID) -> HerdrBrowserState {
@@ -188,10 +279,9 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
     }
 
     func returnToBrowser() async -> HerdrBrowserState {
-        if let provider = transport as? any HerdrTerminalSessionProviding {
-            await provider.releaseTerminalSession()
-        }
+        await releaseAttachedControl()
         browserState = makeBrowserState()
+        controlWasReleased = false
         return browserState
     }
 
@@ -200,16 +290,26 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
             throw HerdrWorkflowError.noConnectedHost
         }
 
+        await releaseAttachedControl()
         try await transport.connect(to: connectedHost)
         browserState = .ordinaryTerminal
+        controlWasReleased = false
+        return browserState
+    }
+
+    func openOrdinaryTerminalWithoutReconnect() async throws -> HerdrBrowserState {
+        guard connectedHost != nil else {
+            throw HerdrWorkflowError.noConnectedHost
+        }
+        await releaseAttachedControl()
+        browserState = .ordinaryTerminal
+        controlWasReleased = false
         return browserState
     }
 
     func suspendAttachedControl() async {
         guard case .attached = browserState else { return }
-        if let provider = transport as? any HerdrTerminalSessionProviding {
-            await provider.releaseTerminalSession()
-        }
+        await releaseAttachedControl()
     }
 
     func resumeAttachedControl() async -> HerdrBrowserState {
@@ -268,6 +368,12 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
     }
 
     private func attach(_ pane: Pane, in session: HerdrSession) async -> HerdrBrowserState {
+        if case let .attached(_, attachedPane) = browserState,
+           attachedPane.id != pane.id,
+           !controlWasReleased {
+            await releaseAttachedControl()
+        }
+
         do {
             if let sessionAwareTransport = transport as? any HerdrSessionAwareTerminalTransport {
                 try await sessionAwareTransport.attach(to: pane, in: session)
@@ -276,6 +382,7 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
             }
             lastPaneID = pane.id
             browserState = .attached(session: session, pane: pane)
+            controlWasReleased = false
         } catch {
             browserState = .panes(
                 session: session,
@@ -283,6 +390,18 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
             )
         }
         return browserState
+    }
+
+    private func releaseAttachedControl() async {
+        guard case let .attached(_, attachedPane) = browserState,
+              !controlWasReleased
+        else { return }
+        if let releaser = transport as? any HerdrPaneControlReleasing {
+            await releaser.releaseControl(for: attachedPane.id)
+        } else if let provider = transport as? any HerdrTerminalSessionProviding {
+            await provider.releaseTerminalSession()
+        }
+        controlWasReleased = true
     }
 
     private func selectedSession() -> HerdrSession? {
@@ -334,3 +453,8 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
         "The selected Herdr pane is no longer available."
     }
 }
+
+extension HerdrWorkflowCoordinator:
+    HerdrSnapshotProviding,
+    HerdrSessionPaneSelecting,
+    HerdrExistingConnectionTerminalOpening {}

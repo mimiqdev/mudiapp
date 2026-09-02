@@ -115,7 +115,16 @@ struct Phase3HerdrSessionDetails: Sendable {
             return Workspace(
                 id: workspace.workspaceID,
                 name: workspace.label,
-                tabs: tabs
+                tabs: tabs,
+                worktree: workspace.worktree.map {
+                    WorktreeMetadata(
+                        checkoutPath: $0.checkoutPath,
+                        isLinkedWorktree: $0.isLinkedWorktree ?? false,
+                        repoKey: $0.repoKey,
+                        repoName: $0.repoName,
+                        repoRoot: $0.repoRoot
+                    )
+                }
             )
         }
     }
@@ -191,11 +200,29 @@ private struct Phase3WorkspaceListResponse: Decodable, Sendable {
         let activeTabID: String
         let label: String
         let workspaceID: String
+        let worktree: WorktreeRecord?
 
         enum CodingKeys: String, CodingKey {
             case activeTabID = "active_tab_id"
             case label
             case workspaceID = "workspace_id"
+            case worktree
+        }
+    }
+
+    struct WorktreeRecord: Decodable, Sendable {
+        let checkoutPath: String?
+        let isLinkedWorktree: Bool?
+        let repoKey: String?
+        let repoName: String?
+        let repoRoot: String?
+
+        enum CodingKeys: String, CodingKey {
+            case checkoutPath = "checkout_path"
+            case isLinkedWorktree = "is_linked_worktree"
+            case repoKey = "repo_key"
+            case repoName = "repo_name"
+            case repoRoot = "repo_root"
         }
     }
 }
@@ -365,32 +392,52 @@ enum Phase3HerdrFixtures {
           {
             "active_tab_id": "w55:t1",
             "agent_status": "idle",
-            "focused": true,
+            "focused": false,
             "label": "mudiapp",
             "number": 1,
             "pane_count": 1,
             "tab_count": 1,
-            "workspace_id": "w55"
+            "workspace_id": "w55",
+            "worktree": {
+              "checkout_path": "/Users/tony.liu/Developer/personal/mudiapp",
+              "is_linked_worktree": false,
+              "repo_key": "/Users/tony.liu/Developer/personal/mudiapp/.git",
+              "repo_name": "mudiapp",
+              "repo_root": "/Users/tony.liu/Developer/personal/mudiapp"
+            }
           },
           {
             "active_tab_id": "w56:t1",
-            "agent_status": "idle",
+            "agent_status": "unknown",
             "focused": false,
-            "label": "qing",
+            "label": "~",
             "number": 2,
             "pane_count": 1,
             "tab_count": 1,
             "workspace_id": "w56"
           },
           {
-            "active_tab_id": "w58:t1",
-            "agent_status": "unknown",
-            "focused": false,
-            "label": "mudiapp",
+            "active_tab_id": "w5R:t1",
+            "agent_status": "working",
+            "focused": true,
+            "label": "phase6-pane-picker-impl",
             "number": 3,
-            "pane_count": 1,
+            "pane_count": 2,
             "tab_count": 1,
-            "workspace_id": "w58"
+            "tokens": {
+              "branch": "agent/phase6-pane-picker-impl",
+              "path": "/Users/tony.liu/Developer/personal/mudiapp-phase6-pane-picker-impl",
+              "status": "working",
+              "task": "phase6-pane-picker-impl"
+            },
+            "workspace_id": "w5R",
+            "worktree": {
+              "checkout_path": "/Users/tony.liu/Developer/personal/mudiapp-phase6-pane-picker-impl",
+              "is_linked_worktree": true,
+              "repo_key": "/Users/tony.liu/Developer/personal/mudiapp/.git",
+              "repo_name": "mudiapp",
+              "repo_root": "/Users/tony.liu/Developer/personal/mudiapp"
+            }
           }
         ]
       }
@@ -405,9 +452,9 @@ enum Phase3HerdrFixtures {
           {
             "agent": "pi",
             "agent_status": "idle",
-            "cwd": "/recorded/mudiapp",
-            "focused": true,
-            "foreground_cwd": "/recorded/mudiapp",
+            "cwd": "/Users/tony.liu/Developer/personal/mudiapp",
+            "focused": false,
+            "foreground_cwd": "/Users/tony.liu/Developer/personal/mudiapp",
             "pane_id": "w55:p1",
             "revision": 1,
             "tab_id": "w55:t1",
@@ -417,29 +464,50 @@ enum Phase3HerdrFixtures {
             "workspace_id": "w55"
           },
           {
-            "agent": "pi",
-            "agent_status": "idle",
-            "cwd": "/recorded/qing",
+            "agent_status": "unknown",
+            "cwd": "/Users/tony.liu",
             "focused": false,
-            "foreground_cwd": "/recorded/qing",
+            "foreground_cwd": "/Users/tony.liu",
             "pane_id": "w56:p1",
-            "revision": 1,
+            "revision": 2,
+            "scroll": {
+              "max_offset_from_bottom": 1350,
+              "offset_from_bottom": 0,
+              "viewport_rows": 68
+            },
             "tab_id": "w56:t1",
             "terminal_id": "term_65a1d4431d3062",
-            "terminal_title": "π - qing",
-            "terminal_title_stripped": "π - qing",
+            "terminal_title": "π - tony.liu",
+            "terminal_title_stripped": "π - tony.liu",
             "workspace_id": "w56"
           },
           {
-            "agent_status": "unknown",
-            "cwd": "/recorded/mudiapp",
+            "agent": "pi",
+            "agent_status": "working",
+            "cwd": "/Users/tony.liu/Developer/personal/mudiapp-phase6-pane-picker-impl",
             "focused": false,
-            "foreground_cwd": "/recorded/mudiapp",
-            "pane_id": "w58:p1",
-            "revision": 0,
-            "tab_id": "w58:t1",
-            "terminal_id": "term_65a1e872e43535",
-            "workspace_id": "w58"
+            "foreground_cwd": "/Users/tony.liu/Developer/personal/mudiapp-phase6-pane-picker-impl",
+            "pane_id": "w5R:p1",
+            "revision": 3,
+            "tab_id": "w5R:t1",
+            "terminal_id": "term_65a5762a58e2c28",
+            "terminal_title": "π - qing-phase6-pane-picker-impl - mudiapp-phase6-pane-picker-impl",
+            "terminal_title_stripped": "π - qing-phase6-pane-picker-impl - mudiapp-phase6-pane-picker-impl",
+            "workspace_id": "w5R"
+          },
+          {
+            "agent": "pi",
+            "agent_status": "working",
+            "cwd": "/Users/tony.liu/Developer/personal/mudiapp-phase6-pane-picker-impl",
+            "focused": true,
+            "foreground_cwd": "/Users/tony.liu/Developer/personal/mudiapp-phase6-pane-picker-impl",
+            "pane_id": "w5R:p2",
+            "revision": 3,
+            "tab_id": "w5R:t1",
+            "terminal_id": "term_65a57f965489429",
+            "terminal_title": "π - qing-review-phase6-pane-a4ea95bc - mudiapp-phase6-pane-picker-impl",
+            "terminal_title_stripped": "π - qing-review-phase6-pane-a4ea95bc - mudiapp-phase6-pane-picker-impl",
+            "workspace_id": "w5R"
           }
         ],
         "type": "pane_list"
@@ -464,13 +532,23 @@ enum Phase3HerdrFixtures {
           },
           {
             "agent": "pi",
-            "agent_status": "idle",
-            "pane_id": "w56:p1",
-            "tab_id": "w56:t1",
-            "terminal_id": "term_65a1d4431d3062",
-            "terminal_title": "π - qing",
-            "terminal_title_stripped": "π - qing",
-            "workspace_id": "w56"
+            "agent_status": "working",
+            "pane_id": "w5R:p1",
+            "tab_id": "w5R:t1",
+            "terminal_id": "term_65a5762a58e2c28",
+            "terminal_title": "π - qing-phase6-pane-picker-impl - mudiapp-phase6-pane-picker-impl",
+            "terminal_title_stripped": "π - qing-phase6-pane-picker-impl - mudiapp-phase6-pane-picker-impl",
+            "workspace_id": "w5R"
+          },
+          {
+            "agent": "pi",
+            "agent_status": "working",
+            "pane_id": "w5R:p2",
+            "tab_id": "w5R:t1",
+            "terminal_id": "term_65a57f965489429",
+            "terminal_title": "π - qing-review-phase6-pane-a4ea95bc - mudiapp-phase6-pane-picker-impl",
+            "terminal_title_stripped": "π - qing-review-phase6-pane-a4ea95bc - mudiapp-phase6-pane-picker-impl",
+            "workspace_id": "w5R"
           }
         ],
         "type": "agent_list"

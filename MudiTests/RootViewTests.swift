@@ -7,6 +7,121 @@ final class RootViewTests: XCTestCase {
         _ = RootView()
     }
 
+    func testRootHostConnectionPresentsPickerAndDismissalDisconnectsHost() async throws {
+        let fixture = try Phase3HerdrFixtures.single()
+        let host = phase4Host()
+        let hostFileURL = phase4HostFileURL()
+        defer {
+            try? FileManager.default.removeItem(
+                at: hostFileURL.deletingLastPathComponent()
+            )
+        }
+        let application = makePhase4NavigationApplication(
+            hostFileURL: hostFileURL,
+            fixture: fixture
+        )
+
+        try await application.save(host)
+        application.model.connect(to: host)
+        let pickerPresented = await waitForRootViewCondition {
+            application.model.isPanePickerPresented
+                && application.model.panePicker?.origin == .host
+        }
+        XCTAssertTrue(pickerPresented)
+        XCTAssertNotNil(application.model.activeConnection)
+
+        application.model.dismissPanePicker()
+        let disconnected = await waitForRootViewCondition {
+            application.model.activeConnection == nil
+                && !application.model.isTearingDown
+                && application.model.connectionState == .disconnected
+        }
+        XCTAssertTrue(disconnected)
+    }
+
+    func testRootFailedTerminalPaneSwitchRestoresOldTerminalAndRestartsPickerRefresh() async throws {
+        let fixture = try Phase3HerdrFixtures.single()
+        let panes = phase4Panes(in: fixture)
+        let oldPane = try XCTUnwrap(panes.first)
+        let newPane = try XCTUnwrap(panes.dropFirst().first)
+        let host = phase4Host()
+        let hostFileURL = phase4HostFileURL()
+        defer {
+            try? FileManager.default.removeItem(
+                at: hostFileURL.deletingLastPathComponent()
+            )
+        }
+        let scheduler = Phase6TestScheduler()
+        let transport = Phase4TerminalTransport(
+            missingPaneIDs: [newPane.id]
+        )
+        let application = makePhase4NavigationApplication(
+            hostFileURL: hostFileURL,
+            fixture: fixture,
+            transport: transport,
+            panePickerScheduler: scheduler
+        )
+
+        try await application.save(host)
+        application.model.connect(to: host)
+        let hostPickerPresented = await waitForRootViewCondition {
+            application.model.isPanePickerPresented
+        }
+        XCTAssertTrue(hostPickerPresented)
+
+        application.model.selectPaneFromPicker(oldPane.id)
+        let oldPaneAttached = await waitForRootViewCondition {
+            guard case let .attached(_, pane) = application.model.herdrState else {
+                return false
+            }
+            return pane.id == oldPane.id
+        }
+        XCTAssertTrue(oldPaneAttached)
+
+        application.model.openPanePickerFromTerminal()
+        let terminalPickerPresented = await waitForRootViewCondition {
+            guard let picker = application.model.panePicker else { return false }
+            return picker.origin == .terminal
+                && picker.attachedTerminal?.pane.id == oldPane.id
+        }
+        XCTAssertTrue(terminalPickerPresented)
+
+        application.model.selectPaneFromPicker(newPane.id)
+        let failureShown = await waitForRootViewCondition {
+            application.model.panePicker?.message != nil
+        }
+        XCTAssertTrue(failureShown)
+
+        let attachments = await transport.attachments().map(\.id)
+        XCTAssertEqual(
+            attachments,
+            [oldPane.id, newPane.id, oldPane.id],
+            "A failed takeover must reattach the previous pane"
+        )
+        let scheduledJobCount = await scheduler.scheduledJobCount()
+        XCTAssertEqual(
+            scheduledJobCount,
+            1,
+            "A picker that remains visible after failure must resume refresh"
+        )
+
+        application.model.dismissPanePicker()
+        let restored = await waitForRootViewCondition {
+            guard case let .attached(_, pane) = application.model.herdrState else {
+                return false
+            }
+            return pane.id == oldPane.id
+                && !application.model.isPanePickerPresented
+        }
+        XCTAssertTrue(restored)
+        XCTAssertNotNil(application.model.activeConnection)
+
+        application.model.disconnect()
+        _ = await waitForRootViewCondition {
+            application.model.connectionState == .disconnected
+        }
+    }
+
     func testFailedConnectionDismissesHostKeyPromptAndRejectsLateAccept() async throws {
         let host = phase2Host()
         let knownHostKeys = Phase2KnownHostKeys()

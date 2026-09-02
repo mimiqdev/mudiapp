@@ -104,7 +104,7 @@ enum HerdrTerminalControlCodec {
 /// direction is `up` or `down`, and lines must be positive.
 /// stdout: `terminal.frame` / `terminal.closed`
 actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProviding,
-    HerdrSessionAwareTerminalTransport {
+    HerdrSessionAwareTerminalTransport, HerdrPaneControlReleasing {
     nonisolated let kind: ActiveTransport = .ssh
     private let session: SSHShellSession
     private var attachedSession: SSHShellSession?
@@ -153,6 +153,10 @@ actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProvidin
 
     func terminalSession() async -> SSHShellSession? {
         attachedSession
+    }
+
+    func releaseControl(for _: Pane.ID) async {
+        await releaseTerminalSession()
     }
 
     func releaseTerminalSession() async {

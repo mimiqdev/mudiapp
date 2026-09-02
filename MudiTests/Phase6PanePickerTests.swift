@@ -20,6 +20,179 @@ final class Phase6PanePickerTests: XCTestCase {
         }
     }
 
+    func testPanePickerPresentationBuildsWorktreeTreeAndFlattensTabsWithoutExposingTabIDs() throws {
+        let fixture = try Phase3HerdrFixtures.single()
+        let snapshot = phase6Snapshot(from: fixture)
+        let sections = panePickerPresentationSections(in: snapshot)
+
+        XCTAssertEqual(sections.count, 1)
+        XCTAssertEqual(sections.first?.title, "Herdr panes")
+        let roots = try XCTUnwrap(sections.first?.roots)
+        XCTAssertEqual(roots.map(\.title), ["mudiapp", "~"])
+        let workspaceTree = try XCTUnwrap(roots.first)
+        XCTAssertEqual(workspaceTree.children.map(\.title), ["phase6-pane-picker-impl"])
+        XCTAssertFalse(workspaceTree.isLinkedWorktree)
+        XCTAssertTrue(workspaceTree.children.first?.isLinkedWorktree == true)
+        XCTAssertFalse(roots[1].isLinkedWorktree)
+        XCTAssertEqual(workspaceTree.rows.map(\.paneID), ["w55:p1"])
+        XCTAssertEqual(
+            workspaceTree.children.flatMap(\.rows).map(\.paneID),
+            ["w5R:p1", "w5R:p2"]
+        )
+        XCTAssertEqual(roots[1].rows.map(\.paneID), ["w56:p1"])
+        XCTAssertEqual(
+            sections.flatMap(\.rows).map(\.paneID),
+            ["w55:p1", "w5R:p1", "w5R:p2", "w56:p1"],
+            "Tree preorder must render each workspace before its linked-worktree descendants"
+        )
+        XCTAssertEqual(
+            snapshot.sessions.first?.workspaces.first?.worktree?.repoName,
+            "mudiapp"
+        )
+        XCTAssertNil(
+            snapshot.sessions.first?.workspaces.first(where: { $0.name == "~" })?.worktree,
+            "Workspaces without CLI worktree metadata remain standalone"
+        )
+
+        let tabIDs = snapshot.sessions
+            .flatMap(\.workspaces)
+            .flatMap(\.tabs)
+            .map(\.id)
+        let visibleText = sections.flatMap(\.visibleText)
+        for tabID in tabIDs {
+            XCTAssertFalse(
+                visibleText.contains { $0.contains(tabID) },
+                "Internal tab ID \(tabID) must not be user-visible"
+            )
+        }
+    }
+
+    func testPanePickerGroupsByRepoKeyEvenWhenWorkspaceLabelsAreUnrelated() throws {
+        let fixture = try Phase3HerdrFixtures.single()
+        var session = try XCTUnwrap(phase6Snapshot(from: fixture).sessions.first)
+        let root = try XCTUnwrap(
+            session.workspaces.first { $0.worktree?.isLinkedWorktree == false }
+        )
+        let linked = try XCTUnwrap(
+            session.workspaces.first { $0.worktree?.isLinkedWorktree == true }
+        )
+        session.workspaces = session.workspaces.map { workspace in
+            var renamed = workspace
+            if workspace.id == root.id {
+                renamed.name = "primary checkout"
+            } else if workspace.id == linked.id {
+                renamed.name = "review task"
+            }
+            return renamed
+        }
+
+        let sections = panePickerPresentationSections(
+            in: HerdrSnapshot(sessions: [session])
+        )
+        let roots = try XCTUnwrap(sections.first?.roots)
+        let repoRoot = try XCTUnwrap(roots.first { $0.id == root.id })
+
+        XCTAssertEqual(repoRoot.children.map(\.id), [linked.id])
+        XCTAssertEqual(repoRoot.children.map(\.title), ["review task"])
+    }
+
+    func testWorktreeMetadataDecodesAuthoritativeFieldsAndLegacyWorkspaceDefaultsToNil() throws {
+        let metadataPayload = #"""
+        {
+          "checkout_path": "/Users/tony.liu/Developer/personal/mudiapp-phase6-pane-picker-impl",
+          "is_linked_worktree": true,
+          "repo_key": "/Users/tony.liu/Developer/personal/mudiapp/.git",
+          "repo_name": "mudiapp",
+          "repo_root": "/Users/tony.liu/Developer/personal/mudiapp"
+        }
+        """#
+        let metadata = try JSONDecoder().decode(
+            WorktreeMetadata.self,
+            from: Data(metadataPayload.utf8)
+        )
+        XCTAssertEqual(
+            metadata.checkoutPath,
+            "/Users/tony.liu/Developer/personal/mudiapp-phase6-pane-picker-impl"
+        )
+        XCTAssertTrue(metadata.isLinkedWorktree)
+        XCTAssertEqual(
+            metadata.repoKey,
+            "/Users/tony.liu/Developer/personal/mudiapp/.git"
+        )
+        XCTAssertEqual(metadata.repoName, "mudiapp")
+        XCTAssertEqual(
+            metadata.repoRoot,
+            "/Users/tony.liu/Developer/personal/mudiapp"
+        )
+
+        let legacyPayload = #"""
+        {
+          "id": "legacy",
+          "name": "legacy",
+          "tabs": []
+        }
+        """#
+        let workspace = try JSONDecoder().decode(
+            Workspace.self,
+            from: Data(legacyPayload.utf8)
+        )
+
+        XCTAssertNil(workspace.worktree)
+    }
+
+    func testPanePickerPresentationGroupsMultipleSessionsByHumanName() throws {
+        let fixture = try Phase3HerdrFixtures.multiple()
+        let snapshot = phase6Snapshot(from: fixture)
+        let sections = panePickerPresentationSections(in: snapshot)
+
+        XCTAssertEqual(
+            sections.map(\.title),
+            snapshot.sessions.map(\.name)
+        )
+        let defaultPresentation = try XCTUnwrap(
+            sections.first { $0.id == snapshot.sessions[0].id }
+        )
+        let additionalPresentation = try XCTUnwrap(
+            sections.first { $0.id == snapshot.sessions[1].id }
+        )
+        XCTAssertEqual(defaultPresentation.roots.map(\.id), ["w55", "w56"])
+        XCTAssertEqual(
+            defaultPresentation.roots.first?.children.map(\.id),
+            ["w5R"]
+        )
+        XCTAssertEqual(
+            defaultPresentation.rows.map(\.paneID),
+            ["w55:p1", "w5R:p1", "w5R:p2", "w56:p1"]
+        )
+        XCTAssertEqual(additionalPresentation.roots.map(\.id), ["w1"])
+        XCTAssertEqual(additionalPresentation.rows.map(\.paneID), ["w1:p1"])
+        let tabIDs = snapshot.sessions
+            .flatMap(\.workspaces)
+            .flatMap(\.tabs)
+            .map(\.id)
+        let visibleText = sections.flatMap(\.visibleText)
+        for tabID in tabIDs {
+            XCTAssertFalse(
+                visibleText.contains { $0.contains(tabID) },
+                "Internal tab ID \(tabID) must not be user-visible"
+            )
+        }
+    }
+
+    func testPanePickerPresentationAddsWorkspaceContextOnlyForDuplicateNames() throws {
+        let fixture = try Phase3HerdrFixtures.single()
+        let snapshot = phase6Snapshot(from: fixture)
+        let sections = panePickerPresentationSections(in: snapshot)
+        let rows = sections.flatMap(\.rows)
+
+        let duplicateAgentRows = rows.filter { $0.name == "pi" }
+        XCTAssertGreaterThanOrEqual(duplicateAgentRows.count, 2)
+        XCTAssertTrue(
+            duplicateAgentRows.allSatisfy { $0.workspaceContext != nil },
+            "Duplicate visible pane names should receive subtle workspace context"
+        )
+    }
+
     func testPanePickerPreservesRecordedSessionWorkspacePaneAndAgentHierarchy() async throws {
         let fixture = try Phase3HerdrFixtures.single()
         let expected = phase6Snapshot(from: fixture)
@@ -147,7 +320,9 @@ final class Phase6PanePickerTests: XCTestCase {
             "Manual refresh must use the official discovery path too"
         )
 
-        let operationCountBeforeDismissal = operationsAfterManualRefresh.count
+        let discoveryHostsBeforeDismissal = phase6DiscoveryHosts(
+            in: operationsAfterManualRefresh
+        )
         _ = await application.dismissPicker()
         let scheduledAfterDismissal = await scheduler.scheduledJobCount()
         XCTAssertEqual(scheduledAfterDismissal, 0)
@@ -155,9 +330,14 @@ final class Phase6PanePickerTests: XCTestCase {
         await scheduler.advance(by: 1)
         let operationsAfterDismissal = await recorder.operations()
         XCTAssertEqual(
-            operationsAfterDismissal.count,
-            operationCountBeforeDismissal,
+            phase6DiscoveryHosts(in: operationsAfterDismissal),
+            discoveryHostsBeforeDismissal,
             "A dismissed Picker must not continue scheduled discovery"
+        )
+        XCTAssertEqual(
+            phase6Disconnects(in: operationsAfterDismissal),
+            [.disconnect],
+            "Dismissing a Host Picker must still disconnect the Host"
         )
     }
 

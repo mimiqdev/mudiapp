@@ -75,11 +75,18 @@ struct Phase4KnownHostKeyStore: KnownHostKeyStore {
 actor Phase4TerminalTransport: TerminalTransport, HerdrTerminalSessionProviding {
     nonisolated let kind: ActiveTransport = .ssh
 
+    private let missingPaneIDs: Set<Pane.ID>
+    private var baseSession: SSHShellSession?
     private var terminalSessionValue: SSHShellSession?
     private var connectedHosts: [Host] = []
     private var attachedPanes: [Pane] = []
 
+    init(missingPaneIDs: Set<Pane.ID> = []) {
+        self.missingPaneIDs = missingPaneIDs
+    }
+
     func setTerminalSession(_ session: SSHShellSession) {
+        baseSession = session
         terminalSessionValue = session
     }
 
@@ -89,6 +96,10 @@ actor Phase4TerminalTransport: TerminalTransport, HerdrTerminalSessionProviding 
 
     func attach(to pane: Pane) async throws {
         attachedPanes.append(pane)
+        guard !missingPaneIDs.contains(pane.id) else {
+            throw Phase3TransportError.paneUnavailable
+        }
+        terminalSessionValue = baseSession
     }
 
     func send(_: [UInt8]) async throws {}
@@ -97,6 +108,7 @@ actor Phase4TerminalTransport: TerminalTransport, HerdrTerminalSessionProviding 
 
     func disconnect() async {
         terminalSessionValue = nil
+        baseSession = nil
     }
 
     func terminalSession() async -> SSHShellSession? {
@@ -140,6 +152,7 @@ final class Phase4NavigationApplication {
     let model: RootViewModel
     let coordinator: ApplicationCoordinator
     let transport: Phase4TerminalTransport
+    let panePickerScheduler: Phase6TestScheduler
 
     private let knownHostKeys: Phase4KnownHostKeys
     private let hostKeyFingerprint = "SHA256:phase4-test-key"
@@ -154,10 +167,12 @@ final class Phase4NavigationApplication {
             presentedFingerprint: "SHA256:phase4-test-key"
         ),
         preferencesStore: (any PreferencesStore)? = nil,
+        panePickerScheduler: Phase6TestScheduler = Phase6TestScheduler(),
         rememberedPaneID: Pane.ID? = nil,
         rememberedPaneHostID: Host.ID? = nil
     ) {
         self.transport = transport
+        self.panePickerScheduler = panePickerScheduler
         self.knownHostKeys = knownHostKeys
         coordinator = ApplicationCoordinator(
             hostStore: JSONHostStore(fileURL: hostFileURL),
@@ -172,6 +187,7 @@ final class Phase4NavigationApplication {
                 transport: transport
             ),
             preferencesStore: preferencesStore ?? UserDefaultsPreferencesStore(),
+            panePickerScheduler: panePickerScheduler,
             rememberedPaneID: rememberedPaneID,
             rememberedPaneHostID: rememberedPaneHostID
         )
@@ -201,6 +217,7 @@ func makePhase4NavigationApplication(
         presentedFingerprint: "SHA256:phase4-test-key"
     ),
     preferencesStore: (any PreferencesStore)? = nil,
+    panePickerScheduler: Phase6TestScheduler = Phase6TestScheduler(),
     rememberedPaneID: Pane.ID? = nil,
     rememberedPaneHostID: Host.ID? = nil
 ) -> Phase4NavigationApplication {
@@ -212,6 +229,7 @@ func makePhase4NavigationApplication(
         knownHostKeys: knownHostKeys,
         client: client,
         preferencesStore: preferencesStore,
+        panePickerScheduler: panePickerScheduler,
         rememberedPaneID: rememberedPaneID,
         rememberedPaneHostID: rememberedPaneHostID
     )
