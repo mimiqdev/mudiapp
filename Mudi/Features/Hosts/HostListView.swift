@@ -1,6 +1,52 @@
 import HerdrKit
 import SwiftUI
 
+enum HostListSwipeAction: Hashable {
+    case edit
+    case delete
+}
+
+struct HostListSwipeActionDescriptor {
+    let action: HostListSwipeAction
+    let title: String
+    let systemImage: String
+    let role: ButtonRole?
+    let perform: () -> Void
+}
+
+struct HostListActionPolicy: Equatable {
+    let swipeActions: [HostListSwipeAction]
+
+    static let current = HostListActionPolicy(swipeActions: [.delete])
+
+    func swipeActionDescriptors(
+        for host: Host,
+        onEdit: @escaping (Host) -> Void,
+        onDelete: @escaping (Host) -> Void
+    ) -> [HostListSwipeActionDescriptor] {
+        swipeActions.map { action in
+            switch action {
+            case .edit:
+                HostListSwipeActionDescriptor(
+                    action: action,
+                    title: "Edit",
+                    systemImage: "pencil",
+                    role: nil,
+                    perform: { onEdit(host) }
+                )
+            case .delete:
+                HostListSwipeActionDescriptor(
+                    action: action,
+                    title: "Delete",
+                    systemImage: "trash",
+                    role: .destructive,
+                    perform: { onDelete(host) }
+                )
+            }
+        }
+    }
+}
+
 struct HostListView: View {
     let hosts: [Host]
     let connectionState: ConnectionState
@@ -76,8 +122,19 @@ struct HostListView: View {
                             }
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button("Delete", systemImage: "trash", role: .destructive) {
-                                onDelete(host)
+                            let actions = HostListActionPolicy.current
+                                .swipeActionDescriptors(
+                                    for: host,
+                                    onEdit: onEdit,
+                                    onDelete: onDelete
+                                )
+                            ForEach(actions, id: \.action) { action in
+                                Button(
+                                    action.title,
+                                    systemImage: action.systemImage,
+                                    role: action.role,
+                                    action: action.perform
+                                )
                             }
                         }
                     }

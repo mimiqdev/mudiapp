@@ -22,6 +22,7 @@ final class RootViewModel: ObservableObject {
 
     let coordinator: ApplicationCoordinator
     let preferencesStore: any PreferencesStore
+    let localNetworkPermissionGate: (any LocalNetworkPermissionGate)?
     private let workflowFactory: any HerdrWorkflowFactory
     private let panePickerScheduler: any PanePickerRefreshScheduling
     var workflow: (any HerdrWorkflowCoordinating)?
@@ -60,6 +61,7 @@ final class RootViewModel: ObservableObject {
         coordinator: ApplicationCoordinator = ApplicationCoordinator(),
         workflowFactory: any HerdrWorkflowFactory = SSHHerdrWorkflowFactory(),
         preferencesStore: any PreferencesStore = UserDefaultsPreferencesStore(),
+        localNetworkPermissionGate: (any LocalNetworkPermissionGate)? = nil,
         panePickerScheduler: any PanePickerRefreshScheduling = LivePanePickerRefreshScheduler(),
         rememberedPaneID: Pane.ID? = nil,
         rememberedPaneHostID: Host.ID? = nil
@@ -67,6 +69,7 @@ final class RootViewModel: ObservableObject {
         self.coordinator = coordinator
         self.workflowFactory = workflowFactory
         self.preferencesStore = preferencesStore
+        self.localNetworkPermissionGate = localNetworkPermissionGate
         self.panePickerScheduler = panePickerScheduler
         self.lastPaneID = rememberedPaneID
         self.lastPaneHostID = rememberedPaneHostID

@@ -70,6 +70,14 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     UIGestureRecognizerDelegate {
     var session: SSHShellSession?
     var sessionIdentity: ObjectIdentifier?
+    /// Exposes the bar independently of UIKit's first-responder presentation.
+    private(set) lazy var shortcutBar: MudiTerminalShortcutBar? = {
+        MudiTerminalShortcutBar(
+            terminalView: self,
+            onPageUp: { [weak self] in self?.pageUpFromShortcut() },
+            onPageDown: { [weak self] in self?.pageDownFromShortcut() }
+        )
+    }()
     private(set) var isInputFocusAllowed = true
     /// Mirrors UIKit's own state restoration: when the terminal had keyboard
     /// focus before a background retakeover replaced its control session,
@@ -110,11 +118,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         alwaysBounceVertical = true
         inputAssistantItem.leadingBarButtonGroups = []
         inputAssistantItem.trailingBarButtonGroups = []
-        inputAccessoryView = MudiTerminalShortcutBar(
-            terminalView: self,
-            onPageUp: { [weak self] in self?.pageUpFromShortcut() },
-            onPageDown: { [weak self] in self?.pageDownFromShortcut() }
-        )
+        inputAccessoryView = shortcutBar
     }
 
     required init?(coder: NSCoder) {
@@ -234,7 +238,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         backgroundColor = appearance.background
         caretColor = appearance.foreground
         caretTextColor = appearance.background
-        (inputAccessoryView as? MudiTerminalShortcutBar)?.updateAppearance(
+        shortcutBar?.updateAppearance(
             background: appearance.background,
             foreground: appearance.foreground
         )
@@ -274,7 +278,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         isScrollEnabled = true
         compositionInputDelegate?.onTextChange = nil
         compositionState.update(markedText: nil)
-        (inputAccessoryView as? MudiTerminalShortcutBar)?.updateComposition(markedText: nil)
+        shortcutBar?.updateComposition(markedText: nil)
         terminalDelegate = nil
         didCloseNormally = false
         session = nil
@@ -304,7 +308,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         let previousText = compositionState.visibleText
         compositionState.update(markedText: markedText)
         guard previousText != compositionState.visibleText else { return }
-        (inputAccessoryView as? MudiTerminalShortcutBar)?.updateComposition(
+        shortcutBar?.updateComposition(
             markedText: compositionState.visibleText
         )
     }

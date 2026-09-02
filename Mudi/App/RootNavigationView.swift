@@ -7,8 +7,22 @@ struct RootView: View {
     @State private var isSettingsPresented = false
     @State private var containerSize: CGSize = .zero
 
-    init(coordinator: ApplicationCoordinator = ApplicationCoordinator()) {
-        _model = StateObject(wrappedValue: RootViewModel(coordinator: coordinator))
+    init(model: RootViewModel) {
+        _model = StateObject(wrappedValue: model)
+    }
+
+    init(
+        coordinator: ApplicationCoordinator = ApplicationCoordinator(),
+        preferencesStore: (any PreferencesStore)? = nil,
+        localNetworkPermissionGate: (any LocalNetworkPermissionGate)? = nil
+    ) {
+        _model = StateObject(
+            wrappedValue: RootViewModel(
+                coordinator: coordinator,
+                preferencesStore: preferencesStore ?? UserDefaultsPreferencesStore(),
+                localNetworkPermissionGate: localNetworkPermissionGate
+            )
+        )
     }
 
     var body: some View {
