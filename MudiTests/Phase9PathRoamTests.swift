@@ -783,7 +783,6 @@ extension Phase9PathRoamTests {
             "Leave still stops the local Mosh client"
         )
     }
-
 }
 
 private extension Phase9PathRoamTests {
@@ -800,6 +799,15 @@ private extension Phase9PathRoamTests {
         NetworkPathSnapshot(
             status: .satisfied,
             interfaces: [.cellular, .other],
+            isExpensive: true,
+            isConstrained: false
+        )
+    }
+
+    func cellularOnlySnapshot() -> NetworkPathSnapshot {
+        NetworkPathSnapshot(
+            status: .satisfied,
+            interfaces: [.cellular],
             isExpensive: true,
             isConstrained: false
         )

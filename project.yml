@@ -30,9 +30,9 @@ packages:
   Citadel:
     url: https://github.com/orlandos-nl/Citadel.git
     exactVersion: 0.12.1
-  SwiftMosh:
-    url: https://github.com/wiedymi/swift-mosh.git
-    exactVersion: 0.1.8
+  TraversioMosh:
+    url: https://github.com/GitSwiftHQ/TraversioMosh.git
+    exactVersion: 1.0.0
 
 targets:
   Mudi:
@@ -53,10 +53,10 @@ targets:
       - package: HerdrKit
       - package: SwiftTerm
       - package: Citadel
-      - package: SwiftMosh
+      - package: TraversioMosh
         products:
-          - MoshCore
-          - MoshBootstrap
+          - TraversioMoshCore
+          - TraversioMoshBootstrap
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.mudi.mobile
@@ -100,11 +100,10 @@ targets:
     dependencies:
       - target: Mudi
       - package: HerdrKit
-      - package: SwiftMosh
+      - package: TraversioMosh
         products:
-          - MoshCore
-          - MoshBootstrap
-          - MoshTransport
+          - TraversioMoshCore
+          - TraversioMoshBootstrap
     settings:
       base:
         GENERATE_INFOPLIST_FILE: "YES"

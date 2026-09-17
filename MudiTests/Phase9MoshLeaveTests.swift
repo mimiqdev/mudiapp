@@ -47,12 +47,12 @@ final class Phase9MoshLeaveTests: XCTestCase {
     }
 
     func testMoshServerCommandMergesStderrIntoTheLoginShell() {
-        let login = SwiftMoshAdapter.serverCommand(for: nil)
+        let login = TraversioMoshAdapter.serverCommand(for: nil)
         XCTAssertTrue(
             login.contains("mosh-server new -s 2>&1"),
             "Login-shell mosh-server must merge stderr so the pid line is captured"
         )
-        let attach = SwiftMoshAdapter.serverCommand(
+        let attach = TraversioMoshAdapter.serverCommand(
             for: "exec herdr terminal attach term_65a1d4135cfa21 --takeover"
         )
         XCTAssertTrue(attach.contains("2>&1"))

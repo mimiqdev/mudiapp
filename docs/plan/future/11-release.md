@@ -4,5 +4,5 @@
 
 - 前置：阶段 9 网络韧性验收完成（多网络环境稳定前不做发布准备）
 - 日志脱敏、崩溃恢复、性能和完整 V1 真机回归
-- 根据网络结果确认继续 swift-mosh；仅在阻塞时重新评估 libmoshios 和 GPL 履约
+- 根据网络结果确认继续 TraversioMosh；仅在阻塞时重新评估 libmoshios 和 GPL 履约
 - TestFlight 签名、隐私说明、第三方许可和外测材料

@@ -34,7 +34,7 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
         credentialStore: any CredentialStore = KeychainCredentialStore(),
         knownHostKeyStore: any KnownHostKeyStore = KeychainKnownHostKeyStore(),
         client: any HostKeyAwareSSHClient = CitadelSSHAdapter(),
-        moshTransport: any MoshTransportBootstrapping = SwiftMoshAdapter(),
+        moshTransport: any MoshTransportBootstrapping = TraversioMoshAdapter(),
         reconnectTimeout: Duration = NetworkConnectionPolicy
             .documentedDefault.perAttemptTimeout
     ) {

@@ -158,6 +158,12 @@ extension RootViewModel {
             // TCP bootstrap in a tracked background task; the next Picker
             // open or a Leave that needs a live bootstrap rebuilds it.
             networkPathRecovery.changePending = false
+
+            // The Mosh UDP data plane owns its own path recovery: Traversio
+            // rebuilds the link under the same MoshSession when the path
+            // changes, so the app performs no data-plane action here. The
+            // roam only retires the stale TCP bootstrap below; the next
+            // Picker open or a Leave that needs a live bootstrap rebuilds it.
             if networkPathRecovery.controlPlaneRebuild == .inProgress {
                 // A deferred rebuild owns the SSH handshake right now. Do
                 // NOT spawn a concurrent bootstrap disconnect (it would

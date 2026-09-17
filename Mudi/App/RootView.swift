@@ -900,7 +900,7 @@ extension RootViewModel {
         panePickerCoordinator = nil
         networkPathRecovery.controlPlaneRebuild = .idle
         // A still-running roam retire must not close the fresh bootstrap:
-        // cancel it and let the connect task await its completion.
+        // cancel it and let the connect/teardown path join its completion.
         networkPathRecovery.retireTask?.cancel()
         if let lastPaneHostID, lastPaneHostID != hostID {
             lastPaneID = nil

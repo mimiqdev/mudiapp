@@ -1,8 +1,7 @@
 import Foundation
 import HerdrKit
-@preconcurrency import MoshBootstrap
-@preconcurrency import MoshCore
-@preconcurrency import MoshTransport
+@preconcurrency import TraversioMoshBootstrap
+@preconcurrency import TraversioMoshCore
 
 /// The credentialed connection boundary used by transport selection.
 ///
@@ -57,48 +56,35 @@ enum TransportSelectionStrategy {
     }
 
     /// Production classification hook for Auto fallback. Adapters may throw
-    /// ``MoshFailureClass`` directly, while the concrete SwiftMosh errors are
-    /// normalized here before Auto keeps the SSH bootstrap.
+    /// ``MoshFailureClass`` directly, while the concrete TraversioMosh errors
+    /// are normalized here before Auto keeps the SSH bootstrap.
     static func classifyMoshFailure(_ error: Error) -> MoshFailureClass {
         if let failure = error as? MoshFailureClass {
             return failure
         }
 
-        if let error = error as? MoshBootstrapError {
+        if let error = error as? MoshFirstContactError {
             switch error {
-            case .missingServer, .processExited:
-                return .moshServerUnavailable
             case .timedOut:
                 return .udpTimedOut
-            case .invalidConnectLine, .invalidPort, .invalidKey, .permissionDenied:
+            }
+        }
+
+        if let error = error as? MoshBootstrapParseError {
+            switch error {
+            case .connectLineNotFound, .multipleConnectLines, .malformedConnectLine,
+                 .invalidPort, .portOutOfRange:
+                return .moshServerUnavailable
+            case .invalidSessionKey:
                 return .unknown
             }
         }
 
         if let error = error as? MoshSessionError {
-            if case let .sessionFailed(failure) = error {
-                return classifyMoshFailure(failure)
-            }
-            return .unknown
-        }
-
-        if let error = error as? MoshSessionFailure {
             switch error {
-            case .timeout, .retryLimitExceeded:
+            case .linkRebuildAttemptsExhausted:
                 return .udpTimedOut
-            case let .transportFailure(message),
-                 let .circuitBreakerTripped(_, message):
-                return classifyMoshMessage(message)
-            case .protocolViolation, .authenticationFailure:
-                return .unknown
-            }
-        }
-
-        if let error = error as? TransportError {
-            switch error {
-            case let .networkFailure(message), let .sendFailure(message):
-                return classifyMoshMessage(message)
-            case .invalidPort, .alreadyStarted, .notStarted, .cancelled, .malformedDatagram:
+            case .alreadyStarted, .notStarted, .stopped, .shutdownTimedOut:
                 return .unknown
             }
         }

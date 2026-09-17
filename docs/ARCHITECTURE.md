@@ -19,7 +19,7 @@ Mudi App
 │   └── Terminal        terminal 容器和输入 UI
 ├── Infrastructure
 │   ├── SSH             Citadel 适配
-│   ├── Mosh            swift-mosh 适配
+│   ├── Mosh            TraversioMosh 适配
 │   └── Persistence     Keychain 与普通配置存储
 └── Packages/HerdrKit   领域模型和跨层协议
 ```
@@ -39,7 +39,7 @@ Host 配置
 → terminal resize 同步远端
 ```
 
-SSH terminal 路径验证成功后，使用同一套 SSH 认证启动远端 `mosh-server`，再把返回的 UDP port 和 session key 交给 swift-mosh。Herdr discovery、状态恢复、SSH 和 Mosh 共享领域模型与 terminal session 接口。
+SSH terminal 路径验证成功后，使用同一套 SSH 认证启动远端 `mosh-server`，再把返回的 UDP port 和 session key 交给 TraversioMosh 的 `MoshSession`。Herdr discovery、状态恢复、SSH 和 Mosh 共享领域模型与 terminal session 接口。
 
 ## Herdr 自动发现与 attach
 

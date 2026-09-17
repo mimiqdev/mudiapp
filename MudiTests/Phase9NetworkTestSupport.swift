@@ -314,8 +314,9 @@ private struct Phase9MoshPTY: PTYChannel {
     func close() async {}
 }
 
-/// Throws a concrete SwiftMosh/NIO adapter error so classification cannot
-/// pass by special-casing ``MoshFailureClass``.
+/// Throws a concrete adapter error (for example a TraversioMosh bootstrap or
+/// session error) so classification cannot pass by special-casing
+/// ``MoshFailureClass``.
 struct Phase9ThrowingMoshTransport: MoshTransportBootstrapping {
     let error: any Error
 

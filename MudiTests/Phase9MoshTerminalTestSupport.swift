@@ -27,10 +27,15 @@ actor TestRecordingInteractiveSSHChannel: PTYChannel,
     private var recordedCommands: [String] = []
     private var recordedExecCommands: [String] = []
     private let releaseOrder: TestMoshReleaseOrder?
+    private let execOutput: [UInt8]
 
-    init(releaseOrder: TestMoshReleaseOrder? = nil) {
+    init(
+        releaseOrder: TestMoshReleaseOrder? = nil,
+        execOutput: [UInt8] = []
+    ) {
         interactiveChannel = TestMoshPTY(releaseOrder: releaseOrder)
         self.releaseOrder = releaseOrder
+        self.execOutput = execOutput
     }
 
     func openInteractiveCommand(
@@ -45,7 +50,7 @@ actor TestRecordingInteractiveSSHChannel: PTYChannel,
         if command.contains("kill -TERM") {
             await releaseOrder?.record(.killSent)
         }
-        return []
+        return execOutput
     }
 
     func send(_: [UInt8]) async throws {}
@@ -163,6 +168,15 @@ actor TestRecordingMoshTransport: MoshTransportBootstrapping {
     func getDisconnectCount() -> Int {
         disconnectCount
     }
+}
+
+/// A Sendable call counter for tests that record invocations inside a
+/// @Sendable factory closure.
+actor CallCounter {
+    private var count = 0
+    @discardableResult
+    func increment() -> Int { count += 1; return count }
+    func value() -> Int { count }
 }
 
 actor TestMoshPTY: PTYOutputChannel {

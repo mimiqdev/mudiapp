@@ -1,7 +1,7 @@
 import Foundation
 import HerdrKit
-@preconcurrency import MoshBootstrap
-@preconcurrency import MoshTransport
+@preconcurrency import TraversioMoshBootstrap
+@preconcurrency import TraversioMoshCore
 import XCTest
 @testable import Mudi
 
@@ -302,12 +302,10 @@ final class Phase9NetworkTests: XCTestCase {  // pi-lens-ignore: type_body_lengt
 
     func testAutomaticFallbackClassifiesConcreteAdapterErrors() async throws {
         let cases: [(any Error, Phase9MoshFailureClass)] = [
-            (MoshBootstrapError.missingServer, .moshServerUnavailable),
-            (MoshBootstrapError.timedOut, .udpTimedOut),
-            (
-                TransportError.networkFailure("UDP not permitted on this tailnet"),
-                .udpBlockedOnTailnetOrCarrier
-            ),
+            (MoshFirstContactError.timedOut, .udpTimedOut),
+            (MoshBootstrapParseError.connectLineNotFound, .moshServerUnavailable),
+            (MoshSessionError.linkRebuildAttemptsExhausted, .udpTimedOut),
+            (MoshBootstrapParseError.malformedConnectLine, .moshServerUnavailable),
             (
                 SSHInteractiveCommandError.commandFailed(
                     exitCode: 127,

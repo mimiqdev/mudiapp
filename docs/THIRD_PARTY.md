@@ -8,7 +8,7 @@
 | --- | --- | --- | --- | --- |
 | SwiftTerm | 1.15.0 | VT100 / xterm emulation、iOS terminal view | MIT | SwiftPM |
 | Citadel | 0.12.1 | SSH client 高层 API | MIT | SwiftPM |
-| swift-mosh | 0.1.8 | Mosh protocol、UDP transport、state synchronization | MIT | SwiftPM |
+| TraversioMosh | 1.0.0 | Mosh protocol、UDP transport、state synchronization、screen snapshot、same-session link rebuild | MIT | SwiftPM |
 | Symbols Nerd Font Mono | Nerd Fonts 3.5.1 | terminal Nerd glyph fallback | MIT (license bundled with the font) | bundled TTF |
 | JetBrains Mono Nerd Font Mono | Nerd Fonts 3.5.1 patched JetBrains Mono | full terminal face with Nerd glyphs | SIL OFL 1.1; patched glyph attribution follows Nerd Fonts upstream | bundled TTF |
 
@@ -31,12 +31,13 @@ Citadel 会传递引入 SwiftNIO、Swift Crypto 和一个 SwiftNIO SSH fork 等�
 
 ## Mosh 方案
 
-首选验证对象是 swift-mosh。它是纯 Swift、MIT 许可的独立实现，支持 iOS 16+ 和 SwiftPM。仓库引入 `MoshCore` 与 `MoshBootstrap`，SSH 认证和远端 server 启动仍由连接层负责。
+首选验证对象是 TraversioMosh。它是纯 Swift、MIT 许可的独立实现，支持 iOS 16+ 和 SwiftPM。仓库引入 `TraversioMoshCore` 与 `TraversioMoshBootstrap`，SSH 认证、远端 server 启动和 terminal 渲染仍由连接层负责；Mosh 数据面（加密 UDP、SSP、链路重建、预测和 framebuffer）归 TraversioMosh。
 
-swift-mosh 当前处于 0.1.x 阶段，采用前必须验证：
+TraversioMosh 当前为 1.0.0，采用前必须验证：
 
 - 与上游 `mosh-server` 的协议互操作；
-- Wi-Fi / cellular roaming、丢包、NAT 和长时间空闲；
+- Wi-Fi / cellular roaming 下同一 `MoshSession` 内的 UDP link rebuild、丢包、NAT 和长时间空闲；
+- 首次 server contact 超时后的 Auto → SSH 回退；
 - 前后台切换后的 session 行为；
 - predictive echo、Unicode 和窗口 resize；
 - crypto 实现、依赖维护和安全更新路径。

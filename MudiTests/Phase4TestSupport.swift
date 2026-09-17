@@ -316,7 +316,7 @@ final class Phase4NavigationApplication {
         client: Phase2SSHClient = Phase2SSHClient(
             presentedFingerprint: "SHA256:phase4-test-key"
         ),
-        moshTransport: any MoshTransportBootstrapping = SwiftMoshAdapter(),
+        moshTransport: any MoshTransportBootstrapping = TraversioMoshAdapter(),
         preferencesStore: (any PreferencesStore)? = nil,
         reconnectGate: Phase2ConnectionGate? = nil,
         networkPathMonitor: any NetworkPathMonitoring = SystemNetworkPathMonitor(),
@@ -385,7 +385,7 @@ func makePhase4NavigationApplication(
     client: Phase2SSHClient = Phase2SSHClient(
         presentedFingerprint: "SHA256:phase4-test-key"
     ),
-    moshTransport: any MoshTransportBootstrapping = SwiftMoshAdapter(),
+    moshTransport: any MoshTransportBootstrapping = TraversioMoshAdapter(),
     preferencesStore: (any PreferencesStore)? = nil,
     reconnectGate: Phase2ConnectionGate? = nil,
     networkPathMonitor: any NetworkPathMonitoring = SystemNetworkPathMonitor(),
