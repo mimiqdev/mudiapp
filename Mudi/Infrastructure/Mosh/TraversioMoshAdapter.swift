@@ -92,7 +92,14 @@ actor TraversioMoshAdapter: MoshTransportBootstrapping {
             // path is blocked. The client is stopped on timeout so no dead
             // session leaks into the adapter's mounted state.
             try await client.waitForFirstContact(timeout: firstContactTimeout)
-            let channel = MoshPTYChannel(session: client)
+            // A command session is a raw direct attach: the remote
+            // application, not the host, owns its viewport, so vertical pans
+            // become wheel input for it. The login-shell session (no command)
+            // keeps SwiftTerm's local pan behaviour.
+            let channel = MoshPTYChannel(
+                session: client,
+                acceptsMouseWheelInput: command?.isEmpty == false
+            )
             let newSession = SSHShellSession(connectedChannel: channel)
 
             let previousSession = terminalSession

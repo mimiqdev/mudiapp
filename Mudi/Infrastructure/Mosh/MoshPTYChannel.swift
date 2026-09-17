@@ -13,7 +13,13 @@ import TraversioMoshCore
 /// lossless for the displayed picture. Bell/title control bytes are retained
 /// across an evicted frame and re-attached to the next delivered frame, so a
 /// dropped frame can never swallow those signals permanently.
-actor MoshPTYChannel: PTYOutputChannel {
+actor MoshPTYChannel: PTYOutputChannel, PTYWheelInputChannel {
+    /// Set for a raw direct attach (a Herdr pane taken over as the Mosh PTY
+    /// child): the remote application's own viewport is the scroll target, so
+    /// vertical pans become wheel events instead of host scrollback requests.
+    /// The login-shell Mosh session leaves this false and keeps SwiftTerm's
+    /// local pan behaviour.
+    nonisolated let acceptsMouseWheelInput: Bool
     private let session: any MoshTerminalSessionHandling
     private let output: AsyncThrowingStream<[UInt8], Error>
     private let outputContinuation: AsyncThrowingStream<[UInt8], Error>.Continuation
@@ -34,10 +40,12 @@ actor MoshPTYChannel: PTYOutputChannel {
 
     init(
         session: any MoshTerminalSessionHandling,
-        logger: DiagnosticLogger = .shared
+        logger: DiagnosticLogger = .shared,
+        acceptsMouseWheelInput: Bool = false
     ) {
         self.session = session
         self.logger = logger
+        self.acceptsMouseWheelInput = acceptsMouseWheelInput
         var continuation: AsyncThrowingStream<[UInt8], Error>.Continuation!
         output = AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) {
             continuation = $0

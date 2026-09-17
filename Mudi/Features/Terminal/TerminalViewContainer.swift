@@ -181,7 +181,7 @@ struct TerminalViewContainer: UIViewRepresentable {
 
 @MainActor
 final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegate,
-    UIGestureRecognizerDelegate {
+    UIGestureRecognizerDelegate {  // pi-lens-ignore: type_body_length
     var session: SSHShellSession?
     var sessionIdentity: ObjectIdentifier?
     private(set) var appliedTheme: TerminalTheme? = nil
@@ -219,11 +219,13 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     private var compositionInputDelegate: TerminalCompositionInputDelegate?
     private var compositionState = TerminalCompositionState()
     var remoteScrollbackEnabled = false
+    var remoteMouseWheelEnabled = false
     var remoteScrollGesture: UIPanGestureRecognizer?
     var remoteScrollCapabilityTask: Task<Void, Never>?
     var remoteScrollTask: Task<Void, Never>?
     var remoteScrollLastTranslation: CGFloat = 0
     var remoteScrollDistance: CGFloat = 0
+    var remoteScrollLocation: CGPoint?
     var remoteScrollInertiaTask: Task<Void, Never>?
 
     override init(frame: CGRect) {
@@ -334,7 +336,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         installCompositionInputDelegate()
         terminalDelegate = self
         let sessionIdentity = ObjectIdentifier(session)
-        loadRemoteScrollbackCapability(for: session, identity: sessionIdentity)
+        loadRemoteScrollCapability(for: session, identity: sessionIdentity)
 
         outputTask = Task { [weak self, session, sessionIdentity] in
             await self?.consumeOutput(of: session, identity: sessionIdentity)
@@ -612,8 +614,10 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         }
         remoteScrollGesture = nil
         remoteScrollbackEnabled = false
+        remoteMouseWheelEnabled = false
         remoteScrollDistance = 0
         remoteScrollLastTranslation = 0
+        remoteScrollLocation = nil
         isScrollEnabled = true
         compositionInputDelegate?.onTextChange = nil
         compositionState.update(markedText: nil)
