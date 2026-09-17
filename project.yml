@@ -31,8 +31,8 @@ packages:
     url: https://github.com/orlandos-nl/Citadel.git
     exactVersion: 0.12.1
   TraversioMosh:
-    url: https://github.com/GitSwiftHQ/TraversioMosh.git
-    exactVersion: 1.0.0
+    url: https://github.com/mimiqdev/TraversioMosh.git
+    revision: 843909f0b3ba79e8b3f3389f3ae3f940de60b7ca
 
 targets:
   Mudi:
