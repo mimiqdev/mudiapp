@@ -17,19 +17,25 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
     /// set, later launches open the Host list without touching the system
     /// permission surface again.
     var hasCompletedLocalNetworkOnboarding: Bool
+    var isDebugLoggingEnabled: Bool
+    var isSaveLogsEnabled: Bool
 
     init(
         appearance: AppearancePreference = .system,
         themeSelection: TerminalThemeSelection = TerminalThemeRegistry.defaultSelection,
         fontFamily: String = "JetBrainsMono Nerd Font Mono",
         fontSize: Double = 14,
-        hasCompletedLocalNetworkOnboarding: Bool = false
+        hasCompletedLocalNetworkOnboarding: Bool = false,
+        isDebugLoggingEnabled: Bool = false,
+        isSaveLogsEnabled: Bool = false
     ) {
         self.appearance = appearance
         self.themeSelection = themeSelection
         self.fontFamily = fontFamily
         self.fontSize = fontSize
         self.hasCompletedLocalNetworkOnboarding = hasCompletedLocalNetworkOnboarding
+        self.isDebugLoggingEnabled = isDebugLoggingEnabled
+        self.isSaveLogsEnabled = isSaveLogsEnabled
     }
 
     /// Source-compatible initializer for callers that only know the original
@@ -37,12 +43,16 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
     init(
         appearance: AppearancePreference,
         fontSize: Double,
-        hasCompletedLocalNetworkOnboarding: Bool = false
+        hasCompletedLocalNetworkOnboarding: Bool = false,
+        isDebugLoggingEnabled: Bool = false,
+        isSaveLogsEnabled: Bool = false
     ) {
         self.init(
             appearance: appearance,
             fontSize: fontSize,
-            hasCompletedLocalNetworkOnboarding: hasCompletedLocalNetworkOnboarding
+            hasCompletedLocalNetworkOnboarding: hasCompletedLocalNetworkOnboarding,
+            isDebugLoggingEnabled: isDebugLoggingEnabled,
+            isSaveLogsEnabled: isSaveLogsEnabled
         )
     }
 
@@ -68,6 +78,14 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
             Bool.self,
             forKey: .hasCompletedLocalNetworkOnboarding
         ) ?? false
+        isDebugLoggingEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .isDebugLoggingEnabled
+        ) ?? false
+        isSaveLogsEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .isSaveLogsEnabled
+        ) ?? false
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -76,6 +94,8 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
         case fontFamily
         case fontSize
         case hasCompletedLocalNetworkOnboarding
+        case isDebugLoggingEnabled
+        case isSaveLogsEnabled
     }
 }
 

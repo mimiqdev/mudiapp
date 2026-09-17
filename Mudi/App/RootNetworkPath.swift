@@ -22,11 +22,6 @@ struct NetworkPathRecoveryState {
 
 @MainActor
 extension RootViewModel {
-    static let networkRecoveryLog = Logger(
-        subsystem: "dev.mudi.mobile",
-        category: "network-recovery"
-    )
-
     /// A short coalescing window prevents flapping path updates from
     /// producing a reconnect for every intermediate snapshot.
     static let networkPathReconnectDebounce = Duration.milliseconds(300)
@@ -84,8 +79,10 @@ extension RootViewModel {
         let previousPath = networkPathRecovery.lastPath
         networkPathRecovery.lastPath = path
         guard let previousPath else {
-            Self.networkRecoveryLog.notice(
-                "path initial \(path.logDescription, privacy: .public)"
+            DiagnosticLogger.shared.log(
+                level: .notice,
+                category: "network-recovery",
+                "path initial \(path.logDescription)"
             )
             return
         }
@@ -93,13 +90,17 @@ extension RootViewModel {
             != (path.status == .satisfied)
         let interfacesChanged = previousPath.interfaces != path.interfaces
         guard statusFlipped || interfacesChanged else {
-            Self.networkRecoveryLog.debug(
-                "path ignore \(path.logDescription, privacy: .public)"
+            DiagnosticLogger.shared.log(
+                level: .debug,
+                category: "network-recovery",
+                "path ignore \(path.logDescription)"
             )
             return
         }
-        Self.networkRecoveryLog.notice(
-            "path change from \(previousPath.logDescription, privacy: .public) to \(path.logDescription, privacy: .public)"
+        DiagnosticLogger.shared.log(
+            level: .notice,
+            category: "network-recovery",
+            "path change from \(previousPath.logDescription) to \(path.logDescription)"
         )
 
         networkPathRecovery.changeGeneration = UUID()
@@ -123,12 +124,14 @@ extension RootViewModel {
               let restoration = networkPathReconnectRestoration()
         else {
             if networkPathRecovery.changePending {
-                Self.networkRecoveryLog.notice(
+                DiagnosticLogger.shared.log(
+                    level: .debug,
+                    category: "network-recovery",
                     """
                     schedule skip bg=\(self.isSceneBackgrounded) \
                     inactive=\(self.isSceneInactive) \
                     connected=\(self.activeConnection != nil) \
-                    herdr=\(self.herdrStateSummary, privacy: .public)
+                    herdr=\(self.herdrStateSummary)
                     """
                 )
             }
@@ -160,14 +163,18 @@ extension RootViewModel {
                   self.networkPathRecovery.transparentTask == nil
             else { return }
 
-            Self.networkRecoveryLog.notice(
-                "probe start timeout=400ms restoration=\(String(describing: restoration), privacy: .public)"
+            DiagnosticLogger.shared.log(
+                level: .debug,
+                category: "network-recovery",
+                "probe start timeout=400ms restoration=\(String(describing: restoration))"
             )
             let probeStarted = ContinuousClock.now
             let probeSucceeded = await self.probeExistingNetworkSession()
             let probeMs = (ContinuousClock.now - probeStarted) / .milliseconds(1)
-            Self.networkRecoveryLog.notice(
-                "probe \(probeSucceeded ? "alive" : "dead", privacy: .public) durationMs=\(probeMs)"
+            DiagnosticLogger.shared.log(
+                level: .debug,
+                category: "network-recovery",
+                "probe \(probeSucceeded ? "alive" : "dead") durationMs=\(probeMs)"
             )
             guard !Task.isCancelled,
                   self.networkPathRecovery.debounceTaskID == debounceTaskID,
@@ -185,10 +192,18 @@ extension RootViewModel {
             self.networkPathRecovery.attemptedGeneration = generation
             self.networkPathRecovery.changePending = false
             guard !probeSucceeded else {
-                Self.networkRecoveryLog.notice("skip reconnect, session still alive")
+                DiagnosticLogger.shared.log(
+                    level: .notice,
+                    category: "network-recovery",
+                    "skip reconnect, session still alive"
+                )
                 return
             }
-            Self.networkRecoveryLog.notice("reconnect launch after dead probe")
+            DiagnosticLogger.shared.log(
+                level: .notice,
+                category: "network-recovery",
+                "reconnect launch after dead probe"
+            )
             self.launchTransparentControlPlaneReconnect(
                 restoring: restoration,
                 trigger: .networkPathChange

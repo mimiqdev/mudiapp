@@ -123,6 +123,10 @@ extension RootViewModel {
     func loadPreferences() async {
         do {
             preferences = try await preferencesStore.load()
+            DiagnosticLogger.shared.configure(
+                isDebugLoggingEnabled: preferences.isDebugLoggingEnabled,
+                isSaveLogsEnabled: preferences.isSaveLogsEnabled
+            )
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -144,6 +148,24 @@ extension RootViewModel {
 
     func updateFontFamily(_ familyName: String) {
         preferences.fontFamily = familyName
+        persistPreferences()
+    }
+
+    func updateDebugLoggingEnabled(_ isEnabled: Bool) {
+        preferences.isDebugLoggingEnabled = isEnabled
+        DiagnosticLogger.shared.configure(
+            isDebugLoggingEnabled: isEnabled,
+            isSaveLogsEnabled: preferences.isSaveLogsEnabled
+        )
+        persistPreferences()
+    }
+
+    func updateSaveLogsEnabled(_ isEnabled: Bool) {
+        preferences.isSaveLogsEnabled = isEnabled
+        DiagnosticLogger.shared.configure(
+            isDebugLoggingEnabled: preferences.isDebugLoggingEnabled,
+            isSaveLogsEnabled: isEnabled
+        )
         persistPreferences()
     }
 
@@ -870,7 +892,11 @@ extension RootViewModel {
         networkPathRecovery.transparentTask = nil
         networkPathRecovery.transparentTaskID = nil
         isTransparentlyReconnecting = false
-        Self.networkRecoveryLog.notice("reconnect cancelled by navigation overlay=false")
+        DiagnosticLogger.shared.log(
+            level: .notice,
+            category: "network-recovery",
+            "reconnect cancelled by navigation overlay=false"
+        )
         pendingTerminalCloseIdentity = nil
         stopNetworkPathMonitoring()
         workflowTask?.cancel()
@@ -962,12 +988,40 @@ extension RootViewModel {
         let previousTeardown = teardownTask
         let generation = connectionGeneration
         let coordinator = self.coordinator
-        let task = Task { [weak self, previousTeardown, workflow, coordinator, teardownID] in
+        let teardownStarted = ContinuousClock.now
+        DiagnosticLogger.shared.log(
+            level: .debug,
+            category: "network-recovery",
+            "teardown start"
+        )
+        let task = Task { [weak self, previousTeardown, workflow, coordinator, teardownID, teardownStarted] in
             // Navigation must not wait on a reconnect whose client ignores
             // task cancellation; retire the coordinator attempt first.
             await coordinator.cancelPendingConnection()
             await previousTeardown?.value
-            _ = try? await runWithTimeout(
+            await self?.executeTeardownDisconnect(
+                workflow: workflow,
+                started: teardownStarted
+            )
+            guard let self, self.teardownID == teardownID else { return }
+            if self.connectionGeneration == generation {
+                self.connectionState = await coordinator.connectionState()
+            }
+            self.isTearingDown = false
+            self.teardownTask = nil
+            self.teardownID = nil
+        }
+        teardownTask = task
+    }
+
+    private func executeTeardownDisconnect(
+        workflow: (any HerdrWorkflowCoordinating)?,
+        started: ContinuousClock.Instant
+    ) async {
+        var teardownTimedOut = false
+        let coordinator = self.coordinator
+        do {
+            try await runWithTimeout(
                 Self.teardownCloseTimeout,
                 operation: {
                     if let workflow {
@@ -979,15 +1033,23 @@ extension RootViewModel {
                     await coordinator.forceDisconnectedAfterCloseTimeout()
                 }
             )
-            guard let self, self.teardownID == teardownID else { return }
-            if self.connectionGeneration == generation {
-                self.connectionState = await coordinator.connectionState()
-            }
-            self.isTearingDown = false
-            self.teardownTask = nil
-            self.teardownID = nil
+        } catch {
+            teardownTimedOut = true
         }
-        teardownTask = task
+        let teardownMs = (ContinuousClock.now - started) / .milliseconds(1)
+        if teardownTimedOut {
+            DiagnosticLogger.shared.log(
+                level: .notice,
+                category: "network-recovery",
+                "teardown timeout durationMs=\(teardownMs), abandoning stale coordinator"
+            )
+        } else {
+            DiagnosticLogger.shared.log(
+                level: .debug,
+                category: "network-recovery",
+                "teardown end durationMs=\(teardownMs)"
+            )
+        }
     }
 
     func makeWorkflow(

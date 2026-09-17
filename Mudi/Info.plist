@@ -20,5 +20,9 @@
 		<string>SymbolsNerdFontMono-Regular.ttf</string>
 		<string>JetBrainsMonoNerdFontMono-Regular.ttf</string>
 	</array>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 </dict>
 </plist>

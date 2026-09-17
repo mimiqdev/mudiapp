@@ -140,7 +140,11 @@ extension RootViewModel {
     ) async {  // pi-lens-ignore: function_body_length
         defer {
             isTransparentlyReconnecting = false
-            Self.networkRecoveryLog.notice("reconnect overlay=false")
+            DiagnosticLogger.shared.log(
+                level: .debug,
+                category: "network-recovery",
+                "reconnect overlay=false"
+            )
             if networkPathRecovery.transparentTaskID == operationID {
                 networkPathRecovery.transparentTask = nil
                 networkPathRecovery.transparentTaskID = nil
@@ -173,8 +177,10 @@ extension RootViewModel {
         let pickerOrigin = panePicker?.origin ?? .terminal
         let preservesMoshSession = activeConnection.transport == .mosh
         isTransparentlyReconnecting = true
-        Self.networkRecoveryLog.notice(
-            "reconnect start trigger=\(String(describing: trigger), privacy: .public) mosh=\(preservesMoshSession) overlay=true"
+        DiagnosticLogger.shared.log(
+            level: .notice,
+            category: "network-recovery",
+            "reconnect start trigger=\(String(describing: trigger)) mosh=\(preservesMoshSession) overlay=true"
         )
         let reconnectStarted = ContinuousClock.now
 
@@ -222,7 +228,11 @@ extension RootViewModel {
         }
         guard !isSuperseded() else { return }
 
-        Self.networkRecoveryLog.notice("connect start")
+        DiagnosticLogger.shared.log(
+            level: .debug,
+            category: "network-recovery",
+            "connect start"
+        )
         let context = ReconnectAttemptContext(
             host: host,
             restoration: restoration,
@@ -237,13 +247,17 @@ extension RootViewModel {
         do {
             try await completeTransparentControlPlaneReconnect(using: context)
             let reconnectMs = (ContinuousClock.now - reconnectStarted) / .milliseconds(1)
-            Self.networkRecoveryLog.notice(
+            DiagnosticLogger.shared.log(
+                level: .notice,
+                category: "network-recovery",
                 "reconnect success durationMs=\(reconnectMs)"
             )
         } catch {
             let reconnectMs = (ContinuousClock.now - reconnectStarted) / .milliseconds(1)
-            Self.networkRecoveryLog.error(
-                "reconnect failed durationMs=\(reconnectMs) error=\(error, privacy: .public)"
+            DiagnosticLogger.shared.log(
+                level: .error,
+                category: "network-recovery",
+                "reconnect failed durationMs=\(reconnectMs) error=\(error.localizedDescription)"
             )
             guard !isInterrupted(for: trigger),
                   !Task.isCancelled,
@@ -257,7 +271,11 @@ extension RootViewModel {
     private func retireStaleControlPlaneBeforeReconnect(
         preservesMoshSession: Bool
     ) async {
-        Self.networkRecoveryLog.notice("close start mosh=\(preservesMoshSession)")
+        DiagnosticLogger.shared.log(
+            level: .debug,
+            category: "network-recovery",
+            "close start mosh=\(preservesMoshSession)"
+        )
         let closeStarted = ContinuousClock.now
         var closeTimedOut = false
         do {
@@ -277,12 +295,18 @@ extension RootViewModel {
         }
         let closeMs = (ContinuousClock.now - closeStarted) / .milliseconds(1)
         if closeTimedOut {
-            Self.networkRecoveryLog.notice(
+            DiagnosticLogger.shared.log(
+                level: .notice,
+                category: "network-recovery",
                 "close timeout durationMs=\(closeMs), abandoning stale channel"
             )
             await coordinator.forceDisconnectedAfterCloseTimeout()
         } else {
-            Self.networkRecoveryLog.notice("close end durationMs=\(closeMs)")
+            DiagnosticLogger.shared.log(
+                level: .debug,
+                category: "network-recovery",
+                "close end durationMs=\(closeMs)"
+            )
         }
     }
 
