@@ -179,14 +179,15 @@ final class Phase9NetworkRecoveryTests: XCTestCase {
         XCTAssertNil(application.model.errorMessage)
     }
 
-    func testMoshPathReconnectPreservesMoshSession() async throws {
+    /// A path change while Mosh owns the terminal must not start an SSH
+    /// control-plane rebuild, must not show the reconnect overlay, and must
+    /// leave the mounted Mosh session untouched.
+    func testMoshPathChangeDoesNotRebuildSSHOrDisturbSession() async throws {
         let fixture = try Phase3HerdrFixtures.single()
-        let reconnectGate = Phase2ConnectionGate()
         let pathMonitor = Phase9NetworkPathMonitor()
         let moshTransport = Phase9MoshSuccessTransport()
         let client = Phase2SSHClient(
             presentedFingerprint: "SHA256:phase4-test-key",
-            reconnectGate: reconnectGate,
             probeSucceeds: true
         )
         let application = makePhase4NavigationApplication(
@@ -224,16 +225,26 @@ final class Phase9NetworkRecoveryTests: XCTestCase {
             application.model.networkPathRecovery.lastPath == cellular
         }
         pathMonitor.emit(wifi)
-        try await waitForConnectionAttempts(client, expected: 2)
+        try await waitUntil {
+            application.model.networkPathRecovery.lastPath == wifi
+        }
+        try await Task.sleep(for: .milliseconds(400))
 
+        let attempts = await client.connectionAttempts()
+        XCTAssertEqual(
+            attempts,
+            1,
+            "A Mosh roam must not start an SSH control-plane rebuild"
+        )
         XCTAssertFalse(
             application.model.isTransparentlyReconnecting,
-            "Mosh control-plane recovery must not show the SSH-only overlay"
+            "Mosh roam must not show the SSH-only overlay"
         )
+        XCTAssertNil(application.model.networkPathRecovery.transparentTask)
         XCTAssertIdentical(
             application.model.activeConnection?.session,
             originalMoshSession,
-            "Mosh must remain the mounted terminal during SSH recovery"
+            "Mosh must remain the mounted terminal across the roam"
         )
         let moshConnectCount = await moshTransport.connectCount()
         XCTAssertEqual(moshConnectCount, 1)
@@ -241,18 +252,7 @@ final class Phase9NetworkRecoveryTests: XCTestCase {
         XCTAssertEqual(
             moshDisconnectCount,
             0,
-            "Control-plane recovery must not stop Mosh"
-        )
-
-        await reconnectGate.release()
-        try await waitUntil {
-            application.model.networkPathRecovery.transparentTask == nil
-        }
-        XCTAssertFalse(application.model.isTransparentlyReconnecting)
-        XCTAssertIdentical(
-            application.model.activeConnection?.session,
-            originalMoshSession,
-            "SSH control recovery must retain the Mosh terminal session"
+            "A path change must not stop Mosh"
         )
         XCTAssertEqual(application.model.activeTransport, .mosh)
         XCTAssertEqual(application.model.herdrState, .ordinaryTerminal)
@@ -262,6 +262,8 @@ final class Phase9NetworkRecoveryTests: XCTestCase {
         try await waitUntil { !application.model.isTearingDown }
     }
 
+    /// A failed SSH control rebuild on Picker open must not unmount the
+    /// Mosh terminal — the UDP data plane keeps the session alive.
     func testMoshControlPlaneFailureKeepsTerminalMounted() async throws {
         let fixture = try Phase3HerdrFixtures.single()
         let pathMonitor = Phase9NetworkPathMonitor()
@@ -292,6 +294,12 @@ final class Phase9NetworkRecoveryTests: XCTestCase {
             application.model.networkPathRecovery.lastPath == cellularSnapshot()
         }
         pathMonitor.emit(wifiSnapshot())
+        try await waitUntil {
+            application.model.networkPathRecovery.controlPlaneNeedsRebuild
+        }
+
+        // The roam does not rebuild; opening the Picker does, and it fails.
+        application.model.openPanePickerFromTerminal()
         try await waitForConnectionAttempts(client, expected: 2)
         try await waitUntil {
             application.model.networkPathRecovery.transparentTask == nil
@@ -313,16 +321,17 @@ final class Phase9NetworkRecoveryTests: XCTestCase {
         try await waitUntil { !application.model.isTearingDown }
     }
 
-    func testAttachedMoshPathReconnectPreservesMoshTerminal() async throws {
+    /// An attached Mosh pane roams over UDP: a path change must not start
+    /// an SSH rebuild, must not show the overlay, and must keep the
+    /// attached session identical.
+    func testAttachedMoshPathChangePreservesMoshTerminal() async throws {
         let fixture = try Phase3HerdrFixtures.single()
         let pane = try XCTUnwrap(phase4Panes(in: fixture).first)
-        let reconnectGate = Phase2ConnectionGate()
         let pathMonitor = Phase9NetworkPathMonitor()
         let moshTransport = Phase9MoshSuccessTransport()
         let client = Phase2SSHClient(
             presentedFingerprint: "SHA256:phase4-test-key",
             outcomes: [false, true],
-            reconnectGate: reconnectGate,
             probeSucceeds: false
         )
         let application = makePhase4NavigationApplication(
@@ -352,33 +361,34 @@ final class Phase9NetworkRecoveryTests: XCTestCase {
             application.model.networkPathRecovery.lastPath == cellularSnapshot()
         }
         pathMonitor.emit(wifiSnapshot())
+        try await waitUntil {
+            application.model.networkPathRecovery.lastPath == wifiSnapshot()
+        }
+        try await Task.sleep(for: .milliseconds(400))
 
-        await reconnectGate.waitUntilStarted()
+        let attempts = await client.connectionAttempts()
+        XCTAssertEqual(
+            attempts,
+            1,
+            "An attached Mosh roam must not start an SSH rebuild"
+        )
         XCTAssertFalse(
             application.model.isTransparentlyReconnecting,
             "An attached Mosh pane roams over UDP and must not display reconnect overlay"
         )
-        XCTAssertIdentical(
-            application.model.activeConnection?.session,
-            originalAttachedSession,
-            "The attached terminal stays mounted during SSH recovery"
-        )
-
-        await reconnectGate.release()
-        try await waitForConnectionAttempts(client, expected: 2)
-
+        XCTAssertNil(application.model.networkPathRecovery.transparentTask)
         XCTAssertNotNil(application.model.activeConnection)
         XCTAssertIdentical(
             application.model.activeConnection?.session,
             originalAttachedSession,
-            "Mosh session identity must be preserved across SSH rebuild failure"
+            "Mosh session identity must be preserved across the roam"
         )
         XCTAssertNil(
             application.model.errorMessage,
-            "A failed SSH control rebuild while Mosh is mounted must not surface an error"
+            "A Mosh roam must not surface an error"
         )
         guard case let .attached(_, currentPane) = application.model.herdrState else {
-            return XCTFail("Attached pane state must survive SSH control failure")
+            return XCTFail("Attached pane state must survive the roam")
         }
         XCTAssertEqual(currentPane.id, pane.id)
     }

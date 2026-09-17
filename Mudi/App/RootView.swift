@@ -250,9 +250,14 @@ extension RootViewModel {
         connectionState = .connecting
         let coordinator = self.coordinator
         let pendingTeardown = teardownTask
-        connectionTask = Task { [weak self, coordinator, pendingTeardown] in
+        let pendingRetire = networkPathRecovery.retireTask
+        connectionTask = Task { [weak self, coordinator, pendingTeardown, pendingRetire] in
             do {
                 await pendingTeardown?.value
+                // A roam retire cancelled by beginConnection may still be
+                // inside its bounded bootstrap close; wait so it cannot
+                // abort this fresh connect.
+                await pendingRetire?.value
                 guard self?.isCurrentConnection(generation) == true,
                       !Task.isCancelled
                 else { return }
@@ -348,9 +353,14 @@ extension RootViewModel {
         connectionState = .connecting
         let coordinator = self.coordinator
         let pendingTeardown = teardownTask
-        connectionTask = Task { [weak self, coordinator, pendingTeardown] in
+        let pendingRetire = networkPathRecovery.retireTask
+        connectionTask = Task { [weak self, coordinator, pendingTeardown, pendingRetire] in
             do {
                 await pendingTeardown?.value
+                // Like connect(): a roam retire cancelled by beginConnection
+                // may still be inside its bounded close; wait so it cannot
+                // abort this fresh reconnect.
+                await pendingRetire?.value
                 guard self?.isCurrentConnection(generation) == true,
                       !Task.isCancelled
                 else { return }
@@ -518,37 +528,50 @@ extension RootViewModel {
     }
 
     /// Opens the shared picker without touching the already authenticated SSH
-    /// bootstrap or the selected Mosh terminal session.
+    /// bootstrap or the selected Mosh terminal session. When a path change
+    /// retired the SSH control plane while Mosh kept the terminal alive,
+    /// opening the Picker is the moment the bootstrap is rebuilt; the
+    /// terminal stays on the existing Mosh PTY throughout.
     func openPanePickerFromTerminal() {
         guard let workflow,
               let activeConnection,
               let pickerCoordinator = self.panePickerCoordinator,
               herdrState == .ordinaryTerminal || isAttachedState
         else { return }
-        let generation = connectionGeneration
         let host = activeConnection.host
-        let terminalContext: PanePickerTerminalContext
-        if case let .attached(session, pane) = herdrState {
-            terminalContext = .attached(
-                PanePickerAttachedTerminal(
-                    host: host,
-                    session: session,
-                    pane: pane
+        Task { [weak self, workflow, pickerCoordinator] in
+            guard let self else { return }
+            // A roam rebuild rolls connectionGeneration and swaps the
+            // workflow/picker coordinator in place, so every post-rebuild
+            // read must use the fresh model state, not the captured values.
+            guard await self.rebuildSSHControlPlaneForPickerOpenIfNeeded(),
+                  !Task.isCancelled
+            else { return }
+            guard let currentWorkflow = self.workflow,
+                  let pickerCoordinator = self.panePickerCoordinator,
+                  self.activeConnection?.host.id == host.id
+            else { return }
+            let generation = self.connectionGeneration
+            let terminalContext: PanePickerTerminalContext
+            if case let .attached(session, pane) = self.herdrState {
+                terminalContext = .attached(
+                    PanePickerAttachedTerminal(
+                        host: host,
+                        session: session,
+                        pane: pane
+                    )
                 )
-            )
-        } else {
-            terminalContext = .ordinary(host: host)
-        }
-        Task { [weak self, workflow, pickerCoordinator, terminalContext] in
+            } else {
+                terminalContext = .ordinary(host: host)
+            }
             await pickerCoordinator.synchronizeTerminalContext(terminalContext)
             let state = await pickerCoordinator.openPicker(from: .terminal)
-            guard let self,
-                  self.connectionGeneration == generation,
-                  self.isCurrentWorkflow(workflow),
+            guard self.connectionGeneration == generation,
+                  self.isCurrentWorkflow(currentWorkflow),
                   self.activeConnection?.host.id == host.id,
                   !Task.isCancelled
             else { return }
-            await self.applyPanePickerState(state, workflow: workflow)
+            await self.applyPanePickerState(state, workflow: currentWorkflow)
         }
     }
 
@@ -875,6 +898,10 @@ extension RootViewModel {
         invalidatePanePickerPresentation()
         invalidateConnectionAttempt()
         panePickerCoordinator = nil
+        networkPathRecovery.controlPlaneRebuild = .idle
+        // A still-running roam retire must not close the fresh bootstrap:
+        // cancel it and let the connect task await its completion.
+        networkPathRecovery.retireTask?.cancel()
         if let lastPaneHostID, lastPaneHostID != hostID {
             lastPaneID = nil
             self.lastPaneHostID = nil
@@ -896,9 +923,14 @@ extension RootViewModel {
         connectionGeneration = UUID()
         connectionTask?.cancel()
         connectionTask = nil
+        // Cancel the in-flight inner reconnect and the owned deferred
+        // rebuild. Both self-finalize: the rebuild task restores .needed on
+        // cancellation so Leave (which runs inside the teardown) can still
+        // join it or re-run the bootstrap reconnect + TERM.
         networkPathRecovery.transparentTask?.cancel()
         networkPathRecovery.transparentTask = nil
         networkPathRecovery.transparentTaskID = nil
+        networkPathRecovery.rebuildTask?.cancel()
         isTransparentlyReconnecting = false
         DiagnosticLogger.shared.log(
             level: .notice,
@@ -1012,6 +1044,10 @@ extension RootViewModel {
             // task cancellation; retire the coordinator attempt first.
             await coordinator.cancelPendingConnection()
             await previousTeardown?.value
+            // Leave needs a live SSH bootstrap to TERM the recorded
+            // mosh-server pid. When a path change retired it while Mosh
+            // stayed mounted, rebuild just enough control plane first.
+            await self?.rebuildSSHControlPlaneForLeaveIfNeeded()
             await self?.executeTeardownDisconnect(
                 workflow: workflow,
                 started: teardownStarted
