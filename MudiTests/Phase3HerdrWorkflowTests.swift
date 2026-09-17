@@ -48,6 +48,7 @@ final class Phase3HerdrWorkflowTests: XCTestCase {
         XCTAssertEqual(session.workspaces.first?.name, "mudiapp")
         XCTAssertEqual(agentPane.agent?.name, "pi")
         XCTAssertEqual(agentPane.agent?.state, .idle)
+        XCTAssertEqual(agentPane.terminalID, "term_65a1d4135cfa21")
         XCTAssertNil(shellPane.agent)
 
         let browserState = try await application.discover(on: phase3Host())

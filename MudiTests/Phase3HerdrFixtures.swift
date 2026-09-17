@@ -107,7 +107,8 @@ struct Phase3HerdrSessionDetails: Sendable {
                                             agent?.agentStatus ?? pane.agentStatus
                                         )
                                     )
-                                }
+                                },
+                                terminalID: pane.terminalID
                             )
                         }
                 )
@@ -242,6 +243,7 @@ private struct Phase3PaneListResponse: Decodable, Sendable {
         let workspaceID: String
         let agent: String?
         let agentStatus: String
+        let terminalID: String?
         let title: String
 
         enum CodingKeys: String, CodingKey {
@@ -250,6 +252,7 @@ private struct Phase3PaneListResponse: Decodable, Sendable {
             case workspaceID = "workspace_id"
             case agent
             case agentStatus = "agent_status"
+            case terminalID = "terminal_id"
             case title = "terminal_title_stripped"
         }
 
@@ -260,6 +263,7 @@ private struct Phase3PaneListResponse: Decodable, Sendable {
             workspaceID = try container.decode(String.self, forKey: .workspaceID)
             agent = try container.decodeIfPresent(String.self, forKey: .agent)
             agentStatus = try container.decode(String.self, forKey: .agentStatus)
+            terminalID = try container.decodeIfPresent(String.self, forKey: .terminalID)
             title = try container.decodeIfPresent(String.self, forKey: .title) ?? paneID
         }
     }

@@ -1,11 +1,13 @@
+// swiftlint:disable file_length
 import HerdrKit
+import os
 import SwiftUI
 
 @MainActor
 final class RootViewModel: ObservableObject {
     @Published private(set) var hosts: [Host] = []
     @Published internal(set) var activeConnection: ActiveSSHConnection?
-    @Published private(set) var herdrState: HerdrBrowserState?
+    @Published internal(set) var herdrState: HerdrBrowserState?
     @Published var panePicker: PanePickerState?
     @Published var isPanePickerPresented = false
     @Published var isCreatingWorkspace = false
@@ -53,6 +55,7 @@ final class RootViewModel: ObservableObject {
     var baseSession: SSHShellSession?
     var baseTerminalSession: SSHShellSession?
     var isSceneInactive = false
+    var isSceneBackgrounded = false
     var sceneLifecycleGeneration = UUID()
     var terminalSessionCloseSuppressed = false
     /// Identity of a terminal session whose close surfaced during a scene
@@ -64,17 +67,17 @@ final class RootViewModel: ObservableObject {
     /// retakeovers that replace the terminal session and recreate the view,
     /// so focus can be restored on the new view.
     var terminalKeyboardFocusActive = false
-
+    var networkPathRecovery: NetworkPathRecoveryState
     func terminalInputFocusDidChange(_ isFocused: Bool) {
         terminalKeyboardFocusActive = isFocused
     }
-
     init(
         coordinator: ApplicationCoordinator = ApplicationCoordinator(),
         workflowFactory: any HerdrWorkflowFactory = SSHHerdrWorkflowFactory(),
         preferencesStore: any PreferencesStore = UserDefaultsPreferencesStore(),
         localNetworkPermissionGate: (any LocalNetworkPermissionGate)? = nil,
         panePickerScheduler: any PanePickerRefreshScheduling = LivePanePickerRefreshScheduler(),
+        networkPathMonitor: any NetworkPathMonitoring = SystemNetworkPathMonitor(),
         rememberedPaneID: Pane.ID? = nil,
         rememberedPaneHostID: Host.ID? = nil
     ) {
@@ -83,6 +86,9 @@ final class RootViewModel: ObservableObject {
         self.preferencesStore = preferencesStore
         self.localNetworkPermissionGate = localNetworkPermissionGate
         self.panePickerScheduler = panePickerScheduler
+        self.networkPathRecovery = NetworkPathRecoveryState(
+            monitor: networkPathMonitor
+        )
         self.lastPaneID = rememberedPaneID
         self.lastPaneHostID = rememberedPaneHostID
         stateTask = Task { [weak self, coordinator] in
@@ -97,11 +103,13 @@ final class RootViewModel: ObservableObject {
     deinit {
         stateTask?.cancel()
         connectionTask?.cancel()
+        networkPathRecovery.transparentTask?.cancel()
+        networkPathRecovery.debounceTask?.cancel()
+        networkPathRecovery.monitor.cancel()
         workflowTask?.cancel()
         workspaceCreationTask?.cancel()
         pendingHostKeyDecision?.resume(returning: .reject)
     }
-
 }
 
 extension RootViewModel {
@@ -112,15 +120,17 @@ extension RootViewModel {
             errorMessage = error.localizedDescription
         }
     }
-
     func loadPreferences() async {
         do {
             preferences = try await preferencesStore.load()
+            DiagnosticLogger.shared.configure(
+                isDebugLoggingEnabled: preferences.isDebugLoggingEnabled,
+                isSaveLogsEnabled: preferences.isSaveLogsEnabled
+            )
         } catch {
             errorMessage = error.localizedDescription
         }
     }
-
     func updateAppearance(_ appearance: AppearancePreference) {
         preferences.appearance = appearance
         persistPreferences()
@@ -138,6 +148,24 @@ extension RootViewModel {
 
     func updateFontFamily(_ familyName: String) {
         preferences.fontFamily = familyName
+        persistPreferences()
+    }
+
+    func updateDebugLoggingEnabled(_ isEnabled: Bool) {
+        preferences.isDebugLoggingEnabled = isEnabled
+        DiagnosticLogger.shared.configure(
+            isDebugLoggingEnabled: isEnabled,
+            isSaveLogsEnabled: preferences.isSaveLogsEnabled
+        )
+        persistPreferences()
+    }
+
+    func updateSaveLogsEnabled(_ isEnabled: Bool) {
+        preferences.isSaveLogsEnabled = isEnabled
+        DiagnosticLogger.shared.configure(
+            isDebugLoggingEnabled: preferences.isDebugLoggingEnabled,
+            isSaveLogsEnabled: isEnabled
+        )
         persistPreferences()
     }
 
@@ -222,9 +250,14 @@ extension RootViewModel {
         connectionState = .connecting
         let coordinator = self.coordinator
         let pendingTeardown = teardownTask
-        connectionTask = Task { [weak self, coordinator, pendingTeardown] in
+        let pendingRetire = networkPathRecovery.retireTask
+        connectionTask = Task { [weak self, coordinator, pendingTeardown, pendingRetire] in
             do {
                 await pendingTeardown?.value
+                // A roam retire cancelled by beginConnection may still be
+                // inside its bounded bootstrap close; wait so it cannot
+                // abort this fresh connect.
+                await pendingRetire?.value
                 guard self?.isCurrentConnection(generation) == true,
                       !Task.isCancelled
                 else { return }
@@ -258,7 +291,8 @@ extension RootViewModel {
                 let selectedTransport = await coordinator.activeTransport() ?? .ssh
                 let workflow = await self.makeWorkflow(
                     for: bootstrapSession,
-                    hostID: host.id
+                    hostID: host.id,
+                    host: host
                 )
                 self.showLoadingPanePicker(for: host)
                 let pickerCoordinator = self.makePanePickerCoordinator(
@@ -319,9 +353,14 @@ extension RootViewModel {
         connectionState = .connecting
         let coordinator = self.coordinator
         let pendingTeardown = teardownTask
-        connectionTask = Task { [weak self, coordinator, pendingTeardown] in
+        let pendingRetire = networkPathRecovery.retireTask
+        connectionTask = Task { [weak self, coordinator, pendingTeardown, pendingRetire] in
             do {
                 await pendingTeardown?.value
+                // Like connect(): a roam retire cancelled by beginConnection
+                // may still be inside its bounded close; wait so it cannot
+                // abort this fresh reconnect.
+                await pendingRetire?.value
                 guard self?.isCurrentConnection(generation) == true,
                       !Task.isCancelled
                 else { return }
@@ -355,7 +394,8 @@ extension RootViewModel {
                 let selectedTransport = await coordinator.activeTransport() ?? .ssh
                 let workflow = await self.makeWorkflow(
                     for: bootstrapSession,
-                    hostID: host.id
+                    hostID: host.id,
+                    host: host
                 )
                 self.showLoadingPanePicker(for: host)
                 let pickerCoordinator = self.makePanePickerCoordinator(
@@ -488,37 +528,50 @@ extension RootViewModel {
     }
 
     /// Opens the shared picker without touching the already authenticated SSH
-    /// bootstrap or the selected Mosh terminal session.
+    /// bootstrap or the selected Mosh terminal session. When a path change
+    /// retired the SSH control plane while Mosh kept the terminal alive,
+    /// opening the Picker is the moment the bootstrap is rebuilt; the
+    /// terminal stays on the existing Mosh PTY throughout.
     func openPanePickerFromTerminal() {
         guard let workflow,
               let activeConnection,
               let pickerCoordinator = self.panePickerCoordinator,
               herdrState == .ordinaryTerminal || isAttachedState
         else { return }
-        let generation = connectionGeneration
         let host = activeConnection.host
-        let terminalContext: PanePickerTerminalContext
-        if case let .attached(session, pane) = herdrState {
-            terminalContext = .attached(
-                PanePickerAttachedTerminal(
-                    host: host,
-                    session: session,
-                    pane: pane
+        Task { [weak self, workflow, pickerCoordinator] in
+            guard let self else { return }
+            // A roam rebuild rolls connectionGeneration and swaps the
+            // workflow/picker coordinator in place, so every post-rebuild
+            // read must use the fresh model state, not the captured values.
+            guard await self.rebuildSSHControlPlaneForPickerOpenIfNeeded(),
+                  !Task.isCancelled
+            else { return }
+            guard let currentWorkflow = self.workflow,
+                  let pickerCoordinator = self.panePickerCoordinator,
+                  self.activeConnection?.host.id == host.id
+            else { return }
+            let generation = self.connectionGeneration
+            let terminalContext: PanePickerTerminalContext
+            if case let .attached(session, pane) = self.herdrState {
+                terminalContext = .attached(
+                    PanePickerAttachedTerminal(
+                        host: host,
+                        session: session,
+                        pane: pane
+                    )
                 )
-            )
-        } else {
-            terminalContext = .ordinary(host: host)
-        }
-        Task { [weak self, workflow, pickerCoordinator, terminalContext] in
+            } else {
+                terminalContext = .ordinary(host: host)
+            }
             await pickerCoordinator.synchronizeTerminalContext(terminalContext)
             let state = await pickerCoordinator.openPicker(from: .terminal)
-            guard let self,
-                  self.connectionGeneration == generation,
-                  self.isCurrentWorkflow(workflow),
+            guard self.connectionGeneration == generation,
+                  self.isCurrentWorkflow(currentWorkflow),
                   self.activeConnection?.host.id == host.id,
                   !Task.isCancelled
             else { return }
-            await self.applyPanePickerState(state, workflow: workflow)
+            await self.applyPanePickerState(state, workflow: currentWorkflow)
         }
     }
 
@@ -741,12 +794,19 @@ extension RootViewModel {
         return false
     }
 
+    /// TerminalScreen is ALWAYS Mosh when the host connected with Mosh,
+    /// whether in an ordinary terminal or an attached Herdr pane.
+    var isMoshDataPlaneMounted: Bool {
+        activeConnection?.transport == .mosh
+    }
+
     func applyPanePickerState(
         _ state: PanePickerNavigationState,
         workflow: any HerdrWorkflowCoordinating,
         fallbackState: HerdrBrowserState? = nil
     ) async {
         guard isCurrentWorkflow(workflow), !Task.isCancelled else { return }
+        startNetworkPathMonitoring()
 
         switch state {
         case let .panePicker(picker):
@@ -838,6 +898,10 @@ extension RootViewModel {
         invalidatePanePickerPresentation()
         invalidateConnectionAttempt()
         panePickerCoordinator = nil
+        networkPathRecovery.controlPlaneRebuild = .idle
+        // A still-running roam retire must not close the fresh bootstrap:
+        // cancel it and let the connect/teardown path join its completion.
+        networkPathRecovery.retireTask?.cancel()
         if let lastPaneHostID, lastPaneHostID != hostID {
             lastPaneID = nil
             self.lastPaneHostID = nil
@@ -859,6 +923,22 @@ extension RootViewModel {
         connectionGeneration = UUID()
         connectionTask?.cancel()
         connectionTask = nil
+        // Cancel the in-flight inner reconnect and the owned deferred
+        // rebuild. Both self-finalize: the rebuild task restores .needed on
+        // cancellation so Leave (which runs inside the teardown) can still
+        // join it or re-run the bootstrap reconnect + TERM.
+        networkPathRecovery.transparentTask?.cancel()
+        networkPathRecovery.transparentTask = nil
+        networkPathRecovery.transparentTaskID = nil
+        networkPathRecovery.rebuildTask?.cancel()
+        isTransparentlyReconnecting = false
+        DiagnosticLogger.shared.log(
+            level: .notice,
+            category: "network-recovery",
+            "reconnect cancelled by navigation overlay=false"
+        )
+        pendingTerminalCloseIdentity = nil
+        stopNetworkPathMonitoring()
         workflowTask?.cancel()
         workflowTask = nil
         answerHostKeyPrompt(.reject)
@@ -889,9 +969,10 @@ extension RootViewModel {
         let rememberedPane = await workflow.hasRememberedPane()
         let multipleSessions = await workflow.hasMultipleSessions()
         let terminalSession: SSHShellSession?
-        if case .attached = state {
+        switch state {
+        case .attached, .ordinaryTerminal:
             terminalSession = await workflow.terminalSession()
-        } else {
+        case .empty, .sessions, .panes:
             terminalSession = nil
         }
 
@@ -912,6 +993,10 @@ extension RootViewModel {
             )
             herdrState = state
         case .empty, .sessions, .panes, .ordinaryTerminal:
+            if case .ordinaryTerminal = state,
+               let terminalSession {
+                baseTerminalSession = terminalSession
+            }
             if let activeConnection,
                let baseSession {
                 self.activeConnection = ActiveSSHConnection(
@@ -936,6 +1021,9 @@ extension RootViewModel {
         workflowTask = nil
     }
 
+    /// Maximum budget to wait for channel teardown before abandoning the socket.
+    static let teardownCloseTimeout = Duration.seconds(1)
+
     private func scheduleTeardown(
         workflow: (any HerdrWorkflowCoordinating)?
     ) {
@@ -945,12 +1033,25 @@ extension RootViewModel {
         let previousTeardown = teardownTask
         let generation = connectionGeneration
         let coordinator = self.coordinator
-        let task = Task { [weak self, previousTeardown, workflow, coordinator, teardownID] in
+        let teardownStarted = ContinuousClock.now
+        DiagnosticLogger.shared.log(
+            level: .debug,
+            category: "network-recovery",
+            "teardown start"
+        )
+        let task = Task { [weak self, previousTeardown, workflow, coordinator, teardownID, teardownStarted] in
+            // Navigation must not wait on a reconnect whose client ignores
+            // task cancellation; retire the coordinator attempt first.
+            await coordinator.cancelPendingConnection()
             await previousTeardown?.value
-            if let workflow {
-                _ = await workflow.returnToBrowser()
-            }
-            await coordinator.disconnectAndWait()
+            // Leave needs a live SSH bootstrap to TERM the recorded
+            // mosh-server pid. When a path change retired it while Mosh
+            // stayed mounted, rebuild just enough control plane first.
+            await self?.rebuildSSHControlPlaneForLeaveIfNeeded()
+            await self?.executeTeardownDisconnect(
+                workflow: workflow,
+                started: teardownStarted
+            )
             guard let self, self.teardownID == teardownID else { return }
             if self.connectionGeneration == generation {
                 self.connectionState = await coordinator.connectionState()
@@ -962,14 +1063,74 @@ extension RootViewModel {
         teardownTask = task
     }
 
+    private func executeTeardownDisconnect(
+        workflow: (any HerdrWorkflowCoordinating)?,
+        started: ContinuousClock.Instant
+    ) async {
+        var teardownTimedOut = false
+        let coordinator = self.coordinator
+        // Navigation is never a preserving recovery attempt, even if it
+        // races the short handoff between a control-plane close and its
+        // replacement connection.
+        await coordinator.clearTerminalSessionPreservationForAttempt()
+        // Pane release may open a new SSH exec channel and complete a remote
+        // control handshake. It must not compete with the short TCP-close
+        // budget below; otherwise navigation can abandon release first.
+        if let workflow {
+            _ = await workflow.returnToBrowser()
+        }
+        do {
+            try await runWithTimeout(
+                Self.teardownCloseTimeout,
+                operation: {
+                    await coordinator.disconnectAndWait()
+                },
+                onAbort: {
+                    await coordinator.forceDisconnectedAfterCloseTimeout()
+                }
+            )
+        } catch {
+            teardownTimedOut = true
+        }
+        let teardownMs = (ContinuousClock.now - started) / .milliseconds(1)
+        if teardownTimedOut {
+            DiagnosticLogger.shared.log(
+                level: .notice,
+                category: "network-recovery",
+                "teardown timeout durationMs=\(teardownMs), abandoning stale coordinator"
+            )
+        } else {
+            DiagnosticLogger.shared.log(
+                level: .debug,
+                category: "network-recovery",
+                "teardown end durationMs=\(teardownMs)"
+            )
+        }
+    }
+
     func makeWorkflow(
         for session: SSHShellSession,
-        hostID: Host.ID
+        hostID: Host.ID,
+        host: Host? = nil
     ) async -> any HerdrWorkflowCoordinating {
         let rememberedPaneID = lastPaneHostID == hostID ? lastPaneID : nil
+        let resolvedHost = host ?? hosts.first { $0.id == hostID }
+        let selectedTransport = await coordinator.activeTransport() ?? activeTransport ?? .ssh
+        let moshTransport = coordinator.moshTransport
+        let coordinator = self.coordinator
+        let context = HerdrWorkflowContext(
+            transport: selectedTransport,
+            moshTransport: moshTransport,
+            host: resolvedHost,
+            credentialsProvider: { [weak coordinator, resolvedHost] in
+                guard let coordinator, let resolvedHost else { return nil }
+                return try await coordinator.credentials(for: resolvedHost)
+            }
+        )
         return await workflowFactory.makeWorkflow(
             for: session,
-            rememberedPaneID: rememberedPaneID
+            rememberedPaneID: rememberedPaneID,
+            context: context
         )
     }
 
@@ -983,9 +1144,5 @@ extension RootViewModel {
                 self?.errorMessage = error.localizedDescription
             }
         }
-    }
-
-    private struct MissingCredentialsError: LocalizedError {
-        var errorDescription: String? { "No saved SSH credentials. Edit this host to add a password or private key." }
     }
 }

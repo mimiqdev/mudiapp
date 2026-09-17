@@ -18,6 +18,7 @@ struct SettingsView: View {
             }
 
             TerminalAppearanceSection(model: model)
+            DiagnosticsSettingsSection(model: model)
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
@@ -161,9 +162,56 @@ struct TerminalAppearanceSettingsView: View {
     var body: some View {
         Form {
             TerminalAppearanceSection(model: model)
+            DiagnosticsSettingsSection(model: model)
         }
         .navigationTitle("Terminal Appearance")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+@MainActor
+struct DiagnosticsSettingsSection: View {
+    @ObservedObject var model: RootViewModel
+
+    var body: some View {
+        Section("Diagnostics") {
+            Toggle(
+                "Debug logging",
+                isOn: Binding(
+                    get: { model.preferences.isDebugLoggingEnabled },
+                    set: { model.updateDebugLoggingEnabled($0) }
+                )
+            )
+            .accessibilityIdentifier("settings-debug-logging-toggle")
+
+            Toggle(
+                "Save logs",
+                isOn: Binding(
+                    get: { model.preferences.isSaveLogsEnabled },
+                    set: { model.updateSaveLogsEnabled($0) }
+                )
+            )
+            .accessibilityIdentifier("settings-save-logs-toggle")
+
+            ShareLink(
+                item: logShareURL,
+                preview: SharePreview("Mudi Debug Log", image: Image(systemName: "doc.text"))
+            ) {
+                Label("Share Logs…", systemImage: "square.and.arrow.up")
+            }
+            .accessibilityIdentifier("settings-share-logs-button")
+        }
+    }
+
+    private var logShareURL: URL {
+        let url = DiagnosticLogging.logFileURL
+        if !FileManager.default.fileExists(atPath: url.path) {
+            let directory = url.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let initialContent = "# Mudi Diagnostic Log\n"
+            try? initialContent.write(to: url, atomically: true, encoding: .utf8)
+        }
+        return url
     }
 }
 

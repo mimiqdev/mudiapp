@@ -130,9 +130,10 @@ struct RootView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .background, .inactive:
-                model.sceneWillResignActive()
+            case .background:
                 Task { await model.sceneDidEnterBackground() }
+            case .inactive:
+                model.sceneWillResignActive()
             case .active:
                 Task { await model.sceneDidBecomeActive() }
             default:
@@ -149,6 +150,13 @@ struct RootView: View {
             // Binding could otherwise fire while scenePhase still reads
             // .active and be mistaken for an explicit Close.
             model.sceneWillResignActive()
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIApplication.didEnterBackgroundNotification
+            )
+        ) { _ in
+            Task { await model.sceneDidEnterBackground() }
         }
         .onReceive(
             NotificationCenter.default.publisher(

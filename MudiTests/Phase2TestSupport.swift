@@ -105,6 +105,12 @@ actor Phase2ConnectionGate {
         }
     }
 
+    /// Non-blocking peek used by tests that must confirm a gated close
+    /// actually began before asserting on the held-open window.
+    func hasStarted() -> Bool {
+        started
+    }
+
     func waitUntilReleased() async {
         guard !released else { return }
         await withCheckedContinuation { continuation in
@@ -140,9 +146,12 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
     private let callbackStartedGate: Phase2ConnectionGate?
     private let failureGate: Phase2ConnectionGate?
     private let failAfterStartingHostKeyDecision: Bool
-    /// Gates the second (transparent-reconnect) attempt so tests can assert
-    /// the model state mid-reconnect.
     let reconnectGate: Phase2ConnectionGate?
+    let probeSucceeds: Bool
+    let probeDelay: Duration?
+    let hangOnFirstClose: Bool
+    let closeGate: Phase2ConnectionGate?
+    let closeGateFromAttempt: Int
 
     init(
         presentedFingerprint: String,
@@ -151,7 +160,12 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
         callbackStartedGate: Phase2ConnectionGate? = nil,
         failureGate: Phase2ConnectionGate? = nil,
         failAfterStartingHostKeyDecision: Bool = false,
-        reconnectGate: Phase2ConnectionGate? = nil
+        reconnectGate: Phase2ConnectionGate? = nil,
+        probeSucceeds: Bool = false,
+        probeDelay: Duration? = nil,
+        hangOnFirstClose: Bool = false,
+        closeGate: Phase2ConnectionGate? = nil,
+        closeGateFromAttempt: Int = .max
     ) {
         self.presentedFingerprint = presentedFingerprint
         self.outcomes = outcomes
@@ -160,6 +174,11 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
         self.failureGate = failureGate
         self.failAfterStartingHostKeyDecision = failAfterStartingHostKeyDecision
         self.reconnectGate = reconnectGate
+        self.probeSucceeds = probeSucceeds
+        self.probeDelay = probeDelay
+        self.hangOnFirstClose = hangOnFirstClose
+        self.closeGate = closeGate
+        self.closeGateFromAttempt = closeGateFromAttempt
     }
 
     func connect(
@@ -207,7 +226,12 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
         if shouldFail {
             throw Phase2ConnectionError.connectionFailed
         }
-        return Phase2PTY()
+        return Phase2PTY(
+            probeSucceeds: probeSucceeds,
+            probeDelay: probeDelay,
+            hangOnClose: attempt == 1 && hangOnFirstClose,
+            closeGate: attempt >= closeGateFromAttempt ? closeGate : nil
+        )
     }
 
     func connectionAttempts() -> Int {
@@ -237,12 +261,47 @@ actor Phase2HostKeyPrompt {
     }
 }
 
-private struct Phase2PTY: PTYChannel {
+private struct Phase2PTY: PTYChannel, SSHCommandExecutingChannel {
+    let probeSucceeds: Bool
+    let probeDelay: Duration?
+    let hangOnClose: Bool
+    let closeGate: Phase2ConnectionGate?
+
+    init(
+        probeSucceeds: Bool,
+        probeDelay: Duration? = nil,
+        hangOnClose: Bool = false,
+        closeGate: Phase2ConnectionGate? = nil
+    ) {
+        self.probeSucceeds = probeSucceeds
+        self.probeDelay = probeDelay
+        self.hangOnClose = hangOnClose
+        self.closeGate = closeGate
+    }
+
     func send(_: [UInt8]) async throws {}
 
     func resize(columns _: Int, rows _: Int) async throws {}
 
-    func close() async {}
+    func close() async {
+        if let closeGate {
+            await closeGate.markStarted()
+            await closeGate.waitUntilReleased()
+        }
+        if hangOnClose {
+            try? await Task.sleep(for: .seconds(60))
+        }
+    }
+
+    func execute(_ command: String) async throws -> [UInt8] {
+        if let probeDelay {
+            try await Task.sleep(for: probeDelay)
+        }
+        guard probeSucceeds, command == "true" else {
+            throw Phase2ConnectionError.connectionFailed
+        }
+        return []
+    }
 }
 
 private struct Phase2HostStore: HostStore {
@@ -305,7 +364,7 @@ func makeMissingPhase2Application(
     keychain: Phase2Keychain = Phase2Keychain(),
     knownHostKeys: Phase2KnownHostKeys = Phase2KnownHostKeys(),
     client: Phase2SSHClient = Phase2SSHClient(presentedFingerprint: "SHA256:test"),
-    moshTransport: any MoshTransportBootstrapping = SwiftMoshAdapter()
+    moshTransport: any MoshTransportBootstrapping = TraversioMoshAdapter()
 ) -> ApplicationCoordinator {
     ApplicationCoordinator(
         hostStore: Phase2HostStore(file: hostFile),

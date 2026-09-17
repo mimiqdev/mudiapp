@@ -7,7 +7,7 @@ Mudi 是面向 iPhone 和 iPad 的远程终端客户端，用来连接开发机�
 - Swift 6、SwiftUI + UIKit
 - SwiftTerm：terminal emulator 与 iOS terminal view
 - Citadel：基于 SwiftNIO SSH 的 SSH client
-- swift-mosh：纯 Swift Mosh protocol / transport
+- TraversioMosh：纯 Swift Mosh protocol / transport、UDP 数据面与链路重建
 - Swift Package Manager：源码依赖
 - XcodeGen：从 `project.yml` 生成 Xcode project
 

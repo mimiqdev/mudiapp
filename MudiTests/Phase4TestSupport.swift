@@ -259,6 +259,36 @@ struct Phase4WorkflowFactory: HerdrWorkflowFactory {
             lastPaneID: rememberedPaneID
         )
     }
+
+    func makeWorkflow(
+        for session: SSHShellSession,
+        rememberedPaneID: Pane.ID?,
+        context: HerdrWorkflowContext
+    ) async -> any HerdrWorkflowCoordinating {
+        if context.transport == .mosh,
+           let moshTransport = context.moshTransport,
+           let host = context.host,
+           let credentialsProvider = context.credentialsProvider {
+            return HerdrWorkflowCoordinator(
+                discovery: Phase3HerdrDiscovery(
+                    fixture: fixture,
+                    workspaceCreation: workspaceCreation,
+                    snapshotAfterWorkspaceCreation: workspaceSnapshotAfterCreation,
+                    workspaceCreationShouldFail: workspaceCreationShouldFail,
+                    workspaceCreationGate: workspaceCreationGate,
+                    workspaceCreationRecorder: workspaceCreationRecorder
+                ),
+                transport: MoshHerdrTerminalTransport(
+                    session: session,
+                    host: host,
+                    credentialsProvider: credentialsProvider,
+                    moshTransport: moshTransport
+                ),
+                lastPaneID: rememberedPaneID
+            )
+        }
+        return await makeWorkflow(for: session, rememberedPaneID: rememberedPaneID)
+    }
 }
 
 /// A test harness around the production RootViewModel, application
@@ -286,9 +316,11 @@ final class Phase4NavigationApplication {
         client: Phase2SSHClient = Phase2SSHClient(
             presentedFingerprint: "SHA256:phase4-test-key"
         ),
-        moshTransport: any MoshTransportBootstrapping = SwiftMoshAdapter(),
+        moshTransport: any MoshTransportBootstrapping = TraversioMoshAdapter(),
         preferencesStore: (any PreferencesStore)? = nil,
         reconnectGate: Phase2ConnectionGate? = nil,
+        networkPathMonitor: any NetworkPathMonitoring = SystemNetworkPathMonitor(),
+        reconnectTimeout: Duration = NetworkConnectionPolicy.documentedDefault.perAttemptTimeout,
         panePickerScheduler: Phase6TestScheduler = Phase6TestScheduler(),
         workspaceCreation: HerdrWorkspaceCreation? = nil,
         workspaceSnapshotAfterCreation: HerdrSnapshot? = nil,
@@ -308,7 +340,8 @@ final class Phase4NavigationApplication {
             credentialStore: Phase4CredentialStore(vault: credentialVault),
             knownHostKeyStore: Phase4KnownHostKeyStore(knownHostKeys: knownHostKeys),
             client: client,
-            moshTransport: moshTransport
+            moshTransport: moshTransport,
+            reconnectTimeout: reconnectTimeout
         )
         model = RootViewModel(
             coordinator: coordinator,
@@ -323,6 +356,7 @@ final class Phase4NavigationApplication {
             ),
             preferencesStore: preferencesStore ?? UserDefaultsPreferencesStore(),
             panePickerScheduler: panePickerScheduler,
+            networkPathMonitor: networkPathMonitor,
             rememberedPaneID: rememberedPaneID,
             rememberedPaneHostID: rememberedPaneHostID,
         )
@@ -351,9 +385,11 @@ func makePhase4NavigationApplication(
     client: Phase2SSHClient = Phase2SSHClient(
         presentedFingerprint: "SHA256:phase4-test-key"
     ),
-    moshTransport: any MoshTransportBootstrapping = SwiftMoshAdapter(),
+    moshTransport: any MoshTransportBootstrapping = TraversioMoshAdapter(),
     preferencesStore: (any PreferencesStore)? = nil,
     reconnectGate: Phase2ConnectionGate? = nil,
+    networkPathMonitor: any NetworkPathMonitoring = SystemNetworkPathMonitor(),
+    reconnectTimeout: Duration = NetworkConnectionPolicy.documentedDefault.perAttemptTimeout,
     panePickerScheduler: Phase6TestScheduler = Phase6TestScheduler(),
     workspaceCreation: HerdrWorkspaceCreation? = nil,
     workspaceSnapshotAfterCreation: HerdrSnapshot? = nil,
@@ -373,6 +409,8 @@ func makePhase4NavigationApplication(
         moshTransport: moshTransport,
         preferencesStore: preferencesStore,
         reconnectGate: reconnectGate,
+        networkPathMonitor: networkPathMonitor,
+        reconnectTimeout: reconnectTimeout,
         panePickerScheduler: panePickerScheduler,
         workspaceCreation: workspaceCreation,
         workspaceSnapshotAfterCreation: workspaceSnapshotAfterCreation,
