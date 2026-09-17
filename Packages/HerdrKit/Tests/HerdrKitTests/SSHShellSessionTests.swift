@@ -32,6 +32,38 @@ private actor FakePTY: PTYChannel {
     }
 }
 
+private actor FakeScrollPTY: PTYScrollChannel {
+    private var scrolls: [(direction: TerminalScrollDirection, lines: Int)] = []
+
+    func scroll(direction: TerminalScrollDirection, lines: Int) async throws {
+        scrolls.append((direction: direction, lines: lines))
+    }
+
+    func send(_: [UInt8]) async throws {}
+
+    func resize(columns _: Int, rows _: Int) async throws {}
+
+    func close() async {}
+
+    func recordedScrolls() -> [(direction: TerminalScrollDirection, lines: Int)] {
+        scrolls
+    }
+}
+
+private actor FakeWheelPTY: PTYWheelInputChannel {
+    nonisolated let acceptsMouseWheelInput: Bool
+
+    init(acceptsMouseWheelInput: Bool) {
+        self.acceptsMouseWheelInput = acceptsMouseWheelInput
+    }
+
+    func send(_: [UInt8]) async throws {}
+
+    func resize(columns _: Int, rows _: Int) async throws {}
+
+    func close() async {}
+}
+
 private actor CredentialBox {
     private var credentials: SSHCredentials?
 
@@ -143,6 +175,45 @@ private actor DelayedFakeSSH: SSHClient {
     func recordedConnectionAttempts() -> Int {
         connectionAttempts
     }
+}
+
+@Test func scrollCapabilityPrefersHostScrollback() async {
+    let channel = FakeScrollPTY()
+    let session = SSHShellSession(connectedChannel: channel)
+
+    #expect(await session.scrollCapability() == .hostScrollback)
+    #expect(await session.supportsRemoteScrollback())
+
+    try? await session.scroll(direction: .up, lines: 3)
+    let scrolls = await channel.recordedScrolls()
+    #expect(scrolls.count == 1)
+    #expect(scrolls.first?.direction == .up)
+    #expect(scrolls.first?.lines == 3)
+}
+
+@Test func scrollCapabilityReportsDirectAttachWheelInput() async {
+    let session = SSHShellSession(
+        connectedChannel: FakeWheelPTY(acceptsMouseWheelInput: true)
+    )
+
+    #expect(await session.scrollCapability() == .remoteMouseWheel)
+    #expect(await session.supportsRemoteScrollback() == false)
+}
+
+@Test func scrollCapabilityRequiresAnAcceptingWheelChannel() async {
+    let declined = SSHShellSession(
+        connectedChannel: FakeWheelPTY(acceptsMouseWheelInput: false)
+    )
+    #expect(await declined.scrollCapability() == .none)
+
+    let plain = SSHShellSession(connectedChannel: FakePTY())
+    #expect(await plain.scrollCapability() == .none)
+}
+
+@Test func scrollCapabilityIsNoneBeforeConnect() async {
+    let session = SSHShellSession(client: FakeSSH())
+
+    #expect(await session.scrollCapability() == .none)
 }
 
 @Test func hostCodableRoundTripDoesNotContainCredentials() throws {
