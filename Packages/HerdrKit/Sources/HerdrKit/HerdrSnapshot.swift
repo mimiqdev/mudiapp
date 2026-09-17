@@ -107,11 +107,25 @@ public struct Pane: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public var title: String
     public var agent: Agent?
+    public var terminalID: String?
 
-    public init(id: String, title: String, agent: Agent? = nil) {
+    public init(
+        id: String,
+        title: String,
+        agent: Agent? = nil,
+        terminalID: String? = nil
+    ) {
         self.id = id
         self.title = title
         self.agent = agent
+        self.terminalID = terminalID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case agent
+        case id
+        case terminalID = "terminal_id"
+        case title
     }
 }
 

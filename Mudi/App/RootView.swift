@@ -7,7 +7,7 @@ import SwiftUI
 final class RootViewModel: ObservableObject {
     @Published private(set) var hosts: [Host] = []
     @Published internal(set) var activeConnection: ActiveSSHConnection?
-    @Published private(set) var herdrState: HerdrBrowserState?
+    @Published internal(set) var herdrState: HerdrBrowserState?
     @Published var panePicker: PanePickerState?
     @Published var isPanePickerPresented = false
     @Published var isCreatingWorkspace = false
@@ -286,7 +286,8 @@ extension RootViewModel {
                 let selectedTransport = await coordinator.activeTransport() ?? .ssh
                 let workflow = await self.makeWorkflow(
                     for: bootstrapSession,
-                    hostID: host.id
+                    hostID: host.id,
+                    host: host
                 )
                 self.showLoadingPanePicker(for: host)
                 let pickerCoordinator = self.makePanePickerCoordinator(
@@ -383,7 +384,8 @@ extension RootViewModel {
                 let selectedTransport = await coordinator.activeTransport() ?? .ssh
                 let workflow = await self.makeWorkflow(
                     for: bootstrapSession,
-                    hostID: host.id
+                    hostID: host.id,
+                    host: host
                 )
                 self.showLoadingPanePicker(for: host)
                 let pickerCoordinator = self.makePanePickerCoordinator(
@@ -769,6 +771,12 @@ extension RootViewModel {
         return false
     }
 
+    /// TerminalScreen is ALWAYS Mosh when the host connected with Mosh,
+    /// whether in an ordinary terminal or an attached Herdr pane.
+    var isMoshDataPlaneMounted: Bool {
+        activeConnection?.transport == .mosh
+    }
+
     func applyPanePickerState(
         _ state: PanePickerNavigationState,
         workflow: any HerdrWorkflowCoordinating,
@@ -929,9 +937,10 @@ extension RootViewModel {
         let rememberedPane = await workflow.hasRememberedPane()
         let multipleSessions = await workflow.hasMultipleSessions()
         let terminalSession: SSHShellSession?
-        if case .attached = state {
+        switch state {
+        case .attached, .ordinaryTerminal:
             terminalSession = await workflow.terminalSession()
-        } else {
+        case .empty, .sessions, .panes:
             terminalSession = nil
         }
 
@@ -952,6 +961,10 @@ extension RootViewModel {
             )
             herdrState = state
         case .empty, .sessions, .panes, .ordinaryTerminal:
+            if case .ordinaryTerminal = state,
+               let terminalSession {
+                baseTerminalSession = terminalSession
+            }
             if let activeConnection,
                let baseSession {
                 self.activeConnection = ActiveSSHConnection(
@@ -1020,13 +1033,20 @@ extension RootViewModel {
     ) async {
         var teardownTimedOut = false
         let coordinator = self.coordinator
+        // Navigation is never a preserving recovery attempt, even if it
+        // races the short handoff between a control-plane close and its
+        // replacement connection.
+        await coordinator.clearTerminalSessionPreservationForAttempt()
+        // Pane release may open a new SSH exec channel and complete a remote
+        // control handshake. It must not compete with the short TCP-close
+        // budget below; otherwise navigation can abandon release first.
+        if let workflow {
+            _ = await workflow.returnToBrowser()
+        }
         do {
             try await runWithTimeout(
                 Self.teardownCloseTimeout,
                 operation: {
-                    if let workflow {
-                        _ = await workflow.returnToBrowser()
-                    }
                     await coordinator.disconnectAndWait()
                 },
                 onAbort: {
@@ -1054,12 +1074,27 @@ extension RootViewModel {
 
     func makeWorkflow(
         for session: SSHShellSession,
-        hostID: Host.ID
+        hostID: Host.ID,
+        host: Host? = nil
     ) async -> any HerdrWorkflowCoordinating {
         let rememberedPaneID = lastPaneHostID == hostID ? lastPaneID : nil
+        let resolvedHost = host ?? hosts.first { $0.id == hostID }
+        let selectedTransport = await coordinator.activeTransport() ?? activeTransport ?? .ssh
+        let moshTransport = coordinator.moshTransport
+        let coordinator = self.coordinator
+        let context = HerdrWorkflowContext(
+            transport: selectedTransport,
+            moshTransport: moshTransport,
+            host: resolvedHost,
+            credentialsProvider: { [weak coordinator, resolvedHost] in
+                guard let coordinator, let resolvedHost else { return nil }
+                return try await coordinator.credentials(for: resolvedHost)
+            }
+        )
         return await workflowFactory.makeWorkflow(
             for: session,
-            rememberedPaneID: rememberedPaneID
+            rememberedPaneID: rememberedPaneID,
+            context: context
         )
     }
 

@@ -147,7 +147,12 @@ actor SSHHerdrDiscovery: HerdrDiscovering, HerdrWorkspaceCreating {
                 state: agentState(agent?.agentStatus ?? record.agentStatus)
             )
         }
-        return Pane(id: record.paneID, title: record.title ?? record.paneID, agent: paneAgent)
+        return Pane(
+            id: record.paneID,
+            title: record.title ?? record.paneID,
+            agent: paneAgent,
+            terminalID: record.terminalID
+        )
     }
 
     private func agentState(_ value: String?) -> AgentState {
@@ -294,6 +299,7 @@ private struct SSHHerdrPaneRecord: Decodable {
     let workspaceID: String
     let agent: String?
     let agentStatus: String
+    let terminalID: String?
     let title: String?
 
     enum CodingKeys: String, CodingKey {
@@ -302,6 +308,7 @@ private struct SSHHerdrPaneRecord: Decodable {
         case workspaceID = "workspace_id"
         case agent
         case agentStatus = "agent_status"
+        case terminalID = "terminal_id"
         case title = "terminal_title_stripped"
     }
 }

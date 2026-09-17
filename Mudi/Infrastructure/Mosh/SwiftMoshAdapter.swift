@@ -16,7 +16,49 @@ protocol MoshTransportBootstrapping: Sendable {
         credentials: SSHCredentials,
         using bootstrapSession: SSHShellSession
     ) async throws -> SSHShellSession
+
+    func connect(
+        to host: Host,
+        credentials: SSHCredentials,
+        using bootstrapSession: SSHShellSession,
+        command: String?
+    ) async throws -> SSHShellSession
+
     func disconnect() async
+
+    /// Ends exclusive pane display by TERMing the captured `mosh-server` pid.
+    /// No-op when this session never recorded a pane daemon pid.
+    func leavePaneDaemon(using bootstrapSession: SSHShellSession) async
+}
+
+extension MoshTransportBootstrapping {
+    func connect(
+        to host: Host,
+        credentials: SSHCredentials,
+        using bootstrapSession: SSHShellSession
+    ) async throws -> SSHShellSession {
+        try await connect(
+            to: host,
+            credentials: credentials,
+            using: bootstrapSession,
+            command: nil
+        )
+    }
+
+    func connect(
+        to host: Host,
+        credentials: SSHCredentials,
+        using bootstrapSession: SSHShellSession,
+        command: String?
+    ) async throws -> SSHShellSession {
+        try await connect(
+            to: host,
+            credentials: credentials,
+            using: bootstrapSession
+        )
+    }
+
+    func leavePaneDaemon(using _: SSHShellSession) async {}
 }
 
 actor SwiftMoshAdapter: MoshTransportBootstrapping {
@@ -24,18 +66,19 @@ actor SwiftMoshAdapter: MoshTransportBootstrapping {
 
     private var client: MoshClientSession?
     private var terminalSession: SSHShellSession?
+    private var paneDaemonPid: Int32?
 
     func connect(
         to host: Host,
         credentials _: SSHCredentials,
-        using bootstrapSession: SSHShellSession
+        using bootstrapSession: SSHShellSession,
+        command: String? = nil
     ) async throws -> SSHShellSession {
-        await disconnect()
-
-        let output = try await bootstrapSession.execute(Self.serverCommand)
-        let connection = try MoshServerOutputParser.parse(
-            String(decoding: output, as: UTF8.self)
-        )
+        let serverCmd = Self.serverCommand(for: command)
+        let output = try await bootstrapSession.execute(serverCmd)
+        let outputString = String(bytes: output, encoding: .utf8) ?? ""
+        let connection = try MoshServerOutputParser.parse(outputString)
+        let capturedPid = MoshServerDaemonPid.parse(from: outputString)
         let client = MoshClientSession(
             endpoint: MoshEndpoint(
                 host: host.hostname,
@@ -48,13 +91,34 @@ actor SwiftMoshAdapter: MoshTransportBootstrapping {
             try await client.start()
             let channel = MoshPTYChannel(client: client)
             let session = SSHShellSession(connectedChannel: channel)
+
+            let previousSession = self.terminalSession
+            let previousClient = self.client
             self.client = client
-            terminalSession = session
+            self.terminalSession = session
+            if let command, !command.isEmpty {
+                paneDaemonPid = capturedPid
+            }
+
+            if let previousSession {
+                await previousSession.disconnect()
+            } else if let previousClient {
+                await previousClient.stop()
+            }
+
             return session
         } catch {
             await client.stop()
             throw error
         }
+    }
+
+    func leavePaneDaemon(using bootstrapSession: SSHShellSession) async {
+        guard let pid = paneDaemonPid else { return }
+        paneDaemonPid = nil
+        _ = try? await bootstrapSession.execute(
+            MoshServerDaemonPid.terminateCommand(pid: pid)
+        )
     }
 
     func disconnect() async {
@@ -67,10 +131,18 @@ actor SwiftMoshAdapter: MoshTransportBootstrapping {
         client = nil
     }
 
-    private static let serverCommand = SSHLoginShellCommand.wrap(
-        "mosh-server new -s",
-        environment: TerminalPTYCapabilities.environment
-    )
+    static func serverCommand(for command: String? = nil) -> String {
+        let baseCommand: String
+        if let command, !command.isEmpty {
+            baseCommand = "mosh-server new -s -- \(command) 2>&1"
+        } else {
+            baseCommand = "mosh-server new -s 2>&1"
+        }
+        return SSHLoginShellCommand.wrap(
+            baseCommand,
+            environment: TerminalPTYCapabilities.environment
+        )
+    }
 }
 
 /// Presents a MoshClientSession through the existing terminal session

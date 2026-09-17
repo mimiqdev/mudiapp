@@ -4,6 +4,7 @@ import HerdrKit
 enum SSHHerdrTerminalTransportError: Error, LocalizedError, Sendable {
     case paneUnavailable
     case attachFailed
+    case missingTerminalID
 
     var errorDescription: String? {
         switch self {
@@ -11,6 +12,8 @@ enum SSHHerdrTerminalTransportError: Error, LocalizedError, Sendable {
             "The selected Herdr pane is no longer available."
         case .attachFailed:
             "Unable to open the selected Herdr pane."
+        case .missingTerminalID:
+            "The selected Herdr pane has no terminal stream ID."
         }
     }
 }

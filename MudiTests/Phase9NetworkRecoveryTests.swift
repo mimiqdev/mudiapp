@@ -186,7 +186,8 @@ final class Phase9NetworkRecoveryTests: XCTestCase {
         let moshTransport = Phase9MoshSuccessTransport()
         let client = Phase2SSHClient(
             presentedFingerprint: "SHA256:phase4-test-key",
-            reconnectGate: reconnectGate
+            reconnectGate: reconnectGate,
+            probeSucceeds: true
         )
         let application = makePhase4NavigationApplication(
             fixture: fixture,
@@ -223,10 +224,12 @@ final class Phase9NetworkRecoveryTests: XCTestCase {
             application.model.networkPathRecovery.lastPath == cellular
         }
         pathMonitor.emit(wifi)
-        try await waitUntil {
-            application.model.isTransparentlyReconnecting
-        }
+        try await waitForConnectionAttempts(client, expected: 2)
 
+        XCTAssertFalse(
+            application.model.isTransparentlyReconnecting,
+            "Mosh control-plane recovery must not show the SSH-only overlay"
+        )
         XCTAssertIdentical(
             application.model.activeConnection?.session,
             originalMoshSession,
@@ -243,8 +246,9 @@ final class Phase9NetworkRecoveryTests: XCTestCase {
 
         await reconnectGate.release()
         try await waitUntil {
-            !application.model.isTransparentlyReconnecting
+            application.model.networkPathRecovery.transparentTask == nil
         }
+        XCTAssertFalse(application.model.isTransparentlyReconnecting)
         XCTAssertIdentical(
             application.model.activeConnection?.session,
             originalMoshSession,
@@ -258,7 +262,163 @@ final class Phase9NetworkRecoveryTests: XCTestCase {
         try await waitUntil { !application.model.isTearingDown }
     }
 
-    private func waitUntil(
+    func testMoshControlPlaneFailureKeepsTerminalMounted() async throws {
+        let fixture = try Phase3HerdrFixtures.single()
+        let pathMonitor = Phase9NetworkPathMonitor()
+        let moshTransport = Phase9MoshSuccessTransport()
+        let client = Phase2SSHClient(
+            presentedFingerprint: "SHA256:phase4-test-key",
+            outcomes: [false, true]
+        )
+        let application = makePhase4NavigationApplication(
+            fixture: fixture,
+            client: client,
+            moshTransport: moshTransport,
+            networkPathMonitor: pathMonitor
+        )
+        let host = phase9Host(preferredTransport: .mosh)
+        try await application.save(host)
+
+        application.model.connect(to: host)
+        try await waitUntil { application.model.activeConnection != nil }
+        application.model.selectOrdinaryTerminalFromPicker()
+        try await waitUntil { application.model.herdrState == .ordinaryTerminal }
+        let originalMoshSession = try XCTUnwrap(
+            application.model.activeConnection?.session
+        )
+
+        pathMonitor.emit(cellularSnapshot())
+        try await waitUntil {
+            application.model.networkPathRecovery.lastPath == cellularSnapshot()
+        }
+        pathMonitor.emit(wifiSnapshot())
+        try await waitForConnectionAttempts(client, expected: 2)
+        try await waitUntil {
+            application.model.networkPathRecovery.transparentTask == nil
+        }
+
+        XCTAssertFalse(application.model.isTransparentlyReconnecting)
+        XCTAssertIdentical(
+            application.model.activeConnection?.session,
+            originalMoshSession,
+            "A failed SSH rebuild must not unmount the Mosh terminal"
+        )
+        XCTAssertEqual(application.model.activeTransport, .mosh)
+        XCTAssertEqual(application.model.herdrState, .ordinaryTerminal)
+        XCTAssertNil(application.model.errorMessage)
+        let moshDisconnectCount = await moshTransport.disconnectCount()
+        XCTAssertEqual(moshDisconnectCount, 0)
+
+        application.model.returnToHosts()
+        try await waitUntil { !application.model.isTearingDown }
+    }
+
+    func testAttachedMoshPathReconnectPreservesMoshTerminal() async throws {
+        let fixture = try Phase3HerdrFixtures.single()
+        let pane = try XCTUnwrap(phase4Panes(in: fixture).first)
+        let reconnectGate = Phase2ConnectionGate()
+        let pathMonitor = Phase9NetworkPathMonitor()
+        let moshTransport = Phase9MoshSuccessTransport()
+        let client = Phase2SSHClient(
+            presentedFingerprint: "SHA256:phase4-test-key",
+            outcomes: [false, true],
+            reconnectGate: reconnectGate,
+            probeSucceeds: false
+        )
+        let application = makePhase4NavigationApplication(
+            fixture: fixture,
+            client: client,
+            moshTransport: moshTransport,
+            networkPathMonitor: pathMonitor
+        )
+        let host = phase9Host(preferredTransport: .mosh)
+        try await application.save(host)
+
+        application.model.connect(to: host)
+        try await waitUntil { application.model.activeConnection != nil }
+        application.model.selectPane(pane.id)
+        try await waitUntil {
+            if case let .attached(_, attachedPane) = application.model.herdrState {
+                return attachedPane.id == pane.id
+            }
+            return false
+        }
+        let originalAttachedSession = try XCTUnwrap(
+            application.model.activeConnection?.session
+        )
+
+        pathMonitor.emit(cellularSnapshot())
+        try await waitUntil {
+            application.model.networkPathRecovery.lastPath == cellularSnapshot()
+        }
+        pathMonitor.emit(wifiSnapshot())
+
+        await reconnectGate.waitUntilStarted()
+        XCTAssertFalse(
+            application.model.isTransparentlyReconnecting,
+            "An attached Mosh pane roams over UDP and must not display reconnect overlay"
+        )
+        XCTAssertIdentical(
+            application.model.activeConnection?.session,
+            originalAttachedSession,
+            "The attached terminal stays mounted during SSH recovery"
+        )
+
+        await reconnectGate.release()
+        try await waitForConnectionAttempts(client, expected: 2)
+
+        XCTAssertNotNil(application.model.activeConnection)
+        XCTAssertIdentical(
+            application.model.activeConnection?.session,
+            originalAttachedSession,
+            "Mosh session identity must be preserved across SSH rebuild failure"
+        )
+        XCTAssertNil(
+            application.model.errorMessage,
+            "A failed SSH control rebuild while Mosh is mounted must not surface an error"
+        )
+        guard case let .attached(_, currentPane) = application.model.herdrState else {
+            return XCTFail("Attached pane state must survive SSH control failure")
+        }
+        XCTAssertEqual(currentPane.id, pane.id)
+    }
+}
+
+private extension Phase9NetworkRecoveryTests {
+    func cellularSnapshot() -> NetworkPathSnapshot {
+        NetworkPathSnapshot(
+            status: .satisfied,
+            interfaces: [.cellular],
+            isExpensive: true,
+            isConstrained: false
+        )
+    }
+
+    func wifiSnapshot() -> NetworkPathSnapshot {
+        NetworkPathSnapshot(
+            status: .satisfied,
+            interfaces: [.wifi],
+            isExpensive: false,
+            isConstrained: false
+        )
+    }
+
+    func waitForConnectionAttempts(
+        _ client: Phase2SSHClient,
+        expected: Int,
+        timeoutSeconds: Double = 2
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            if await client.connectionAttempts() >= expected {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTFail("Expected at least \(expected) SSH connection attempts")
+    }
+
+    func waitUntil(
         _ condition: @MainActor () -> Bool,
         timeoutSeconds: Double = 2
     ) async throws {

@@ -77,10 +77,21 @@ protocol HerdrExistingConnectionTerminalOpening: Sendable {
     func openOrdinaryTerminalWithoutReconnect() async throws -> HerdrBrowserState
 }
 
+/// Starts a replacement login-shell data session when an existing terminal
+/// data session was consumed by an attached Herdr pane.
+protocol HerdrOrdinaryTerminalSessionStarting: Sendable {
+    func startOrdinaryTerminalSession() async throws
+}
+
 /// Lets a Herdr transport select the named server that owns a pane. Legacy
 /// transports can continue to use the pane-only TerminalTransport method.
 protocol HerdrSessionAwareTerminalTransport: Sendable {
     func attach(to pane: Pane, in session: HerdrSession) async throws
+}
+
+/// Allows a transport to hydrate its attached session without re-attaching.
+protocol HerdrAttachedSessionHydrating: Sendable {
+    func hydrate(attachedSession: SSHShellSession) async
 }
 
 /// The narrow application boundary used by the root UI and by workflow tests.
@@ -100,6 +111,44 @@ protocol HerdrWorkflowCoordinating: AnyObject, Sendable {
     func hasRememberedPane() async -> Bool
     func hasMultipleSessions() async -> Bool
     func terminalSession() async -> SSHShellSession?
+    func adoptAttachedSession(
+        _ session: SSHShellSession,
+        for pane: Pane,
+        in herdrSession: HerdrSession
+    ) async
+    func adoptOrdinaryTerminalSession(_ session: SSHShellSession) async
+}
+
+extension HerdrWorkflowCoordinating {
+    func adoptAttachedSession(
+        _ session: SSHShellSession,
+        for pane: Pane,
+        in herdrSession: HerdrSession
+    ) async {}
+
+    func adoptOrdinaryTerminalSession(_: SSHShellSession) async {}
+}
+
+/// Builds the workflow for a connected shell. Keeping this factory at the
+/// root-model boundary lets the app use the SSH adapters while tests can feed
+/// recorded Herdr responses into the same production coordinator.
+struct HerdrWorkflowContext: Sendable {
+    let transport: ActiveTransport
+    let moshTransport: (any MoshTransportBootstrapping)?
+    let host: Host?
+    let credentialsProvider: (@Sendable () async throws -> SSHCredentials?)?
+
+    init(
+        transport: ActiveTransport = .ssh,
+        moshTransport: (any MoshTransportBootstrapping)? = nil,
+        host: Host? = nil,
+        credentialsProvider: (@Sendable () async throws -> SSHCredentials?)? = nil
+    ) {
+        self.transport = transport
+        self.moshTransport = moshTransport
+        self.host = host
+        self.credentialsProvider = credentialsProvider
+    }
 }
 
 /// Builds the workflow for a connected shell. Keeping this factory at the
@@ -110,6 +159,22 @@ protocol HerdrWorkflowFactory: Sendable {
         for session: SSHShellSession,
         rememberedPaneID: Pane.ID?
     ) async -> any HerdrWorkflowCoordinating
+
+    func makeWorkflow(
+        for session: SSHShellSession,
+        rememberedPaneID: Pane.ID?,
+        context: HerdrWorkflowContext
+    ) async -> any HerdrWorkflowCoordinating
+}
+
+extension HerdrWorkflowFactory {
+    func makeWorkflow(
+        for session: SSHShellSession,
+        rememberedPaneID: Pane.ID?,
+        context: HerdrWorkflowContext
+    ) async -> any HerdrWorkflowCoordinating {
+        await makeWorkflow(for: session, rememberedPaneID: rememberedPaneID)
+    }
 }
 
 struct SSHHerdrWorkflowFactory: HerdrWorkflowFactory, Sendable {
@@ -122,6 +187,29 @@ struct SSHHerdrWorkflowFactory: HerdrWorkflowFactory, Sendable {
             transport: SSHHerdrTerminalTransport(session: session),
             lastPaneID: rememberedPaneID
         )
+    }
+
+    func makeWorkflow(
+        for session: SSHShellSession,
+        rememberedPaneID: Pane.ID?,
+        context: HerdrWorkflowContext
+    ) async -> any HerdrWorkflowCoordinating {
+        if context.transport == .mosh,
+           let moshTransport = context.moshTransport,
+           let host = context.host,
+           let credentialsProvider = context.credentialsProvider {
+            return HerdrWorkflowCoordinator(
+                discovery: SSHHerdrDiscovery(session: session),
+                transport: MoshHerdrTerminalTransport(
+                    session: session,
+                    host: host,
+                    credentialsProvider: credentialsProvider,
+                    moshTransport: moshTransport
+                ),
+                lastPaneID: rememberedPaneID
+            )
+        }
+        return await makeWorkflow(for: session, rememberedPaneID: rememberedPaneID)
     }
 }
 
@@ -313,8 +401,18 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
             throw HerdrWorkflowError.noConnectedHost
         }
 
+        let wasAttached: Bool
+        if case .attached = browserState {
+            wasAttached = true
+        } else {
+            wasAttached = false
+        }
         await releaseAttachedControl()
-        try await transport.connect(to: connectedHost)
+        if wasAttached {
+            try await startOrdinaryTerminalSession(to: connectedHost)
+        } else {
+            try await transport.connect(to: connectedHost)
+        }
         browserState = .ordinaryTerminal
         controlWasReleased = false
         return browserState
@@ -324,7 +422,17 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
         guard connectedHost != nil else {
             throw HerdrWorkflowError.noConnectedHost
         }
+        let wasAttached: Bool
+        if case .attached = browserState {
+            wasAttached = true
+        } else {
+            wasAttached = false
+        }
         await releaseAttachedControl()
+        if wasAttached,
+           let starter = transport as? any HerdrOrdinaryTerminalSessionStarting {
+            try await starter.startOrdinaryTerminalSession()
+        }
         browserState = .ordinaryTerminal
         controlWasReleased = false
         return browserState
@@ -332,11 +440,17 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
 
     func suspendAttachedControl() async {
         guard case .attached = browserState else { return }
+        if transport.kind == .mosh {
+            return
+        }
         await releaseAttachedControl()
     }
 
     func resumeAttachedControl() async -> HerdrBrowserState {
         guard case let .attached(session, pane) = browserState else {
+            return browserState
+        }
+        if transport.kind == .mosh {
             return browserState
         }
         return await attach(pane, in: session)
@@ -390,6 +504,28 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
         return await provider.terminalSession()
     }
 
+    func adoptAttachedSession(
+        _ session: SSHShellSession,
+        for pane: Pane,
+        in herdrSession: HerdrSession
+    ) async {
+        if let hydratable = transport as? any HerdrAttachedSessionHydrating {
+            await hydratable.hydrate(attachedSession: session)
+        }
+        lastPaneID = pane.id
+        selectedSessionID = herdrSession.id
+        browserState = .attached(session: herdrSession, pane: pane)
+        controlWasReleased = false
+    }
+
+    func adoptOrdinaryTerminalSession(_ session: SSHShellSession) async {
+        if let hydratable = transport as? any HerdrAttachedSessionHydrating {
+            await hydratable.hydrate(attachedSession: session)
+        }
+        browserState = .ordinaryTerminal
+        controlWasReleased = false
+    }
+
     private func attach(_ pane: Pane, in session: HerdrSession) async -> HerdrBrowserState {
         if case let .attached(_, attachedPane) = browserState,
            attachedPane.id != pane.id,
@@ -413,6 +549,14 @@ actor HerdrWorkflowCoordinator<Discovery: HerdrDiscovering, Transport: TerminalT
             )
         }
         return browserState
+    }
+
+    private func startOrdinaryTerminalSession(to host: Host) async throws {
+        if let starter = transport as? any HerdrOrdinaryTerminalSessionStarting {
+            try await starter.startOrdinaryTerminalSession()
+        } else {
+            try await transport.connect(to: host)
+        }
     }
 
     private func releaseAttachedControl() async {

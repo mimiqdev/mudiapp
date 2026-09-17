@@ -259,6 +259,36 @@ struct Phase4WorkflowFactory: HerdrWorkflowFactory {
             lastPaneID: rememberedPaneID
         )
     }
+
+    func makeWorkflow(
+        for session: SSHShellSession,
+        rememberedPaneID: Pane.ID?,
+        context: HerdrWorkflowContext
+    ) async -> any HerdrWorkflowCoordinating {
+        if context.transport == .mosh,
+           let moshTransport = context.moshTransport,
+           let host = context.host,
+           let credentialsProvider = context.credentialsProvider {
+            return HerdrWorkflowCoordinator(
+                discovery: Phase3HerdrDiscovery(
+                    fixture: fixture,
+                    workspaceCreation: workspaceCreation,
+                    snapshotAfterWorkspaceCreation: workspaceSnapshotAfterCreation,
+                    workspaceCreationShouldFail: workspaceCreationShouldFail,
+                    workspaceCreationGate: workspaceCreationGate,
+                    workspaceCreationRecorder: workspaceCreationRecorder
+                ),
+                transport: MoshHerdrTerminalTransport(
+                    session: session,
+                    host: host,
+                    credentialsProvider: credentialsProvider,
+                    moshTransport: moshTransport
+                ),
+                lastPaneID: rememberedPaneID
+            )
+        }
+        return await makeWorkflow(for: session, rememberedPaneID: rememberedPaneID)
+    }
 }
 
 /// A test harness around the production RootViewModel, application

@@ -14,6 +14,8 @@ final class Phase6TakeoverSizeTests: XCTestCase {
             sessionOption: "",
             size: size
         )
+        XCTAssertTrue(inner.contains("herdr terminal session control"))
+        XCTAssertTrue(inner.contains("herdr terminal session control 'w55:t1.0'"))
         XCTAssertTrue(inner.contains("--takeover --cols 80 --rows 24"))
     }
 

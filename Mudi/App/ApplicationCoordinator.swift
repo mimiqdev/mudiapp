@@ -246,7 +246,15 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
     /// Disconnects only the SSH bootstrap while retaining a live Mosh data
     /// session. Transparent recovery uses this to rebuild Herdr control over
     /// SSH without interrupting the terminal's Mosh transport.
-    func disconnectBootstrapAndWait() async {
+    func disconnectBootstrapAndWait(
+        preservingTerminalSession: Bool = false
+    ) async {
+        // The caller must opt in before the bounded close starts. This is the
+        // only intent forceDisconnectedAfterCloseTimeout may use to retain a
+        // Mosh session during transparent control-plane recovery.
+        preserveTerminalSessionForAttempt = preservingTerminalSession
+            && activeTransportValue == .mosh
+            && terminalSession != nil
         if let attemptID = inFlightConnectID {
             let preservesTerminalSession = preserveTerminalSessionForAttempt
             disconnectRequestedFor = attemptID
@@ -264,6 +272,14 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
         if state != .disconnected {
             setState(.disconnected)
         }
+    }
+
+    /// Clears a preservation request after the bounded bootstrap close
+    /// completed without needing the timeout abort path. The reconnect
+    /// attempt sets its own intent again before it opens the replacement SSH
+    /// control channel.
+    func clearTerminalSessionPreservationForAttempt() {
+        preserveTerminalSessionForAttempt = false
     }
 
     func reconnect(
@@ -509,14 +525,29 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
     /// Maximum budget to wait for channel/socket closure before abandoning it.
     static let channelCloseTimeout = Duration.seconds(1)
 
-    func forceDisconnectedAfterCloseTimeout() {
+    func forceDisconnectedAfterCloseTimeout() async {
+        let preservesTerminalSession = preserveTerminalSessionForAttempt
+        let shouldDisconnectMosh = activeTransportValue == .mosh
+            && !preservesTerminalSession
         session = nil
-        if !preserveTerminalSessionForAttempt {
+        if !preservesTerminalSession {
             terminalSession = nil
             activeTransportValue = nil
         }
+        // The timeout caller has abandoned the normal disconnect operation.
+        // Retire the Mosh adapter here as well, except for the explicit
+        // transparent-recovery handoff that is preserving its data plane.
+        preserveTerminalSessionForAttempt = false
         if state != .disconnected {
             setState(.disconnected)
+        }
+        if shouldDisconnectMosh {
+            let moshTransport = self.moshTransport
+            _ = try? await runWithTimeout(
+                Self.channelCloseTimeout,
+                operation: { await moshTransport.disconnect() },
+                onAbort: {}
+            )
         }
     }
 

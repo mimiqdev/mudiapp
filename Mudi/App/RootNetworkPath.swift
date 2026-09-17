@@ -163,13 +163,34 @@ extension RootViewModel {
                   self.networkPathRecovery.transparentTask == nil
             else { return }
 
+            if self.isMoshDataPlaneMounted {
+                // Mosh is the user-facing UDP data plane only for the ordinary
+                // terminal. Its session must not be probed through SSH: a path
+                // change is expected to retire only the TCP control plane while
+                // Mosh roams independently.
+                self.networkPathRecovery.debounceTask = nil
+                self.networkPathRecovery.debounceTaskID = nil
+                self.networkPathRecovery.attemptedGeneration = generation
+                self.networkPathRecovery.changePending = false
+                DiagnosticLogger.shared.log(
+                    level: .notice,
+                    category: "network-recovery",
+                    "control-plane rebuild launch mosh=true overlay=false"
+                )
+                self.launchTransparentControlPlaneReconnect(
+                    restoring: restoration,
+                    trigger: .networkPathChange
+                )
+                return
+            }
+
             DiagnosticLogger.shared.log(
                 level: .debug,
                 category: "network-recovery",
                 "probe start timeout=400ms restoration=\(String(describing: restoration))"
             )
             let probeStarted = ContinuousClock.now
-            let probeSucceeded = await self.probeExistingNetworkSession()
+            let probeSucceeded = await self.probeExistingSSHControlSession()
             let probeMs = (ContinuousClock.now - probeStarted) / .milliseconds(1)
             DiagnosticLogger.shared.log(
                 level: .debug,
@@ -211,8 +232,12 @@ extension RootViewModel {
         }
     }
 
-    private func probeExistingNetworkSession() async -> Bool {
-        guard let session = baseSession
+    /// Probes only the SSH control plane used by SSH-only terminals. Mosh
+    /// liveness belongs to its UDP data plane and must never be inferred from
+    /// an SSH command on a path change.
+    private func probeExistingSSHControlSession() async -> Bool {
+        guard !isMoshDataPlaneMounted,
+              let session = baseSession
                 ?? baseTerminalSession
                 ?? activeConnection?.session
         else { return false }
@@ -232,8 +257,7 @@ extension RootViewModel {
     }
 
     private func networkPathReconnectRestoration()
-        -> TransparentReconnectRestoration?
-    {
+        -> TransparentReconnectRestoration? {
         switch herdrState {
         case .attached:
             .rememberedPane
