@@ -140,9 +140,10 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
     private let callbackStartedGate: Phase2ConnectionGate?
     private let failureGate: Phase2ConnectionGate?
     private let failAfterStartingHostKeyDecision: Bool
-    /// Gates the second (transparent-reconnect) attempt so tests can assert
-    /// the model state mid-reconnect.
     let reconnectGate: Phase2ConnectionGate?
+    let probeSucceeds: Bool
+    let probeDelay: Duration?
+    let hangOnFirstClose: Bool
 
     init(
         presentedFingerprint: String,
@@ -151,7 +152,10 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
         callbackStartedGate: Phase2ConnectionGate? = nil,
         failureGate: Phase2ConnectionGate? = nil,
         failAfterStartingHostKeyDecision: Bool = false,
-        reconnectGate: Phase2ConnectionGate? = nil
+        reconnectGate: Phase2ConnectionGate? = nil,
+        probeSucceeds: Bool = false,
+        probeDelay: Duration? = nil,
+        hangOnFirstClose: Bool = false
     ) {
         self.presentedFingerprint = presentedFingerprint
         self.outcomes = outcomes
@@ -160,6 +164,9 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
         self.failureGate = failureGate
         self.failAfterStartingHostKeyDecision = failAfterStartingHostKeyDecision
         self.reconnectGate = reconnectGate
+        self.probeSucceeds = probeSucceeds
+        self.probeDelay = probeDelay
+        self.hangOnFirstClose = hangOnFirstClose
     }
 
     func connect(
@@ -207,7 +214,11 @@ actor Phase2SSHClient: HostKeyAwareSSHClient {
         if shouldFail {
             throw Phase2ConnectionError.connectionFailed
         }
-        return Phase2PTY()
+        return Phase2PTY(
+            probeSucceeds: probeSucceeds,
+            probeDelay: probeDelay,
+            hangOnClose: attempt == 1 && hangOnFirstClose
+        )
     }
 
     func connectionAttempts() -> Int {
@@ -237,12 +248,40 @@ actor Phase2HostKeyPrompt {
     }
 }
 
-private struct Phase2PTY: PTYChannel {
+private struct Phase2PTY: PTYChannel, SSHCommandExecutingChannel {
+    let probeSucceeds: Bool
+    let probeDelay: Duration?
+    let hangOnClose: Bool
+
+    init(
+        probeSucceeds: Bool,
+        probeDelay: Duration? = nil,
+        hangOnClose: Bool = false
+    ) {
+        self.probeSucceeds = probeSucceeds
+        self.probeDelay = probeDelay
+        self.hangOnClose = hangOnClose
+    }
+
     func send(_: [UInt8]) async throws {}
 
     func resize(columns _: Int, rows _: Int) async throws {}
 
-    func close() async {}
+    func close() async {
+        if hangOnClose {
+            try? await Task.sleep(for: .seconds(60))
+        }
+    }
+
+    func execute(_ command: String) async throws -> [UInt8] {
+        if let probeDelay {
+            try await Task.sleep(for: probeDelay)
+        }
+        guard probeSucceeds, command == "true" else {
+            throw Phase2ConnectionError.connectionFailed
+        }
+        return []
+    }
 }
 
 private struct Phase2HostStore: HostStore {

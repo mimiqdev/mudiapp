@@ -1,4 +1,6 @@
+// swiftlint:disable file_length
 import HerdrKit
+import os
 import SwiftUI
 
 @MainActor
@@ -53,6 +55,7 @@ final class RootViewModel: ObservableObject {
     var baseSession: SSHShellSession?
     var baseTerminalSession: SSHShellSession?
     var isSceneInactive = false
+    var isSceneBackgrounded = false
     var sceneLifecycleGeneration = UUID()
     var terminalSessionCloseSuppressed = false
     /// Identity of a terminal session whose close surfaced during a scene
@@ -64,17 +67,17 @@ final class RootViewModel: ObservableObject {
     /// retakeovers that replace the terminal session and recreate the view,
     /// so focus can be restored on the new view.
     var terminalKeyboardFocusActive = false
-
+    var networkPathRecovery: NetworkPathRecoveryState
     func terminalInputFocusDidChange(_ isFocused: Bool) {
         terminalKeyboardFocusActive = isFocused
     }
-
     init(
         coordinator: ApplicationCoordinator = ApplicationCoordinator(),
         workflowFactory: any HerdrWorkflowFactory = SSHHerdrWorkflowFactory(),
         preferencesStore: any PreferencesStore = UserDefaultsPreferencesStore(),
         localNetworkPermissionGate: (any LocalNetworkPermissionGate)? = nil,
         panePickerScheduler: any PanePickerRefreshScheduling = LivePanePickerRefreshScheduler(),
+        networkPathMonitor: any NetworkPathMonitoring = SystemNetworkPathMonitor(),
         rememberedPaneID: Pane.ID? = nil,
         rememberedPaneHostID: Host.ID? = nil
     ) {
@@ -83,6 +86,9 @@ final class RootViewModel: ObservableObject {
         self.preferencesStore = preferencesStore
         self.localNetworkPermissionGate = localNetworkPermissionGate
         self.panePickerScheduler = panePickerScheduler
+        self.networkPathRecovery = NetworkPathRecoveryState(
+            monitor: networkPathMonitor
+        )
         self.lastPaneID = rememberedPaneID
         self.lastPaneHostID = rememberedPaneHostID
         stateTask = Task { [weak self, coordinator] in
@@ -97,11 +103,13 @@ final class RootViewModel: ObservableObject {
     deinit {
         stateTask?.cancel()
         connectionTask?.cancel()
+        networkPathRecovery.transparentTask?.cancel()
+        networkPathRecovery.debounceTask?.cancel()
+        networkPathRecovery.monitor.cancel()
         workflowTask?.cancel()
         workspaceCreationTask?.cancel()
         pendingHostKeyDecision?.resume(returning: .reject)
     }
-
 }
 
 extension RootViewModel {
@@ -112,7 +120,6 @@ extension RootViewModel {
             errorMessage = error.localizedDescription
         }
     }
-
     func loadPreferences() async {
         do {
             preferences = try await preferencesStore.load()
@@ -120,7 +127,6 @@ extension RootViewModel {
             errorMessage = error.localizedDescription
         }
     }
-
     func updateAppearance(_ appearance: AppearancePreference) {
         preferences.appearance = appearance
         persistPreferences()
@@ -747,6 +753,7 @@ extension RootViewModel {
         fallbackState: HerdrBrowserState? = nil
     ) async {
         guard isCurrentWorkflow(workflow), !Task.isCancelled else { return }
+        startNetworkPathMonitoring()
 
         switch state {
         case let .panePicker(picker):
@@ -859,6 +866,13 @@ extension RootViewModel {
         connectionGeneration = UUID()
         connectionTask?.cancel()
         connectionTask = nil
+        networkPathRecovery.transparentTask?.cancel()
+        networkPathRecovery.transparentTask = nil
+        networkPathRecovery.transparentTaskID = nil
+        isTransparentlyReconnecting = false
+        Self.networkRecoveryLog.notice("reconnect cancelled by navigation overlay=false")
+        pendingTerminalCloseIdentity = nil
+        stopNetworkPathMonitoring()
         workflowTask?.cancel()
         workflowTask = nil
         answerHostKeyPrompt(.reject)
@@ -936,6 +950,9 @@ extension RootViewModel {
         workflowTask = nil
     }
 
+    /// Maximum budget to wait for channel teardown before abandoning the socket.
+    static let teardownCloseTimeout = Duration.seconds(1)
+
     private func scheduleTeardown(
         workflow: (any HerdrWorkflowCoordinating)?
     ) {
@@ -946,11 +963,22 @@ extension RootViewModel {
         let generation = connectionGeneration
         let coordinator = self.coordinator
         let task = Task { [weak self, previousTeardown, workflow, coordinator, teardownID] in
+            // Navigation must not wait on a reconnect whose client ignores
+            // task cancellation; retire the coordinator attempt first.
+            await coordinator.cancelPendingConnection()
             await previousTeardown?.value
-            if let workflow {
-                _ = await workflow.returnToBrowser()
-            }
-            await coordinator.disconnectAndWait()
+            _ = try? await runWithTimeout(
+                Self.teardownCloseTimeout,
+                operation: {
+                    if let workflow {
+                        _ = await workflow.returnToBrowser()
+                    }
+                    await coordinator.disconnectAndWait()
+                },
+                onAbort: {
+                    await coordinator.forceDisconnectedAfterCloseTimeout()
+                }
+            )
             guard let self, self.teardownID == teardownID else { return }
             if self.connectionGeneration == generation {
                 self.connectionState = await coordinator.connectionState()
@@ -983,9 +1011,5 @@ extension RootViewModel {
                 self?.errorMessage = error.localizedDescription
             }
         }
-    }
-
-    private struct MissingCredentialsError: LocalizedError {
-        var errorDescription: String? { "No saved SSH credentials. Edit this host to add a password or private key." }
     }
 }

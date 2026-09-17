@@ -35,4 +35,8 @@ extension ApplicationCoordinator {
     func activeTransport() -> ActiveTransport? {
         activeTransportValue
     }
+
+    func lastAutomaticMoshFailureClass() -> MoshFailureClass? {
+        lastAutomaticMoshFailure
+    }
 }

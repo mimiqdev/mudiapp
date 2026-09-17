@@ -12,6 +12,11 @@ import HerdrKit
 /// the handshake handler and gives that decision enough time to complete while
 /// retaining Citadel's authentication methods and PTY protocol.
 final class NIOSSHConnection: @unchecked Sendable {
+    /// TCP connect budget for one SSH connection attempt. Keep this long
+    /// enough for cellular + VPN/tailnet handshakes; SwiftNIO's hostname
+    /// overload races address families with its 250-ms Happy Eyeballs
+    /// stagger instead of waiting for a dead family first.
+    static let connectTimeout: TimeAmount = .seconds(60)
     static let hostKeyDecisionTimeout: TimeAmount = .seconds(60)
     static let commandTimeout: TimeAmount = .seconds(10)
 
@@ -59,7 +64,14 @@ final class NIOSSHConnection: @unchecked Sendable {
                     return channel.eventLoop.makeFailedFuture(error)
                 }
             }
-            .connectTimeout(.seconds(30))
+            // ClientBootstrap.connect(host:port:) uses SwiftNIO's RFC 8305
+            // Happy Eyeballs connector. Set the same budget on each socket as
+            // well as on the overall resolver/connection operation.
+            .connectTimeout(Self.connectTimeout)
+            .channelOption(
+                ChannelOptions.connectTimeout,
+                value: Self.connectTimeout
+            )
             .channelOption(
                 ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR),
                 value: 1
@@ -451,7 +463,11 @@ private actor CitadelInteractivePTYChannel: PTYOutputChannel {
         outputContinuation.finish()
         readinessContinuation.finish()
         if let childChannel {
-            try? await childChannel.close()
+            _ = try? await runWithTimeout(
+                .seconds(1),
+                operation: { try await childChannel.close() },
+                onAbort: {}
+            )
         }
     }
 
@@ -729,9 +745,17 @@ actor CitadelPTYChannel: PTYOutputChannel, SSHCommandExecutingChannel, SSHIntera
         outputContinuation.finish()
 
         if let childChannel {
-            try? await childChannel.close()
+            _ = try? await runWithTimeout(
+                .seconds(1),
+                operation: { try await childChannel.close() },
+                onAbort: {}
+            )
         }
-        try? await connection.channel.close()
+        _ = try? await runWithTimeout(
+            .seconds(1),
+            operation: { try await self.connection.channel.close() },
+            onAbort: {}
+        )
     }
 
     private static let ptyRequest = SSHChannelRequestEvent.PseudoTerminalRequest(

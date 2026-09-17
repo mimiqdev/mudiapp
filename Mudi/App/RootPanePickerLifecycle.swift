@@ -19,6 +19,7 @@ extension RootViewModel {
     /// Stops Picker refresh and attached control after the scene interruption
     /// has hidden the system presentation. No Host teardown occurs here.
     func sceneDidEnterBackground() async {
+        isSceneBackgrounded = true
         if !isSceneInactive {
             sceneWillResignActive()
         }
@@ -29,8 +30,11 @@ extension RootViewModel {
     /// Resumes the existing terminal context. The system sheet was never
     /// removed, so nothing has to be re-presented here.
     func sceneDidBecomeActive() async {
-        guard isSceneInactive else { return }
+        let wasInactive = isSceneInactive
+        let wasBackgrounded = isSceneBackgrounded
+        guard wasInactive || wasBackgrounded else { return }
         isSceneInactive = false
+        isSceneBackgrounded = false
         sceneLifecycleGeneration = UUID()
         noteTransparentReconnectBudgetReset()
         await resumePaneControlNow()
@@ -41,6 +45,7 @@ extension RootViewModel {
         // recovery now that the budget has been re-armed.
         await recoverInterruptedTerminalAfterActivation()
         guard !Task.isCancelled else { return }
+        scheduleNetworkPathReconnectIfNeeded()
         await restartPanePickerRefreshIfPresent()
     }
 
@@ -96,11 +101,12 @@ extension RootViewModel {
         guard ObjectIdentifier(activeConnection.session) == closedIdentity
         else { return }
 
-        // An interruption (scene inactive, suspended control, or a
+        // An interruption (scene inactive, scene backgrounded, suspended control, or a
         // reconnect already in flight) hides the close: record it so the
         // next activation runs the one-shot recovery instead of leaving a
         // dead terminal mounted with a torn-down coordinator.
         if isSceneInactive
+            || isSceneBackgrounded
             || isPaneControlSuspended
             || isTransparentlyReconnecting {
             pendingTerminalCloseIdentity = closedIdentity
@@ -228,7 +234,7 @@ extension RootViewModel {
         else { return }
         if let sceneGeneration {
             guard sceneGeneration == sceneLifecycleGeneration,
-                  isSceneInactive
+                  isSceneInactive || isSceneBackgrounded
             else { return }
         }
         isPaneControlSuspended = true
@@ -236,7 +242,7 @@ extension RootViewModel {
         guard !Task.isCancelled else { return }
         if let sceneGeneration {
             guard sceneGeneration == sceneLifecycleGeneration,
-                  isSceneInactive
+                  isSceneInactive || isSceneBackgrounded
             else { return }
         }
         isPaneControlSuspended = true

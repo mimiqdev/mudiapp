@@ -1,0 +1,248 @@
+import Foundation
+import HerdrKit
+import os
+
+struct NetworkPathRecoveryState {
+    let monitor: any NetworkPathMonitoring
+    var monitoringStarted = false
+    var monitorGeneration = UUID()
+    var lastPath: NetworkPathSnapshot?
+    var changeGeneration = UUID()
+    var attemptedGeneration: UUID?
+    var changePending = false
+    var debounceTask: Task<Void, Never>?
+    var debounceTaskID: UUID?
+    var transparentTask: Task<Void, Never>?
+    var transparentTaskID: UUID?
+
+    init(monitor: any NetworkPathMonitoring) {
+        self.monitor = monitor
+    }
+}
+
+@MainActor
+extension RootViewModel {
+    static let networkRecoveryLog = Logger(
+        subsystem: "dev.mudi.mobile",
+        category: "network-recovery"
+    )
+
+    /// A short coalescing window prevents flapping path updates from
+    /// producing a reconnect for every intermediate snapshot.
+    static let networkPathReconnectDebounce = Duration.milliseconds(300)
+    /// A satisfied path can be probed immediately; the probe is the guard
+    /// against tearing down a connection that survived the path update.
+    static let networkPathProbeTimeout = Duration.milliseconds(400)
+
+    func startNetworkPathMonitoring() {
+        guard !networkPathRecovery.monitoringStarted else { return }
+        networkPathRecovery.monitoringStarted = true
+        let monitorGeneration = UUID()
+        networkPathRecovery.monitorGeneration = monitorGeneration
+        networkPathRecovery.lastPath = nil
+        networkPathRecovery.monitor.start { [weak self] path in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.networkPathDidUpdate(
+                    path,
+                    monitorGeneration: monitorGeneration
+                )
+            }
+        }
+    }
+
+    func stopNetworkPathMonitoring() {
+        networkPathRecovery.monitoringStarted = false
+        networkPathRecovery.monitorGeneration = UUID()
+        networkPathRecovery.lastPath = nil
+        networkPathRecovery.changeGeneration = UUID()
+        networkPathRecovery.attemptedGeneration = nil
+        networkPathRecovery.changePending = false
+        networkPathRecovery.debounceTask?.cancel()
+        networkPathRecovery.debounceTask = nil
+        networkPathRecovery.debounceTaskID = nil
+        networkPathRecovery.monitor.cancel()
+    }
+
+    /// Called by the monitor callback and exposed internally for deterministic
+    /// model tests.
+    func networkPathDidUpdate(_ path: NetworkPathSnapshot) {
+        networkPathDidUpdate(
+            path,
+            monitorGeneration: networkPathRecovery.monitorGeneration
+        )
+    }
+
+    private func networkPathDidUpdate(
+        _ path: NetworkPathSnapshot,
+        monitorGeneration: UUID
+    ) {
+        guard networkPathRecovery.monitoringStarted,
+              monitorGeneration == networkPathRecovery.monitorGeneration
+        else { return }
+
+        let previousPath = networkPathRecovery.lastPath
+        networkPathRecovery.lastPath = path
+        guard let previousPath else {
+            Self.networkRecoveryLog.notice(
+                "path initial \(path.logDescription, privacy: .public)"
+            )
+            return
+        }
+        let statusFlipped = (previousPath.status == .satisfied)
+            != (path.status == .satisfied)
+        let interfacesChanged = previousPath.interfaces != path.interfaces
+        guard statusFlipped || interfacesChanged else {
+            Self.networkRecoveryLog.debug(
+                "path ignore \(path.logDescription, privacy: .public)"
+            )
+            return
+        }
+        Self.networkRecoveryLog.notice(
+            "path change from \(previousPath.logDescription, privacy: .public) to \(path.logDescription, privacy: .public)"
+        )
+
+        networkPathRecovery.changeGeneration = UUID()
+        networkPathRecovery.attemptedGeneration = nil
+        networkPathRecovery.changePending = true
+        networkPathRecovery.debounceTask?.cancel()
+        networkPathRecovery.debounceTask = nil
+        networkPathRecovery.debounceTaskID = nil
+        scheduleNetworkPathReconnectIfNeeded()
+    }
+
+    /// Re-attempts a path change observed while the scene was backgrounded once
+    /// activation has restored the foreground context.
+    func scheduleNetworkPathReconnectIfNeeded() {
+        guard networkPathRecovery.monitoringStarted,
+              networkPathRecovery.changePending,
+              !isSceneBackgrounded,
+              activeConnection != nil,
+              networkPathRecovery.attemptedGeneration
+                  != networkPathRecovery.changeGeneration,
+              let restoration = networkPathReconnectRestoration()
+        else {
+            if networkPathRecovery.changePending {
+                Self.networkRecoveryLog.notice(
+                    """
+                    schedule skip bg=\(self.isSceneBackgrounded) \
+                    inactive=\(self.isSceneInactive) \
+                    connected=\(self.activeConnection != nil) \
+                    herdr=\(self.herdrStateSummary, privacy: .public)
+                    """
+                )
+            }
+            return
+        }
+
+        let generation = networkPathRecovery.changeGeneration
+        let debounce = networkPathRecovery.lastPath?.status == .satisfied
+            ? .zero
+            : Self.networkPathReconnectDebounce
+        let debounceTaskID = UUID()
+        networkPathRecovery.debounceTask?.cancel()
+        networkPathRecovery.debounceTaskID = debounceTaskID
+        networkPathRecovery.debounceTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: debounce)
+            } catch {
+                return
+            }
+            guard let self,
+                  !Task.isCancelled,
+                  self.networkPathRecovery.debounceTaskID == debounceTaskID,
+                  !self.isSceneBackgrounded,
+                  self.networkPathRecovery.changePending,
+                  self.networkPathRecovery.changeGeneration == generation,
+                  self.networkPathRecovery.attemptedGeneration != generation,
+                  self.networkPathRecovery.lastPath?.status == .satisfied,
+                  !self.isTransparentlyReconnecting,
+                  self.networkPathRecovery.transparentTask == nil
+            else { return }
+
+            Self.networkRecoveryLog.notice(
+                "probe start timeout=400ms restoration=\(String(describing: restoration), privacy: .public)"
+            )
+            let probeStarted = ContinuousClock.now
+            let probeSucceeded = await self.probeExistingNetworkSession()
+            let probeMs = (ContinuousClock.now - probeStarted) / .milliseconds(1)
+            Self.networkRecoveryLog.notice(
+                "probe \(probeSucceeded ? "alive" : "dead", privacy: .public) durationMs=\(probeMs)"
+            )
+            guard !Task.isCancelled,
+                  self.networkPathRecovery.debounceTaskID == debounceTaskID,
+                  !self.isSceneBackgrounded,
+                  self.networkPathRecovery.changePending,
+                  self.networkPathRecovery.changeGeneration == generation,
+                  self.networkPathRecovery.attemptedGeneration != generation,
+                  self.networkPathRecovery.lastPath?.status == .satisfied,
+                  !self.isTransparentlyReconnecting,
+                  self.networkPathRecovery.transparentTask == nil
+            else { return }
+
+            self.networkPathRecovery.debounceTask = nil
+            self.networkPathRecovery.debounceTaskID = nil
+            self.networkPathRecovery.attemptedGeneration = generation
+            self.networkPathRecovery.changePending = false
+            guard !probeSucceeded else {
+                Self.networkRecoveryLog.notice("skip reconnect, session still alive")
+                return
+            }
+            Self.networkRecoveryLog.notice("reconnect launch after dead probe")
+            self.launchTransparentControlPlaneReconnect(
+                restoring: restoration,
+                trigger: .networkPathChange
+            )
+        }
+    }
+
+    private func probeExistingNetworkSession() async -> Bool {
+        guard let session = baseSession
+                ?? baseTerminalSession
+                ?? activeConnection?.session
+        else { return false }
+
+        do {
+            _ = try await runWithTimeout(
+                Self.networkPathProbeTimeout,
+                operation: {
+                    try await session.execute("true")
+                },
+                onAbort: {}
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func networkPathReconnectRestoration()
+        -> TransparentReconnectRestoration?
+    {
+        switch herdrState {
+        case .attached:
+            .rememberedPane
+        case .ordinaryTerminal:
+            .ordinaryTerminal
+        default:
+            nil
+        }
+    }
+
+    var herdrStateSummary: String {
+        switch herdrState {
+        case .attached(_, let pane):
+            "attached(\(pane.id))"
+        case .ordinaryTerminal:
+            "ordinaryTerminal"
+        case .panes(let session, _):
+            "panes(\(session.id))"
+        case .sessions(let list):
+            "sessions(\(list.count))"
+        case .empty:
+            "empty"
+        case nil:
+            "nil"
+        }
+    }
+}

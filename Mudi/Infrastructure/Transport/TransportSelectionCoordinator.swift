@@ -1,5 +1,8 @@
 import Foundation
 import HerdrKit
+@preconcurrency import MoshBootstrap
+@preconcurrency import MoshCore
+@preconcurrency import MoshTransport
 
 /// The credentialed connection boundary used by transport selection.
 ///
@@ -18,7 +21,8 @@ enum TransportSelectionStrategy {
     static func select<MoshConnection>(
         preference: TransportPreference,
         bootstrapSSH: @escaping @Sendable () async throws -> Void,
-        connectMosh: @escaping @Sendable () async throws -> MoshConnection
+        connectMosh: @escaping @Sendable () async throws -> MoshConnection,
+        onMoshFailure: (@Sendable (MoshFailureClass) async -> Void)? = nil
     ) async throws -> (transport: ActiveTransport, moshConnection: MoshConnection?) {
         switch preference {
         case .ssh:
@@ -42,10 +46,103 @@ enum TransportSelectionStrategy {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
+                let failureClass = Self.classifyMoshFailure(error)
+                if let onMoshFailure {
+                    await onMoshFailure(failureClass)
+                }
                 // The SSH bootstrap remains the active connection.
                 return (transport: .ssh, moshConnection: nil)
             }
         }
+    }
+
+    /// Production classification hook for Auto fallback. Adapters may throw
+    /// ``MoshFailureClass`` directly, while the concrete SwiftMosh errors are
+    /// normalized here before Auto keeps the SSH bootstrap.
+    static func classifyMoshFailure(_ error: Error) -> MoshFailureClass {
+        if let failure = error as? MoshFailureClass {
+            return failure
+        }
+
+        if let error = error as? MoshBootstrapError {
+            switch error {
+            case .missingServer, .processExited:
+                return .moshServerUnavailable
+            case .timedOut:
+                return .udpTimedOut
+            case .invalidConnectLine, .invalidPort, .invalidKey, .permissionDenied:
+                return .unknown
+            }
+        }
+
+        if let error = error as? MoshSessionError {
+            if case let .sessionFailed(failure) = error {
+                return classifyMoshFailure(failure)
+            }
+            return .unknown
+        }
+
+        if let error = error as? MoshSessionFailure {
+            switch error {
+            case .timeout, .retryLimitExceeded:
+                return .udpTimedOut
+            case let .transportFailure(message),
+                 let .circuitBreakerTripped(_, message):
+                return classifyMoshMessage(message)
+            case .protocolViolation, .authenticationFailure:
+                return .unknown
+            }
+        }
+
+        if let error = error as? TransportError {
+            switch error {
+            case let .networkFailure(message), let .sendFailure(message):
+                return classifyMoshMessage(message)
+            case .invalidPort, .alreadyStarted, .notStarted, .cancelled, .malformedDatagram:
+                return .unknown
+            }
+        }
+
+        if let error = error as? SSHInteractiveCommandError {
+            switch error {
+            case let .commandFailed(_, message):
+                return classifyMoshMessage(message ?? error.localizedDescription)
+            case .noInitialResponse, .channelClosed, .invalidData, .outputTooLarge:
+                return classifyMoshMessage(error.localizedDescription)
+            }
+        }
+
+        return classifyMoshMessage(
+            "\(error.localizedDescription) \(String(describing: error))"
+        )
+    }
+
+    private static func classifyMoshMessage(_ message: String) -> MoshFailureClass {
+        let lowercased = message.lowercased()
+        if lowercased.contains("mosh-server")
+            && (lowercased.contains("not found")
+                || lowercased.contains("command not found")
+                || lowercased.contains("no such file"))
+        {
+            return .moshServerUnavailable
+        }
+        if lowercased.contains("timed out")
+            || lowercased.contains("timeout")
+            || lowercased.contains("etimedout")
+        {
+            return .udpTimedOut
+        }
+        if lowercased.contains("blocked")
+            || lowercased.contains("not permitted")
+            || lowercased.contains("permission denied")
+            || lowercased.contains("unreachable")
+            || lowercased.contains("no route")
+            || lowercased.contains("network is down")
+            || lowercased.contains("connection refused")
+        {
+            return .udpBlockedOnTailnetOrCarrier
+        }
+        return .unknown
     }
 }
 
@@ -122,6 +219,26 @@ actor TransportSelectionCoordinator {
 
     func disconnect() async {
         activeTransportValue = nil
+    }
+}
+
+enum MoshFailureClass: Error, Equatable, Hashable, LocalizedError, Sendable {
+    case udpTimedOut
+    case udpBlockedOnTailnetOrCarrier
+    case moshServerUnavailable
+    case unknown
+
+    var errorDescription: String? {
+        switch self {
+        case .udpTimedOut:
+            "The Mosh UDP handshake timed out."
+        case .udpBlockedOnTailnetOrCarrier:
+            "Mosh UDP appears blocked by the carrier or tailnet."
+        case .moshServerUnavailable:
+            "The host does not provide mosh-server."
+        case .unknown:
+            "Mosh failed to establish a session."
+        }
     }
 }
 

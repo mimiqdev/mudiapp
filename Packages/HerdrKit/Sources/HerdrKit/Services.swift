@@ -32,6 +32,9 @@ public enum HostKeyDecision: Equatable, Sendable {
 /// Errors that can be shown by the connection UI.
 public enum ConnectionError: Error, Equatable, LocalizedError, Sendable {
     case connectionFailed
+    case connectionTimedOut
+    case hostUnreachable
+    case connectionRefused
     case moshUnavailable
     case hostKeyRejected
     case hostKeyMismatch(expected: String, actual: String)
@@ -40,6 +43,12 @@ public enum ConnectionError: Error, Equatable, LocalizedError, Sendable {
         switch self {
         case .connectionFailed:
             "Unable to connect to the SSH host."
+        case .connectionTimedOut:
+            "The SSH connection timed out."
+        case .hostUnreachable:
+            "The SSH host is unreachable."
+        case .connectionRefused:
+            "The SSH host refused the connection."
         case .moshUnavailable:
             "Mosh is unavailable for this host."
         case .hostKeyRejected:

@@ -289,6 +289,8 @@ final class Phase4NavigationApplication {
         moshTransport: any MoshTransportBootstrapping = SwiftMoshAdapter(),
         preferencesStore: (any PreferencesStore)? = nil,
         reconnectGate: Phase2ConnectionGate? = nil,
+        networkPathMonitor: any NetworkPathMonitoring = SystemNetworkPathMonitor(),
+        reconnectTimeout: Duration = NetworkConnectionPolicy.documentedDefault.perAttemptTimeout,
         panePickerScheduler: Phase6TestScheduler = Phase6TestScheduler(),
         workspaceCreation: HerdrWorkspaceCreation? = nil,
         workspaceSnapshotAfterCreation: HerdrSnapshot? = nil,
@@ -308,7 +310,8 @@ final class Phase4NavigationApplication {
             credentialStore: Phase4CredentialStore(vault: credentialVault),
             knownHostKeyStore: Phase4KnownHostKeyStore(knownHostKeys: knownHostKeys),
             client: client,
-            moshTransport: moshTransport
+            moshTransport: moshTransport,
+            reconnectTimeout: reconnectTimeout
         )
         model = RootViewModel(
             coordinator: coordinator,
@@ -323,6 +326,7 @@ final class Phase4NavigationApplication {
             ),
             preferencesStore: preferencesStore ?? UserDefaultsPreferencesStore(),
             panePickerScheduler: panePickerScheduler,
+            networkPathMonitor: networkPathMonitor,
             rememberedPaneID: rememberedPaneID,
             rememberedPaneHostID: rememberedPaneHostID,
         )
@@ -354,6 +358,8 @@ func makePhase4NavigationApplication(
     moshTransport: any MoshTransportBootstrapping = SwiftMoshAdapter(),
     preferencesStore: (any PreferencesStore)? = nil,
     reconnectGate: Phase2ConnectionGate? = nil,
+    networkPathMonitor: any NetworkPathMonitoring = SystemNetworkPathMonitor(),
+    reconnectTimeout: Duration = NetworkConnectionPolicy.documentedDefault.perAttemptTimeout,
     panePickerScheduler: Phase6TestScheduler = Phase6TestScheduler(),
     workspaceCreation: HerdrWorkspaceCreation? = nil,
     workspaceSnapshotAfterCreation: HerdrSnapshot? = nil,
@@ -373,6 +379,8 @@ func makePhase4NavigationApplication(
         moshTransport: moshTransport,
         preferencesStore: preferencesStore,
         reconnectGate: reconnectGate,
+        networkPathMonitor: networkPathMonitor,
+        reconnectTimeout: reconnectTimeout,
         panePickerScheduler: panePickerScheduler,
         workspaceCreation: workspaceCreation,
         workspaceSnapshotAfterCreation: workspaceSnapshotAfterCreation,
