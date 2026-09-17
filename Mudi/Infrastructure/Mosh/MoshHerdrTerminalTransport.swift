@@ -67,9 +67,9 @@ actor MoshHerdrTerminalTransport: TerminalTransport,
             throw SSHHerdrTerminalTransportError.missingTerminalID
         }
         let target = SSHLoginShellCommand.shellQuote(terminalID)
-        let inner = Self.attachInnerCommand(target: target)
-        let command =
-            "\"${SHELL:-/bin/sh}\" -lc \(SSHLoginShellCommand.shellQuote(inner))"
+        let command = SSHLoginShellCommand.wrapInteractive(
+            Self.attachInnerCommand(target: target)
+        )
 
         guard let credentials = try await credentialsProvider() else {
             throw MissingCredentialsError()

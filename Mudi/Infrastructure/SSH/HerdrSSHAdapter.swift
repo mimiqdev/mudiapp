@@ -154,8 +154,7 @@ actor SSHHerdrTerminalTransport: TerminalTransport, HerdrTerminalSessionProvidin
             sessionOption: sessionOption,
             size: size
         )
-        let command =
-            "\"${SHELL:-/bin/sh}\" -lc \(SSHLoginShellCommand.shellQuote(inner))"
+        let command = SSHLoginShellCommand.wrapInteractive(inner)
         let channel: any PTYOutputChannel
         do {
             channel = try await session.openInteractiveCommand(command)
