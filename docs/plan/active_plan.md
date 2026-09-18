@@ -13,6 +13,7 @@
 - 无 `mosh-server` Host 的 Auto → SSH 回退在真实网络下的验证
 - SSH control 与 Mosh transport 的边界在网络异常下的行为一致性
 - 连接失败文案：超时/不可达/拒绝的本地化与可区分性
+- 应用内诊断：Settings 可开 Debug 与保存 log；网络/重连事件落到本机文件，可用无线 `devicectl copy` 或分享取出，不必 `sudo log collect`
 
 ## 不在本步
 
@@ -32,6 +33,7 @@
 - Auto 模式 Mosh 失败回退 SSH 的判定覆盖"UDP 被 tailnet/运营商阻断"的情形
 - 网络中断恢复：transport 层断开与重连的状态机测试（复用阶段 7 transparent reconnect 接缝）
 - `make test-core` 和 Mudi XCTest 通过（模拟器）
+- Debug / 保存 log 开关可持久化；默认关闭；落盘不含密码与私钥；滚动文件有上限
 
 ### 手工（出口）
 
@@ -39,6 +41,7 @@
 - Wi-Fi ↔ 蜂窝切换后 session 恢复（透明重连不打扰）
 - 断网 → 恢复 → 回到原 pane，无错误残留
 - 无 mosh-server 的 Host 走 SSH 正常
+- Debug+保存 log 打开后切网，文件里能看到 path/probe/reconnect/close 事件；关开关后停止写入
 
 ## 切片
 
