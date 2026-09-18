@@ -17,6 +17,19 @@ public enum TerminalScrollDirection: String, Codable, Equatable, Sendable {
     case down
 }
 
+/// How a connected session's terminal content can be scrolled remotely.
+public enum TerminalScrollCapability: Equatable, Sendable {
+    /// No remote scroll target exists; the terminal view keeps local scrolling.
+    case none
+    /// The host answers scroll requests with scrollback snapshots through a
+    /// ``PTYScrollChannel`` (the Herdr control stream).
+    case hostScrollback
+    /// The remote application consumes terminal mouse-wheel input directly
+    /// (a raw direct attach). The view encodes vertical pans as wheel events
+    /// while the application reports mouse input.
+    case remoteMouseWheel
+}
+
 /// The byte-level PTY operations needed by an interactive shell.
 public protocol PTYChannel: Sendable {
     func send(_ bytes: [UInt8]) async throws
@@ -31,6 +44,18 @@ public protocol PTYScrollChannel: PTYChannel {
         direction: TerminalScrollDirection,
         lines: Int
     ) async throws
+}
+
+/// A PTY channel whose remote application consumes terminal mouse-wheel
+/// input directly, as a raw `herdr terminal attach` stream does.
+///
+/// Unlike ``PTYScrollChannel`` the host provides no scrollback snapshots: the
+/// remote application's own viewport is the scroll target, so vertical pans
+/// are encoded as wheel events and forwarded only while the application has
+/// mouse reporting enabled.
+public protocol PTYWheelInputChannel: PTYChannel {
+    /// Whether this channel's remote application should receive wheel input.
+    var acceptsMouseWheelInput: Bool { get async }
 }
 
 /// A PTY channel that exposes bytes received from the remote shell.
@@ -212,6 +237,22 @@ public actor SSHShellSession: ShellSession {
     /// Whether this session's channel can request host-side scrollback.
     public func supportsRemoteScrollback() -> Bool {
         channel is any PTYScrollChannel && state == .connected
+    }
+
+    /// The remote scroll path available to this session's terminal content.
+    ///
+    /// Host scrollback wins when the channel provides it; otherwise a direct
+    /// attach channel can forward wheel input to its remote application.
+    public func scrollCapability() async -> TerminalScrollCapability {
+        guard let channel, state == .connected else { return .none }
+        if channel is any PTYScrollChannel {
+            return .hostScrollback
+        }
+        if let wheelChannel = channel as? any PTYWheelInputChannel,
+           await wheelChannel.acceptsMouseWheelInput {
+            return .remoteMouseWheel
+        }
+        return .none
     }
 
     /// Requests a host-side scrollback snapshot when the channel supports it.
