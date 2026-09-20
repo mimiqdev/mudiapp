@@ -358,6 +358,68 @@ final class Phase10ConnectingFeedbackTests: XCTestCase {  // pi-lens-ignore: typ
         await tearDownConnection(application)
     }
 
+    /// Overlap regression: the retired attempt's discovery is still gated when
+    /// the retry starts. Releasing the gate finishes both tasks, and the stale
+    /// one must not touch the coordinator: no abort of the retry's attempt and
+    /// no close of the retry's live session.
+    func testRetryWithDiscoveryStillGatedSurvivesRetiredAttempt()
+        async throws
+    {  // pi-lens-ignore: function_body_length
+        let fixture = try Phase3HerdrFixtures.single()
+        let host = phase4Host()
+        let discoveryGate = Phase2ConnectionGate()
+        let closeRecorder = Phase10ChannelCloseRecorder()
+        let client = Phase10GatedSSHClient(closeRecorder: closeRecorder)
+        let clock = Phase10CancelThresholdClock()
+        let application = makePhase10Application(
+            fixture: fixture,
+            client: client,
+            clock: clock,
+            discoveryGate: discoveryGate
+        )
+        try await application.save(host)
+
+        // Attempt 1 already owns a live SSH session and hangs in discovery.
+        application.model.connect(to: host)
+        try await waitUntilAsync { await discoveryGate.hasStarted() }
+        try await waitUntil { application.model.isPanePickerPresented }
+        try await waitUntilAsync { await clock.releaseThresholdWait() }
+        application.model.cancelConnect()
+        try await waitUntil {
+            application.model.rowConnectionState(for: host) == .idle
+        }
+
+        // Retry while the retired attempt's discovery is still gated.
+        application.model.connect(to: host)
+        try await waitUntil { application.model.isPanePickerPresented }
+        XCTAssertEqual(
+            application.model.rowConnectionState(for: host),
+            .connecting
+        )
+
+        // Releasing the gate wakes the retired and the retry discovery. The
+        // retry must stay connected and keep its session.
+        await discoveryGate.release()
+        try await waitUntil { application.model.activeConnection != nil }
+        try await settle()
+        XCTAssertNil(application.model.errorMessage)
+        let coordinatorState = await application.coordinator.connectionState()
+        XCTAssertEqual(
+            coordinatorState,
+            .connected,
+            "The retired discovery must not abort the retry"
+        )
+        let shellSession = await application.coordinator.activeShellSession()
+        XCTAssertNotNil(
+            shellSession,
+            "The retired discovery must not close the retry's session"
+        )
+        XCTAssertEqual(application.model.connectionState, .connected)
+        let attempts = await client.connectionAttempts()
+        XCTAssertEqual(attempts, 2)
+        await tearDownConnection(application)
+    }
+
     // MARK: - Existing session safety
 
     func testCancelDoesNotDisturbConnectedSession() async throws {

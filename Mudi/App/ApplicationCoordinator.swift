@@ -207,6 +207,15 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
         finishAttempt(attemptID, state: .failed)
     }
 
+    /// Disconnects the coordinator's current connection.
+    ///
+    /// Ownership contract: this retires an in-flight attempt because the
+    /// caller owns it (the user disconnected while connecting, or the active
+    /// host is being deleted). A superseded task must NOT call this - the
+    /// attempt it belonged to may already be gone and the coordinator may now
+    /// be serving a newer attempt, whose attempt/session this would then
+    /// retire. Superseded tasks leave cleanup to their invalidator (cancel,
+    /// teardown, delete, transparent reconnect).
     func disconnect() async {
         if let attemptID = inFlightConnectID {
             disconnectRequestedFor = attemptID

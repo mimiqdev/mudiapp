@@ -308,7 +308,10 @@ extension RootViewModel {
                       self.isCurrentConnection(generation),
                       !Task.isCancelled
                 else {
-                    await coordinator.disconnect()
+                    // A superseded task must not touch the coordinator: it may
+                    // already be serving a newer attempt, and retiring or
+                    // closing that is the invalidator's job (cancel/teardown/
+                    // delete/transparent reconnect).
                     return
                 }
                 guard state == .connected,
@@ -330,8 +333,9 @@ extension RootViewModel {
                 )
                 let pickerState = try await pickerCoordinator.connect(to: host)
                 guard self.isCurrentConnection(generation), !Task.isCancelled else {
+                    // Stop this task's own discovery, but leave the coordinator
+                    // alone for the same ownership reason.
                     await pickerCoordinator.stopRefresh()
-                    await coordinator.disconnect()
                     return
                 }
                 self.workflow = workflow
@@ -417,13 +421,16 @@ extension RootViewModel {
                         )
                     }
                 )
+                // Ownership first: a superseded task must not touch the
+                // coordinator - it may already be serving a newer attempt, and
+                // the invalidator owns that cleanup.
                 guard self.isCurrentConnection(generation),
-                      !Task.isCancelled,
-                      state == .connected,
+                      !Task.isCancelled
+                else { return }
+                guard state == .connected,
                       let bootstrapSession = await coordinator.activeShellSession()
                 else {
-                    await coordinator.disconnect()
-                    return
+                    throw ConnectionError.connectionFailed
                 }
                 let terminalSession = await coordinator.activeTerminalSession() ?? bootstrapSession
                 let selectedTransport = await coordinator.activeTransport() ?? .ssh
@@ -439,8 +446,9 @@ extension RootViewModel {
                 )
                 let pickerState = try await pickerCoordinator.connect(to: host)
                 guard self.isCurrentConnection(generation), !Task.isCancelled else {
+                    // Stop this task's own discovery, but leave the coordinator
+                    // alone for the same ownership reason.
                     await pickerCoordinator.stopRefresh()
-                    await coordinator.disconnect()
                     return
                 }
                 self.workflow = workflow
