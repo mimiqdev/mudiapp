@@ -1,54 +1,52 @@
-# Active plan — 网络韧性
+# Active plan — UX Polish 第二轮
 
-**出口：** Wi-Fi、蜂窝（5G）、Tailscale-over-cellular 等真实网络组合下，Mudi 连接稳定、切换无感；已知连接失败场景全部消除或有明确解释。
+**出口：** 日常使用中积累的 UX 摩擦点被集中打磨；Host 支持多地址；可同时保持多条 Host 连接，返回列表不等于断开；连接过程可见、可取消。
 
-阶段 8 已完成 terminal 外观。本步只做网络连接的可靠性，发布准备不在本阶段。
+阶段 9 已完成网络韧性验收。本阶段打磨日常使用体验，不做新协议能力。
 
 ## 范围内
 
-- **首先复现并修复**：5G 蜂窝 + Tailscale（tailnet 内设备）连接超时失败——其他终端 App 在同样条件下可连，这是 Mudi 的 bug，不是环境限制
-  - 排查方向：IPv6/IPv4 解析与 Happy Eyeballs（NIO connect 路径）、Tailscale MagicDNS 解析、连接超时与重试、Mosh UDP 在 tailnet 上的路径、tailnet 隧道未就绪时的行为
-- 多网络组合真机验收：Wi-Fi、蜂窝、Wi-Fi↔蜂窝切换、Wi-Fi/蜂窝 ↔ Tailscale 的交叉组合
-- 网络切换/短暂断网后的 Mosh session 恢复与 transparent reconnect 行为
-- 无 `mosh-server` Host 的 Auto → SSH 回退在真实网络下的验证
-- SSH control 与 Mosh transport 的边界在网络异常下的行为一致性
-- 连接失败文案：超时/不可达/拒绝的本地化与可区分性
-- 应用内诊断：Settings 可开 Debug 与保存 log；网络/重连事件落到本机文件，可用无线 `devicectl copy` 或分享取出，不必 `sudo log collect`
+- **连接反馈（第一刀）**：Host 列表点击连接后立即可见 connecting 状态动画；连接超过约 5 秒仍无结果时，行右侧出现取消按钮；点取消中止本次连接尝试并回到点击前状态，不产生半开连接
+- Host 多地址：同一 Host 可添加多个地址（如 LAN IP、Tailscale IP、公网域名），编辑表单支持增删与拖动排序
+- 连接按用户自定义顺序尝试（串行 + 每地址短超时）；TOFU 与凭据按 Host 共享（同一台机器不因换地址重复确认）
+- 智能提升（上次成功地址自动提前）做成可选开关，默认尊重手动顺序
+- 连接过程/结果可见当前实际使用的地址
+- 原生 compose 输入框（可选）：shortcut bar 展开原生文本编辑区，长文输入/编辑用系统原生能力；发送走 bracketed paste（ESC[200~…ESC[201~]，shell 里多行不会逐行执行）；预留附件槽与 future/14 图片粘贴汇合；不做与 terminal 的实时镜像
+- 多 Host 同时连接：Hosts 是会话列表，不是单槽位。已连接的 Host 行提供进入（回到离开时的 terminal/Picker）和明确的断开；点另一个未连接 Host 可另开连接，不必顶掉当前会话。屏幕上仍只显示一个 terminal
+- 返回键 = 离开当前 terminal 回 Hosts，不断开 SSH/Mosh。断开只能是主动操作，或「放下手机一段时间」的可配置策略，不绑在返回上
+- 收集使用中发现的其它 UX 摩擦点纳入本阶段
 
 ## 不在本步
 
-- TestFlight、签名、隐私说明、发布材料（独立阶段）
+- 发布准备（future/11）
+- 通知推送（future/12）
+- D-pad 长按拖动（future/13）
+- 图片粘贴（future/14）
 - Herdr 协议变更
-- 通知推送（future/11）
-- 触屏光标重做（future/12）
 
 ## 测试
 
-先写自动化测试并确认失败，再实现。真实网络组合以真机手工验收为准。
+先写自动化测试并确认失败，再实现。连接手感与多地址顺序以真机手工验收为准。
 
 ### 自动化
 
-- 连接路径的地址族处理：IPv6-only / IPv4-only / 双栈地址列表的连接策略（Happy Eyeballs 或等效竞速/回退）有模型测试
-- 连接超时可配置且有合理默认值；蜂窝级别的慢连接不会过早超时
-- Auto 模式 Mosh 失败回退 SSH 的判定覆盖"UDP 被 tailnet/运营商阻断"的情形
-- 网络中断恢复：transport 层断开与重连的状态机测试（复用阶段 7 transparent reconnect 接缝）
+- 点击连接后 Host 行进入 connecting 状态：状态发布时机在连接任务启动时，不是成功/失败后
+- connecting 状态有可见动画（progress 指示存在且随状态出现/消失）
+- 连接进行中超过阈值（默认 5 秒，可注入时钟）出现取消按钮；5 秒内连上则不出现
+- 点取消：本次连接尝试被中止（认证/引导/transport 各阶段均可取消），Host 行回到 idle；已建立的既有会话不受影响；取消后再次连接可正常发起
+- 取消不产生半开连接：底层 SSH/Mosh 任务被取消并清理（沿用阶段 9 的 bounded close 语义）
 - `make test-core` 和 Mudi XCTest 通过（模拟器）
-- Debug / 保存 log 开关可持久化；默认关闭；落盘不含密码与私钥；滚动文件有上限
 
-### 手工（出口）
+### 手工（出口，第一刀）
 
-- 5G + Tailscale 连接成功且稳定
-- Wi-Fi ↔ 蜂窝切换后 session 恢复（透明重连不打扰）
-- 断网 → 恢复 → 回到原 pane，无错误残留
-- 无 mosh-server 的 Host 走 SSH 正常
-- Debug+保存 log 打开后切网，文件里能看到 path/probe/reconnect/close 事件；关开关后停止写入
+- 真机点击连接：立即看到连接动画；慢速网络下约 5 秒后出现取消
+- 点取消后回到 Host 列表，无错误残留；立即重连可成功
+- 正常速度连接不出现取消按钮
 
 ## 切片
 
-- 诊断并修复 tailnet 连接失败（地址解析/竞速/超时）。
-- 连接策略（地址族竞速、超时、回退）做成可测 policy。
-- 多网络组合真机矩阵验收。
+（待用户确认测试后填写）
 
 ## 完成后
 
-归档为 `archive/09-network-resilience.md`，将 `future/10-release.md` 提升为 `active_plan.md`。
+归档为 `archive/10-ux-polish-2.md`，将 `future/11-release.md` 提升为 `active_plan.md`。
