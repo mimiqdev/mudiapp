@@ -45,7 +45,10 @@
 
 ## 切片
 
-（待用户确认测试后填写）
+- Host 行 connecting 状态模型：连接任务启动即发布，成功/失败/取消时收敛；可注入时钟驱动取消按钮的 5 秒阈值。
+- Host 列表 UI：connecting 动画（进度指示）、取消按钮的出现/消失、取消后回到 idle。
+- 取消链路：贯穿 SSH 认证/bootstrap、Herdr discovery、Mosh bootstrap/attach 各阶段，取消后清理底层任务（沿用阶段 9 bounded close 语义），不产生半开连接。
+- 测试先行：状态时机、阈值出现/消失、取消清理、再次连接可用；模拟器全量 + 真机手工验收。
 
 ## 完成后
 
