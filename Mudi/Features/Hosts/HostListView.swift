@@ -50,8 +50,11 @@ struct HostListActionPolicy: Equatable {
 struct HostListView: View {
     let hosts: [Host]
     let connectionState: ConnectionState
+    let connectingHostID: Host.ID?
+    let showsConnectCancel: Bool
     let errorMessage: String?
     let onConnect: (Host) -> Void
+    let onCancelConnect: () -> Void
     let onReconnect: () -> Void
     let onAdd: () -> Void
     let onEdit: (Host) -> Void
@@ -61,8 +64,11 @@ struct HostListView: View {
     init(
         hosts: [Host],
         connectionState: ConnectionState,
+        connectingHostID: Host.ID? = nil,
+        showsConnectCancel: Bool = false,
         errorMessage: String?,
         onConnect: @escaping (Host) -> Void,
+        onCancelConnect: @escaping () -> Void = {},
         onReconnect: @escaping () -> Void,
         onAdd: @escaping () -> Void,
         onEdit: @escaping (Host) -> Void,
@@ -71,8 +77,11 @@ struct HostListView: View {
     ) {
         self.hosts = hosts
         self.connectionState = connectionState
+        self.connectingHostID = connectingHostID
+        self.showsConnectCancel = showsConnectCancel
         self.errorMessage = errorMessage
         self.onConnect = onConnect
+        self.onCancelConnect = onCancelConnect
         self.onReconnect = onReconnect
         self.onAdd = onAdd
         self.onEdit = onEdit
@@ -106,18 +115,71 @@ struct HostListView: View {
                     }
 
                     ForEach(hosts) { host in
-                        Button {
-                            onConnect(host)
-                        } label: {
-                            HostRow(host: host)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("host-connect-\(host.id.uuidString)")
-                        .overlay(alignment: .topLeading) {
-                            AccessibilityIdentifierBridge(
-                                identifier: "host-connect-\(host.id.uuidString)"
+                        let presentation = HostRowConnectionPresentation.resolve(
+                            state: connectingHostID == host.id
+                                ? .connecting
+                                : .idle,
+                            showsCancel: showsConnectCancel
+                        )
+                        HStack(spacing: 10) {
+                            Button {
+                                onConnect(host)
+                            } label: {
+                                HostRow(
+                                    host: host,
+                                    isConnecting: presentation.isConnecting
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!presentation.canConnect)
+                            .accessibilityIdentifier(
+                                "host-connect-\(host.id.uuidString)"
                             )
-                            .frame(width: 1, height: 1)
+                            .overlay(alignment: .topLeading) {
+                                AccessibilityIdentifierBridge(
+                                    identifier: "host-connect-\(host.id.uuidString)",
+                                    action: { onConnect(host) }
+                                )
+                                .frame(width: 1, height: 1)
+                            }
+
+                            // The indeterminate progress view is the row's
+                            // visible connecting animation; it is present
+                            // exactly while the attempt is published.
+                            if presentation.showsProgress {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .accessibilityIdentifier(
+                                        "host-connecting-\(host.id.uuidString)"
+                                    )
+                                    .overlay(alignment: .topLeading) {
+                                        AccessibilityIdentifierBridge(
+                                            identifier: "host-connecting-\(host.id.uuidString)"
+                                        )
+                                        .frame(width: 1, height: 1)
+                                    }
+                            }
+
+                            // The cancel affordance is revealed only after
+                            // the attempt outlives the threshold.
+                            if presentation.showsCancel {
+                                Button(
+                                    "Cancel",
+                                    role: .cancel,
+                                    action: onCancelConnect
+                                )
+                                .buttonStyle(.bordered)
+                                .accessibilityIdentifier(
+                                    "host-cancel-\(host.id.uuidString)"
+                                )
+                                .overlay(alignment: .topLeading) {
+                                    AccessibilityIdentifierBridge(
+                                        identifier: "host-cancel-\(host.id.uuidString)",
+                                        action: onCancelConnect
+                                    )
+                                    .frame(width: 1, height: 1)
+                                }
+                            }
                         }
                         .contextMenu {
                             Button("Edit", systemImage: "pencil") {
@@ -190,6 +252,7 @@ struct HostListView: View {
 
 private struct HostRow: View {
     let host: Host
+    var isConnecting = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -206,8 +269,12 @@ private struct HostRow: View {
             }
 
             Spacer()
-            Image(systemName: "arrow.right")
-                .foregroundStyle(.secondary)
+            // The connecting row swaps the chevron for the sibling progress
+            // indicator, so the trailing slot keeps a stable width.
+            if !isConnecting {
+                Image(systemName: "arrow.right")
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.vertical, 5)
     }

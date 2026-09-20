@@ -29,12 +29,25 @@ final class RootViewModel: ObservableObject {
     var pickerSnapshotCache: [Host.ID: HerdrSnapshot] = [:]
     @Published var editor: HostEditorContext?
     @Published var hostKeyPrompt: HostKeyPrompt?
+    /// Phase 10: the Host row currently showing a connect attempt. Published
+    /// when the attempt starts - never as a reaction to a result - and
+    /// cleared on success, failure, or cancel.
+    @Published internal(set) var connectingHostID: Host.ID?
+    /// Phase 10: true once the connecting row outlived the cancel threshold.
+    @Published internal(set) var showsConnectCancel = false
+
+    /// Phase 10: how long a connect attempt may run before its Host row
+    /// offers Cancel. The plan fixes the default at 5 seconds; tests inject a
+    /// clock through the initializer.
+    static let defaultConnectCancelThreshold = Duration.seconds(5)
 
     let coordinator: ApplicationCoordinator
     let preferencesStore: any PreferencesStore
     let localNetworkPermissionGate: (any LocalNetworkPermissionGate)?
     private let workflowFactory: any HerdrWorkflowFactory
     private let panePickerScheduler: any PanePickerRefreshScheduling
+    private let connectCancelThreshold: Duration
+    private let connectCancelScheduler: any HostConnectingDelayScheduling
     var workflow: (any HerdrWorkflowCoordinating)?
     var panePickerCoordinator: (any PanePickerCoordinating)?
     var pendingHostKeyDecision: CheckedContinuation<HostKeyDecision, Never>?
@@ -43,6 +56,11 @@ final class RootViewModel: ObservableObject {
     var connectionTask: Task<Void, Never>?
     private var teardownTask: Task<Void, Never>?
     private var teardownID: UUID?
+    private var connectCancelThresholdTask: Task<Void, Never>?
+    /// Bounded close behind a user cancel. A retry joins it before opening a
+    /// fresh session so the retired attempt's teardown cannot race it.
+    private var cancelCloseTask: Task<Void, Never>?
+    private var cancelCloseID: UUID?
     var workflowTask: Task<Void, Never>?
     var workspaceCreationTask: Task<Void, Never>?
     var workspaceCreationID = UUID()
@@ -79,9 +97,15 @@ final class RootViewModel: ObservableObject {
         panePickerScheduler: any PanePickerRefreshScheduling = LivePanePickerRefreshScheduler(),
         networkPathMonitor: any NetworkPathMonitoring = SystemNetworkPathMonitor(),
         rememberedPaneID: Pane.ID? = nil,
-        rememberedPaneHostID: Host.ID? = nil
+        rememberedPaneHostID: Host.ID? = nil,
+        connectCancelThreshold: Duration = RootViewModel
+            .defaultConnectCancelThreshold,
+        connectCancelScheduler: any HostConnectingDelayScheduling =
+            LiveHostConnectingDelayScheduler()
     ) {
         self.coordinator = coordinator
+        self.connectCancelThreshold = connectCancelThreshold
+        self.connectCancelScheduler = connectCancelScheduler
         self.workflowFactory = workflowFactory
         self.preferencesStore = preferencesStore
         self.localNetworkPermissionGate = localNetworkPermissionGate
@@ -246,18 +270,23 @@ extension RootViewModel {
         else { return }
 
         let generation = beginConnection(for: host.id)
+        beginConnectingFeedback(for: host.id, generation: generation)
         errorMessage = nil
         connectionState = .connecting
         let coordinator = self.coordinator
         let pendingTeardown = teardownTask
         let pendingRetire = networkPathRecovery.retireTask
-        connectionTask = Task { [weak self, coordinator, pendingTeardown, pendingRetire] in
+        let pendingCancelClose = cancelCloseTask
+        connectionTask = Task { [weak self, coordinator, pendingTeardown, pendingRetire, pendingCancelClose] in
             do {
                 await pendingTeardown?.value
                 // A roam retire cancelled by beginConnection may still be
                 // inside its bounded bootstrap close; wait so it cannot
                 // abort this fresh connect.
                 await pendingRetire?.value
+                // A cancelled attempt's bounded close must finish first too,
+                // or its late teardown would close the fresh session.
+                await pendingCancelClose?.value
                 guard self?.isCurrentConnection(generation) == true,
                       !Task.isCancelled
                 else { return }
@@ -320,6 +349,7 @@ extension RootViewModel {
                 )
                 self.connectionState = state
                 self.connectionTask = nil
+                self.finishConnectingFeedback(generation: generation)
                 await self.applyPanePickerState(
                     pickerState,
                     workflow: workflow
@@ -335,6 +365,7 @@ extension RootViewModel {
                 self.baseSession = nil
                 self.baseTerminalSession = nil
                 self.connectionTask = nil
+                self.finishConnectingFeedback(generation: generation)
                 self.connectionState = await coordinator.connectionState()
                 self.errorMessage = error.localizedDescription
             }
@@ -349,18 +380,22 @@ extension RootViewModel {
         else { return }
 
         let generation = beginConnection(for: hostID)
+        beginConnectingFeedback(for: hostID, generation: generation)
         errorMessage = nil
         connectionState = .connecting
         let coordinator = self.coordinator
         let pendingTeardown = teardownTask
         let pendingRetire = networkPathRecovery.retireTask
-        connectionTask = Task { [weak self, coordinator, pendingTeardown, pendingRetire] in
+        let pendingCancelClose = cancelCloseTask
+        connectionTask = Task { [weak self, coordinator, pendingTeardown, pendingRetire, pendingCancelClose] in
             do {
                 await pendingTeardown?.value
                 // Like connect(): a roam retire cancelled by beginConnection
                 // may still be inside its bounded close; wait so it cannot
                 // abort this fresh reconnect.
                 await pendingRetire?.value
+                // Same for a cancelled attempt's bounded close.
+                await pendingCancelClose?.value
                 guard self?.isCurrentConnection(generation) == true,
                       !Task.isCancelled
                 else { return }
@@ -423,6 +458,7 @@ extension RootViewModel {
                 )
                 self.connectionState = state
                 self.connectionTask = nil
+                self.finishConnectingFeedback(generation: generation)
                 await self.applyPanePickerState(
                     pickerState,
                     workflow: workflow
@@ -438,12 +474,132 @@ extension RootViewModel {
                 self.baseSession = nil
                 self.baseTerminalSession = nil
                 self.connectionTask = nil
+                self.finishConnectingFeedback(generation: generation)
                 self.connectionState = await coordinator.connectionState()
                 self.errorMessage = error.localizedDescription
             }
         }
     }
 
+}
+
+/// Phase 10: the Hosts-list connecting feedback. The row state is published
+/// when the attempt starts and converges on success, failure, or cancel; the
+/// cancel affordance appears only after the injectable threshold.
+extension RootViewModel {
+    /// The presentation state for one Host row.
+    func rowConnectionState(for host: Host) -> HostRowConnectionState {
+        connectingHostID == host.id ? .connecting : .idle
+    }
+
+    func rowConnectionPresentation(
+        for host: Host
+    ) -> HostRowConnectionPresentation {
+        HostRowConnectionPresentation.resolve(
+            state: rowConnectionState(for: host),
+            showsCancel: showsConnectCancel
+        )
+    }
+
+    /// Cancels the in-flight connect attempt behind the connecting Host row.
+    ///
+    /// The row returns to idle immediately. The retired attempt is rejected by
+    /// attempt ID, and anything it already opened is closed with the Phase 9
+    /// bounded-close budget, so a cancel cannot leave a half-open connection.
+    /// A stale tap with no attempt in flight is a no-op and therefore cannot
+    /// disturb an established session.
+    func cancelConnect() {
+        guard let hostID = connectingHostID else { return }
+        let pendingConnection = connectionTask
+        DiagnosticLogger.shared.log(
+            level: .notice,
+            category: "connection",
+            "connect cancelled host=\(hostID.uuidString), retry allowed"
+        )
+        clearConnectingFeedback()
+        errorMessage = nil
+        invalidatePanePickerPresentation()
+        invalidateConnectionAttempt()
+        panePickerCoordinator = nil
+        workflow = nil
+        herdrState = nil
+        hasLastPane = false
+        hasMultipleHerdrSessions = false
+        baseSession = nil
+        baseTerminalSession = nil
+        activeConnection = nil
+        activeTransport = nil
+        connectionState = .idle
+        startCancelClose(awaiting: pendingConnection)
+    }
+
+    /// Publishes the connecting row and arms the cancel threshold.
+    private func beginConnectingFeedback(
+        for hostID: Host.ID,
+        generation: UUID
+    ) {
+        connectingHostID = hostID
+        showsConnectCancel = false
+        connectCancelThresholdTask?.cancel()
+        let threshold = connectCancelThreshold
+        let scheduler = connectCancelScheduler
+        connectCancelThresholdTask = Task { [weak self] in
+            do {
+                try await scheduler.waitForCancelThreshold(threshold)
+            } catch {
+                return
+            }
+            guard let self,
+                  !Task.isCancelled,
+                  self.connectionGeneration == generation,
+                  self.connectingHostID == hostID
+            else { return }
+            self.showsConnectCancel = true
+        }
+    }
+
+    private func finishConnectingFeedback(generation: UUID) {
+        guard connectionGeneration == generation else { return }
+        clearConnectingFeedback()
+    }
+
+    private func clearConnectingFeedback() {
+        connectingHostID = nil
+        showsConnectCancel = false
+        connectCancelThresholdTask?.cancel()
+        connectCancelThresholdTask = nil
+    }
+
+    /// Runs behind `cancelConnect()`: retire the attempt and bounded-close
+    /// what it opened, then join the cancelled RootViewModel task with the
+    /// same budget so an immediate retry cannot race a late teardown.
+    private func startCancelClose(
+        awaiting pendingConnection: Task<Void, Never>?
+    ) {
+        let id = UUID()
+        let generation = connectionGeneration
+        cancelCloseID = id
+        let previousCancelClose = cancelCloseTask
+        let coordinator = self.coordinator
+        let task = Task { [weak self, coordinator, previousCancelClose, pendingConnection] in
+            await previousCancelClose?.value
+            await coordinator.cancelConnectionAttempt()
+            _ = try? await runWithTimeout(
+                Self.teardownCloseTimeout,
+                operation: { await pendingConnection?.value },
+                onAbort: {}
+            )
+            guard let self, self.cancelCloseID == id else { return }
+            self.cancelCloseTask = nil
+            self.cancelCloseID = nil
+            // A retry bumps the generation; a late convergence must not reset
+            // the fresh attempt's visible state.
+            if self.connectionGeneration == generation {
+                self.connectionState = .idle
+            }
+        }
+        cancelCloseTask = task
+    }
 }
 
 extension RootViewModel {
@@ -923,6 +1079,8 @@ extension RootViewModel {
         connectionGeneration = UUID()
         connectionTask?.cancel()
         connectionTask = nil
+        // Navigation leaves and cancel both converge the row back to idle.
+        clearConnectingFeedback()
         // Cancel the in-flight inner reconnect and the owned deferred
         // rebuild. Both self-finalize: the rebuild task restores .needed on
         // cancellation so Leave (which runs inside the teardown) can still

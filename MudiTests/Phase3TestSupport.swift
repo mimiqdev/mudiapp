@@ -33,6 +33,9 @@ actor Phase3HerdrDiscovery: HerdrDiscovering, HerdrWorkspaceCreating {
     private let workspaceCreationShouldFail: Bool
     private let workspaceCreationGate: Phase2ConnectionGate?
     private let workspaceCreationRecorder: Phase6WorkspaceCreationRecorder?
+    /// Optional hold used by the Phase 10 cancel tests to keep discovery in
+    /// flight; released gates stay released so a retry answers immediately.
+    private let discoveryGate: Phase2ConnectionGate?
     private var requestedHosts: [Host] = []
     private var didCreateWorkspace = false
 
@@ -42,7 +45,8 @@ actor Phase3HerdrDiscovery: HerdrDiscovering, HerdrWorkspaceCreating {
         snapshotAfterWorkspaceCreation: HerdrSnapshot? = nil,
         workspaceCreationShouldFail: Bool = false,
         workspaceCreationGate: Phase2ConnectionGate? = nil,
-        workspaceCreationRecorder: Phase6WorkspaceCreationRecorder? = nil
+        workspaceCreationRecorder: Phase6WorkspaceCreationRecorder? = nil,
+        discoveryGate: Phase2ConnectionGate? = nil
     ) {
         self.fixture = fixture
         self.workspaceCreation = workspaceCreation
@@ -50,10 +54,15 @@ actor Phase3HerdrDiscovery: HerdrDiscovering, HerdrWorkspaceCreating {
         self.workspaceCreationShouldFail = workspaceCreationShouldFail
         self.workspaceCreationGate = workspaceCreationGate
         self.workspaceCreationRecorder = workspaceCreationRecorder
+        self.discoveryGate = discoveryGate
     }
 
     func snapshot(for host: Host) async throws -> HerdrSnapshot {
         requestedHosts.append(host)
+        if let discoveryGate {
+            await discoveryGate.markStarted()
+            await discoveryGate.waitUntilReleased()
+        }
         if didCreateWorkspace, let snapshotAfterWorkspaceCreation {
             return snapshotAfterWorkspaceCreation
         }
