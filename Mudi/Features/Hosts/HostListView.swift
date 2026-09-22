@@ -50,8 +50,18 @@ struct HostListActionPolicy: Equatable {
 struct HostListView: View {
     let hosts: [Host]
     let connectionState: ConnectionState
+    /// The host with a live model attempt; it keeps the row connecting for the
+    /// whole attempt, including the Herdr discovery phase.
+    let connectingHostID: Host.ID?
+    /// The host whose last attempt genuinely failed; it keeps the red warning
+    /// and Retry even after the coordinator converges to `.disconnected`.
+    let failedHostID: Host.ID?
+    /// The row that owns `connectionState`; every other row stays idle.
+    let stateOwnerHostID: Host.ID?
+    let showsConnectCancel: Bool
     let errorMessage: String?
     let onConnect: (Host) -> Void
+    let onCancelConnect: () -> Void
     let onReconnect: () -> Void
     let onAdd: () -> Void
     let onEdit: (Host) -> Void
@@ -61,8 +71,13 @@ struct HostListView: View {
     init(
         hosts: [Host],
         connectionState: ConnectionState,
+        connectingHostID: Host.ID? = nil,
+        failedHostID: Host.ID? = nil,
+        stateOwnerHostID: Host.ID? = nil,
+        showsConnectCancel: Bool = false,
         errorMessage: String?,
         onConnect: @escaping (Host) -> Void,
+        onCancelConnect: @escaping () -> Void = {},
         onReconnect: @escaping () -> Void,
         onAdd: @escaping () -> Void,
         onEdit: @escaping (Host) -> Void,
@@ -71,8 +86,13 @@ struct HostListView: View {
     ) {
         self.hosts = hosts
         self.connectionState = connectionState
+        self.connectingHostID = connectingHostID
+        self.failedHostID = failedHostID
+        self.stateOwnerHostID = stateOwnerHostID
+        self.showsConnectCancel = showsConnectCancel
         self.errorMessage = errorMessage
         self.onConnect = onConnect
+        self.onCancelConnect = onCancelConnect
         self.onReconnect = onReconnect
         self.onAdd = onAdd
         self.onEdit = onEdit
@@ -92,32 +112,115 @@ struct HostListView: View {
                 }
             } else {
                 List {
-                    if connectionState != .idle {
-                        Section {
-                            HStack {
-                                connectionStateLabel
-                                Spacer()
-                                if connectionState == .failed || connectionState == .disconnected {
-                                    Button("Reconnect", action: onReconnect)
-                                        .buttonStyle(.bordered)
+                    ForEach(hosts) { host in
+                        let presentation = HostRowConnectionPresentation.resolve(
+                            state: HostRowConnectionState.resolve(
+                                host: host,
+                                connectingHostID: connectingHostID,
+                                failedHostID: failedHostID,
+                                stateOwnerHostID: stateOwnerHostID,
+                                connectionState: connectionState
+                            ),
+                            showsCancel: showsConnectCancel
+                        )
+                        HStack(spacing: 10) {
+                            Button {
+                                onConnect(host)
+                            } label: {
+                                HostRow(
+                                    host: host,
+                                    showsChevron: presentation.state == .idle
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!presentation.canConnect)
+                            .accessibilityIdentifier(
+                                "host-connect-\(host.id.uuidString)"
+                            )
+                            .overlay(alignment: .topLeading) {
+                                AccessibilityIdentifierBridge(
+                                    identifier: "host-connect-\(host.id.uuidString)",
+                                    action: { onConnect(host) }
+                                )
+                                .frame(width: 1, height: 1)
+                            }
+
+                            // The indeterminate progress view is the row's
+                            // visible connecting animation; it is present
+                            // exactly while the attempt is published.
+                            if presentation.showsProgress {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .accessibilityIdentifier(
+                                        "host-connecting-\(host.id.uuidString)"
+                                    )
+                                    .overlay(alignment: .topLeading) {
+                                        AccessibilityIdentifierBridge(
+                                            identifier: "host-connecting-\(host.id.uuidString)"
+                                        )
+                                        .frame(width: 1, height: 1)
+                                    }
+                            }
+
+                            // The cancel affordance is revealed only after
+                            // the attempt outlives the threshold.
+                            if presentation.showsCancel {
+                                Button(
+                                    "Cancel",
+                                    role: .cancel,
+                                    action: onCancelConnect
+                                )
+                                .buttonStyle(.bordered)
+                                .accessibilityIdentifier(
+                                    "host-cancel-\(host.id.uuidString)"
+                                )
+                                .overlay(alignment: .topLeading) {
+                                    AccessibilityIdentifierBridge(
+                                        identifier: "host-cancel-\(host.id.uuidString)",
+                                        action: onCancelConnect
+                                    )
+                                    .frame(width: 1, height: 1)
                                 }
                             }
-                        }
-                    }
 
-                    ForEach(hosts) { host in
-                        Button {
-                            onConnect(host)
-                        } label: {
-                            HostRow(host: host)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("host-connect-\(host.id.uuidString)")
-                        .overlay(alignment: .topLeading) {
-                            AccessibilityIdentifierBridge(
-                                identifier: "host-connect-\(host.id.uuidString)"
-                            )
-                            .frame(width: 1, height: 1)
+                            // The result states replace the former global
+                            // banner: connected and a genuine failure both
+                            // render on the owning row; a deliberate leave
+                            // presents idle.
+                            if presentation.showsConnected {
+                                stateIndicator(
+                                    systemImage: "checkmark.circle.fill",
+                                    tint: .green,
+                                    label: "Connected",
+                                    identifier: "host-connected-\(host.id.uuidString)"
+                                )
+                            }
+
+                            if presentation.showsFailure {
+                                stateIndicator(
+                                    systemImage: "exclamationmark.triangle.fill",
+                                    tint: .red,
+                                    label: "Connection failed",
+                                    identifier: "host-failed-\(host.id.uuidString)"
+                                )
+                            }
+
+                            // The old banner owned Reconnect; the row keeps
+                            // that retry path for a genuine failure.
+                            if presentation.showsRetry {
+                                Button("Retry", action: onReconnect)
+                                    .buttonStyle(.bordered)
+                                    .accessibilityIdentifier(
+                                        "host-retry-\(host.id.uuidString)"
+                                    )
+                                    .overlay(alignment: .topLeading) {
+                                        AccessibilityIdentifierBridge(
+                                            identifier: "host-retry-\(host.id.uuidString)",
+                                            action: onReconnect
+                                        )
+                                        .frame(width: 1, height: 1)
+                                    }
+                            }
                         }
                         .contextMenu {
                             Button("Edit", systemImage: "pencil") {
@@ -169,27 +272,26 @@ struct HostListView: View {
     }
 
     @ViewBuilder
-    private var connectionStateLabel: some View {
-        switch connectionState {
-        case .idle:
-            EmptyView()
-        case .connecting:
-            Label("Connecting…", systemImage: "arrow.triangle.2.circlepath")
-        case .connected:
-            Label("Connected", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        case .failed:
-            Label("Connection failed", systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
-        case .disconnected:
-            Label("Disconnected", systemImage: "wifi.slash")
-                .foregroundStyle(.secondary)
-        }
+    private func stateIndicator(
+        systemImage: String,
+        tint: Color,
+        label: String,
+        identifier: String
+    ) -> some View {
+        Image(systemName: systemImage)
+            .foregroundStyle(tint)
+            .accessibilityLabel(label)
+            .accessibilityIdentifier(identifier)
+            .overlay(alignment: .topLeading) {
+                AccessibilityIdentifierBridge(identifier: identifier)
+                    .frame(width: 1, height: 1)
+            }
     }
 }
 
 private struct HostRow: View {
     let host: Host
+    var showsChevron = true
 
     var body: some View {
         HStack(spacing: 12) {
@@ -206,8 +308,12 @@ private struct HostRow: View {
             }
 
             Spacer()
-            Image(systemName: "arrow.right")
-                .foregroundStyle(.secondary)
+            // The chevron yields its slot to the row's state accessory, so
+            // the trailing area keeps a stable width.
+            if showsChevron {
+                Image(systemName: "arrow.right")
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.vertical, 5)
     }

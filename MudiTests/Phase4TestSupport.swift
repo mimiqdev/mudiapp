@@ -222,6 +222,12 @@ struct Phase4WorkflowFactory: HerdrWorkflowFactory {
     let workspaceCreationShouldFail: Bool
     let workspaceCreationGate: Phase2ConnectionGate?
     let workspaceCreationRecorder: Phase6WorkspaceCreationRecorder?
+    /// Phase 10 cancel tests can hold discovery open; other tests leave it nil.
+    let discoveryGate: Phase2ConnectionGate?
+    /// Upcoming discovery failures for the Phase 10 fallback test.
+    let discoveryFailures: Int
+    /// Discovery calls that succeed before those failures start.
+    let discoverySuccessesBeforeFailure: Int
 
     init(
         fixture: Phase3HerdrFixture,
@@ -230,7 +236,10 @@ struct Phase4WorkflowFactory: HerdrWorkflowFactory {
         workspaceSnapshotAfterCreation: HerdrSnapshot? = nil,
         workspaceCreationShouldFail: Bool = false,
         workspaceCreationGate: Phase2ConnectionGate? = nil,
-        workspaceCreationRecorder: Phase6WorkspaceCreationRecorder? = nil
+        workspaceCreationRecorder: Phase6WorkspaceCreationRecorder? = nil,
+        discoveryGate: Phase2ConnectionGate? = nil,
+        discoverySuccessesBeforeFailure: Int = 0,
+        discoveryFailures: Int = 0
     ) {
         self.fixture = fixture
         self.transport = transport
@@ -239,6 +248,9 @@ struct Phase4WorkflowFactory: HerdrWorkflowFactory {
         self.workspaceCreationShouldFail = workspaceCreationShouldFail
         self.workspaceCreationGate = workspaceCreationGate
         self.workspaceCreationRecorder = workspaceCreationRecorder
+        self.discoveryGate = discoveryGate
+        self.discoverySuccessesBeforeFailure = discoverySuccessesBeforeFailure
+        self.discoveryFailures = discoveryFailures
     }
 
     func makeWorkflow(
@@ -253,7 +265,10 @@ struct Phase4WorkflowFactory: HerdrWorkflowFactory {
                 snapshotAfterWorkspaceCreation: workspaceSnapshotAfterCreation,
                 workspaceCreationShouldFail: workspaceCreationShouldFail,
                 workspaceCreationGate: workspaceCreationGate,
-                workspaceCreationRecorder: workspaceCreationRecorder
+                workspaceCreationRecorder: workspaceCreationRecorder,
+                discoveryGate: discoveryGate,
+                discoverySuccessesBeforeFailure: discoverySuccessesBeforeFailure,
+                discoveryFailures: discoveryFailures
             ),
             transport: transport,
             lastPaneID: rememberedPaneID
@@ -276,7 +291,10 @@ struct Phase4WorkflowFactory: HerdrWorkflowFactory {
                     snapshotAfterWorkspaceCreation: workspaceSnapshotAfterCreation,
                     workspaceCreationShouldFail: workspaceCreationShouldFail,
                     workspaceCreationGate: workspaceCreationGate,
-                    workspaceCreationRecorder: workspaceCreationRecorder
+                    workspaceCreationRecorder: workspaceCreationRecorder,
+                    discoveryGate: discoveryGate,
+                    discoverySuccessesBeforeFailure: discoverySuccessesBeforeFailure,
+                    discoveryFailures: discoveryFailures
                 ),
                 transport: MoshHerdrTerminalTransport(
                     session: session,
@@ -313,7 +331,7 @@ final class Phase4NavigationApplication {
         transport: Phase4TerminalTransport = Phase4TerminalTransport(),
         credentialVault: Phase4CredentialVault = Phase4CredentialVault(),
         knownHostKeys: Phase4KnownHostKeys = Phase4KnownHostKeys(),
-        client: Phase2SSHClient = Phase2SSHClient(
+        client: any HostKeyAwareSSHClient = Phase2SSHClient(
             presentedFingerprint: "SHA256:phase4-test-key"
         ),
         moshTransport: any MoshTransportBootstrapping = TraversioMoshAdapter(),
@@ -329,6 +347,13 @@ final class Phase4NavigationApplication {
         workspaceCreationRecorder: Phase6WorkspaceCreationRecorder = Phase6WorkspaceCreationRecorder(),
         rememberedPaneID: Pane.ID? = nil,
         rememberedPaneHostID: Host.ID? = nil,
+        connectCancelThreshold: Duration = RootViewModel
+            .defaultConnectCancelThreshold,
+        connectCancelScheduler: any HostConnectingDelayScheduling =
+            LiveHostConnectingDelayScheduler(),
+        discoveryGate: Phase2ConnectionGate? = nil,
+        discoverySuccessesBeforeFailure: Int = 0,
+        discoveryFailures: Int = 0,
     ) {
         self.transport = transport
         self.panePickerScheduler = panePickerScheduler
@@ -352,13 +377,18 @@ final class Phase4NavigationApplication {
                 workspaceSnapshotAfterCreation: workspaceSnapshotAfterCreation,
                 workspaceCreationShouldFail: workspaceCreationShouldFail,
                 workspaceCreationGate: workspaceCreationGate,
-                workspaceCreationRecorder: workspaceCreationRecorder
+                workspaceCreationRecorder: workspaceCreationRecorder,
+                discoveryGate: discoveryGate,
+                discoverySuccessesBeforeFailure: discoverySuccessesBeforeFailure,
+                discoveryFailures: discoveryFailures
             ),
             preferencesStore: preferencesStore ?? UserDefaultsPreferencesStore(),
             panePickerScheduler: panePickerScheduler,
             networkPathMonitor: networkPathMonitor,
             rememberedPaneID: rememberedPaneID,
             rememberedPaneHostID: rememberedPaneHostID,
+            connectCancelThreshold: connectCancelThreshold,
+            connectCancelScheduler: connectCancelScheduler
         )
     }
 
@@ -382,7 +412,7 @@ func makePhase4NavigationApplication(
     transport: Phase4TerminalTransport = Phase4TerminalTransport(),
     credentialVault: Phase4CredentialVault = Phase4CredentialVault(),
     knownHostKeys: Phase4KnownHostKeys = Phase4KnownHostKeys(),
-    client: Phase2SSHClient = Phase2SSHClient(
+    client: any HostKeyAwareSSHClient = Phase2SSHClient(
         presentedFingerprint: "SHA256:phase4-test-key"
     ),
     moshTransport: any MoshTransportBootstrapping = TraversioMoshAdapter(),
@@ -397,7 +427,14 @@ func makePhase4NavigationApplication(
     workspaceCreationGate: Phase2ConnectionGate? = nil,
     workspaceCreationRecorder: Phase6WorkspaceCreationRecorder = Phase6WorkspaceCreationRecorder(),
     rememberedPaneID: Pane.ID? = nil,
-    rememberedPaneHostID: Host.ID? = nil
+    rememberedPaneHostID: Host.ID? = nil,
+    connectCancelThreshold: Duration = RootViewModel
+        .defaultConnectCancelThreshold,
+    connectCancelScheduler: any HostConnectingDelayScheduling =
+        LiveHostConnectingDelayScheduler(),
+    discoveryGate: Phase2ConnectionGate? = nil,
+    discoverySuccessesBeforeFailure: Int = 0,
+    discoveryFailures: Int = 0
 ) -> Phase4NavigationApplication {
     Phase4NavigationApplication(
         hostFileURL: hostFileURL,
@@ -418,7 +455,12 @@ func makePhase4NavigationApplication(
         workspaceCreationGate: workspaceCreationGate,
         workspaceCreationRecorder: workspaceCreationRecorder,
         rememberedPaneID: rememberedPaneID,
-        rememberedPaneHostID: rememberedPaneHostID
+        rememberedPaneHostID: rememberedPaneHostID,
+        connectCancelThreshold: connectCancelThreshold,
+        connectCancelScheduler: connectCancelScheduler,
+        discoveryGate: discoveryGate,
+        discoverySuccessesBeforeFailure: discoverySuccessesBeforeFailure,
+        discoveryFailures: discoveryFailures
     )
 }
 

@@ -14,13 +14,19 @@ struct RootView: View {
     init(
         coordinator: ApplicationCoordinator = ApplicationCoordinator(),
         preferencesStore: (any PreferencesStore)? = nil,
-        localNetworkPermissionGate: (any LocalNetworkPermissionGate)? = nil
+        localNetworkPermissionGate: (any LocalNetworkPermissionGate)? = nil,
+        connectCancelThreshold: Duration = RootViewModel
+            .defaultConnectCancelThreshold,
+        connectCancelScheduler: any HostConnectingDelayScheduling =
+            LiveHostConnectingDelayScheduler()
     ) {
         _model = StateObject(
             wrappedValue: RootViewModel(
                 coordinator: coordinator,
                 preferencesStore: preferencesStore ?? UserDefaultsPreferencesStore(),
-                localNetworkPermissionGate: localNetworkPermissionGate
+                localNetworkPermissionGate: localNetworkPermissionGate,
+                connectCancelThreshold: connectCancelThreshold,
+                connectCancelScheduler: connectCancelScheduler
             )
         )
     }
@@ -112,8 +118,13 @@ struct RootView: View {
                 HostListView(
                     hosts: model.hosts,
                     connectionState: model.connectionState,
+                    connectingHostID: model.connectingHostID,
+                    failedHostID: model.failedHostID,
+                    stateOwnerHostID: model.connectionStateHostID,
+                    showsConnectCancel: model.showsConnectCancel,
                     errorMessage: model.errorMessage,
                     onConnect: model.connect,
+                    onCancelConnect: model.cancelConnect,
                     onReconnect: model.reconnect,
                     onAdd: model.addHost,
                     onEdit: model.edit,

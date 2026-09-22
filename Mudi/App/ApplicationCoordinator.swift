@@ -207,15 +207,61 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
         finishAttempt(attemptID, state: .failed)
     }
 
+    /// Disconnects the coordinator's current connection.
+    ///
+    /// Ownership contract: this retires an in-flight attempt because the
+    /// caller owns it (the user disconnected while connecting, or the active
+    /// host is being deleted). A superseded task must NOT call this - the
+    /// attempt it belonged to may already be gone and the coordinator may now
+    /// be serving a newer attempt, whose attempt/session this would then
+    /// retire. Superseded tasks leave cleanup to their invalidator (cancel,
+    /// teardown, delete, transparent reconnect).
     func disconnect() async {
         if let attemptID = inFlightConnectID {
             disconnectRequestedFor = attemptID
             return
         }
+        // A call with nothing to retire is a no-op. That keeps a late
+        // stale-attempt cleanup from turning a user-cancelled, idle Host
+        // list back into a failure surface.
+        guard hasSessionToDisconnect else { return }
         await disconnectCurrentSession()
         activeTransportValue = nil
         if state != .disconnected {
             setState(.disconnected)
+        }
+    }
+
+    private var hasSessionToDisconnect: Bool {
+        session != nil
+            || terminalSession != nil
+            || activeTransportValue != nil
+            || state == .connecting
+            || state == .connected
+    }
+
+    /// User-initiated cancel of the in-flight connect attempt.
+    ///
+    /// The attempt is retired by attempt ID first, so a channel delivered by
+    /// a cancellation-ignoring client is rejected and closed instead of being
+    /// mounted. Anything the attempt already opened is then closed with the
+    /// same bounded budget as a navigation teardown, and the coordinator
+    /// converges to idle so the Host list keeps no failure residue.
+    func cancelConnectionAttempt() async {
+        if let attemptID = inFlightConnectID {
+            disconnectRequestedFor = attemptID
+            finishAttempt(
+                attemptID,
+                state: .idle,
+                preservingTerminalSession: false
+            )
+        }
+        await disconnectCurrentSession()
+        activeTransportValue = nil
+        lastAutomaticMoshFailure = nil
+        preserveTerminalSessionForAttempt = false
+        if state != .idle {
+            setState(.idle)
         }
     }
 
