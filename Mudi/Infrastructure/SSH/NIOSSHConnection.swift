@@ -110,6 +110,7 @@ final class NIOSSHConnection: @unchecked Sendable {
                         configuration: clientConfiguration
                     )
                 }.get()
+                try await Self.enableSSHReads(on: channel)
                 return try await finishConnection(on: channel)
             } onCancel: {
                 channel.close(promise: nil)
@@ -120,6 +121,19 @@ final class NIOSSHConnection: @unchecked Sendable {
         }
     }
 
+    /// Keeps a probe socket from draining the server identification string
+    /// before the late SSH pipeline is installed.
+    static func disableAutomaticReads(on channel: Channel) -> EventLoopFuture<Void> {
+        channel.setOption(ChannelOptions.autoRead, value: false)
+    }
+
+    /// Re-enables reads only after the late SSH pipeline is installed. The
+    /// probe channel starts with autoRead disabled so a server identification
+    /// string remains in the socket until NIOSSHHandler can consume it.
+    static func enableSSHReads(on channel: Channel) async throws {
+        try await channel.setOption(ChannelOptions.autoRead, value: true).get()
+        channel.read()
+    }
     private static func addSSHHandlers(
         to channel: Channel,
         configuration: SSHClientConfiguration
@@ -167,7 +181,7 @@ final class NIOSSHConnection: @unchecked Sendable {
         let bootstrap = ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
             .channelInitializer { channel in
                 cancellation.register(channel)
-                return channel.eventLoop.makeSucceededVoidFuture()
+                return Self.disableAutomaticReads(on: channel)
             }
             .connectTimeout(Self.connectTimeout)
             .channelOption(

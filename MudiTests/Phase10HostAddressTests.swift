@@ -1,6 +1,8 @@
 // swiftlint:disable file_length
 import Foundation
 import HerdrKit
+@preconcurrency import NIOCore
+@preconcurrency import NIOEmbedded
 import XCTest
 @testable import Mudi
 
@@ -78,6 +80,23 @@ final class Phase10HostAddressTests: XCTestCase {  // pi-lens-ignore: type_body_
 
         XCTAssertEqual(endpoint.hostname, "tail.example.test")
         XCTAssertEqual(endpoint.port, 2200)
+    }
+
+    func testLateAttachedSSHPipelineReceivesServerIdentification() async throws {
+        let channel = EmbeddedChannel()
+        defer { _ = try? channel.finish(acceptAlreadyClosed: true) }
+
+        try await NIOSSHConnection.disableAutomaticReads(on: channel).get()
+        XCTAssertEqual(channel.autoReadOptionValue, false)
+
+        let server = Phase10BannerOnReadHandler()
+        let capture = Phase10BannerCaptureHandler()
+        try channel.pipeline.syncOperations.addHandlers(server, capture)
+        try await NIOSSHConnection.enableSSHReads(on: channel)
+        XCTAssertEqual(channel.autoReadOptionValue, true)
+
+        XCTAssertEqual(server.readCount, 1)
+        XCTAssertEqual(capture.received, "SSH-2.0-test-server\r\n")
     }
 
     func testAddressPromotionPreferenceDefaultsOffAndPersists() async throws {
@@ -756,6 +775,46 @@ final class Phase10HostAddressTests: XCTestCase {  // pi-lens-ignore: type_body_
         FileManager.default.temporaryDirectory
             .appendingPathComponent("mudi-phase10-\(UUID().uuidString)", isDirectory: true)
             .appendingPathComponent("hosts.json")
+    }
+}
+
+private final class Phase10BannerOnReadHandler: ChannelDuplexHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+    typealias InboundOut = ByteBuffer
+    typealias OutboundIn = Never
+    typealias OutboundOut = Never
+
+    var readCount = 0
+
+    func read(context: ChannelHandlerContext) {
+        readCount += 1
+        var banner = context.channel.allocator.buffer(capacity: 32)
+        banner.writeString("SSH-2.0-test-server\r\n")
+        context.fireChannelRead(NIOAny(banner))
+        context.fireChannelReadComplete()
+        context.read()
+    }
+}
+
+private final class Phase10BannerCaptureHandler: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+
+    var received: String?
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        var buffer = unwrapInboundIn(data)
+        received = buffer.readString(length: buffer.readableBytes)
+    }
+}
+
+private extension EmbeddedChannel {
+    var autoReadOptionValue: Bool? {
+        options.reversed().compactMap { option in
+            guard option.option is ChannelOptions.Types.AutoReadOption else {
+                return nil
+            }
+            return option.value as? Bool
+        }.first
     }
 }
 
