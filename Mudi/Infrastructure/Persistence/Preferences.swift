@@ -19,6 +19,9 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
     var hasCompletedLocalNetworkOnboarding: Bool
     var isDebugLoggingEnabled: Bool
     var isSaveLogsEnabled: Bool
+    /// When enabled, a Host's last successful address is tried first without
+    /// changing the saved manual order.
+    var isAddressPromotionEnabled: Bool
 
     init(
         appearance: AppearancePreference = .system,
@@ -27,7 +30,8 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
         fontSize: Double = 14,
         hasCompletedLocalNetworkOnboarding: Bool = false,
         isDebugLoggingEnabled: Bool = false,
-        isSaveLogsEnabled: Bool = false
+        isSaveLogsEnabled: Bool = false,
+        isAddressPromotionEnabled: Bool = false
     ) {
         self.appearance = appearance
         self.themeSelection = themeSelection
@@ -36,6 +40,7 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
         self.hasCompletedLocalNetworkOnboarding = hasCompletedLocalNetworkOnboarding
         self.isDebugLoggingEnabled = isDebugLoggingEnabled
         self.isSaveLogsEnabled = isSaveLogsEnabled
+        self.isAddressPromotionEnabled = isAddressPromotionEnabled
     }
 
     /// Source-compatible initializer for callers that only know the original
@@ -45,14 +50,16 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
         fontSize: Double,
         hasCompletedLocalNetworkOnboarding: Bool = false,
         isDebugLoggingEnabled: Bool = false,
-        isSaveLogsEnabled: Bool = false
+        isSaveLogsEnabled: Bool = false,
+        isAddressPromotionEnabled: Bool = false
     ) {
         self.init(
             appearance: appearance,
             fontSize: fontSize,
             hasCompletedLocalNetworkOnboarding: hasCompletedLocalNetworkOnboarding,
             isDebugLoggingEnabled: isDebugLoggingEnabled,
-            isSaveLogsEnabled: isSaveLogsEnabled
+            isSaveLogsEnabled: isSaveLogsEnabled,
+            isAddressPromotionEnabled: isAddressPromotionEnabled
         )
     }
 
@@ -86,6 +93,10 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
             Bool.self,
             forKey: .isSaveLogsEnabled
         ) ?? false
+        isAddressPromotionEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .isAddressPromotionEnabled
+        ) ?? false
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -96,6 +107,7 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
         case hasCompletedLocalNetworkOnboarding
         case isDebugLoggingEnabled
         case isSaveLogsEnabled
+        case isAddressPromotionEnabled
     }
 }
 

@@ -372,39 +372,25 @@ extension RootViewModel {
         }
         let selectedTransport = await coordinator.activeTransport()
             ?? activeTransport ?? .ssh
+        let actualHost = await coordinator.activeHost() ?? context.host
 
         // Rebuild the workflow and the picker coordinator, then re-run
         // discovery over the fresh control plane.
         let workflow = await makeWorkflow(
             for: bootstrapSession,
             hostID: context.host.id,
-            host: context.host
+            host: actualHost
         )
         let pickerCoordinator = makePanePickerCoordinator(
             for: workflow,
             transport: selectedTransport
         )
 
-        // A discovery failure stays inside the returned picker state as an
-        // empty snapshot with a message; substitute the cached snapshot so
-        // the user keeps the last-known layout (stale-while-revalidate).
-        var pickerState = (try? await pickerCoordinator.connect(to: context.host))
-            ?? cachedPanePickerState(for: context.host, origin: context.pickerOrigin)
-        if case let .panePicker(picker) = pickerState,
-           picker.message != nil,
-           picker.snapshot.sessions.isEmpty {
-            let cached = cachedPickerSnapshot(for: context.host)
-            if !cached.sessions.isEmpty {
-                pickerState = .panePicker(
-                    PanePickerState(
-                        host: picker.host,
-                        origin: picker.origin,
-                        snapshot: cached,
-                        message: picker.message
-                    )
-                )
-            }
-        }
+        let pickerState = await pickerStateAfterReconnect(
+            for: actualHost,
+            pickerCoordinator: pickerCoordinator,
+            origin: context.pickerOrigin
+        )
         guard !isInterrupted(for: context.trigger), !Task.isCancelled else {
             if connectionGeneration == context.generation {
                 pendingTerminalCloseIdentity = context.onScreenSessionIdentity
@@ -438,6 +424,14 @@ extension RootViewModel {
             ?? coordinatorTerminalSession
             ?? bootstrapSession
         self.activeTransport = selectedTransport
+        if let currentConnection = activeConnection {
+            self.activeConnection = ActiveSSHConnection(
+                host: actualHost,
+                session: currentConnection.session,
+                terminalTitle: currentConnection.terminalTitle,
+                transport: selectedTransport
+            )
+        }
         self.connectionState = state
         await context.retiredPickerCoordinator?.stopRefresh()
         if case let .panePicker(picker) = pickerState,
@@ -465,7 +459,7 @@ extension RootViewModel {
             await applyWorkflowState(.ordinaryTerminal, from: workflow)
             if context.wasPickerPresented {
                 await refreshPresentedPickerAfterReconnect(
-                    terminalContext: .ordinary(host: context.host),
+                    terminalContext: .ordinary(host: actualHost),
                     pickerOrigin: context.pickerOrigin,
                     pickerCoordinator: pickerCoordinator,
                     workflow: workflow,
@@ -480,6 +474,34 @@ extension RootViewModel {
             await pickerCoordinator.stopRefresh()
         }
         pendingTerminalCloseIdentity = nil
+    }
+
+    /// A discovery failure stays inside the returned picker state as an
+    /// empty snapshot with a message; substitute the cached snapshot so
+    /// the user keeps the last-known layout (stale-while-revalidate).
+    private func pickerStateAfterReconnect(
+        for host: Host,
+        pickerCoordinator: any PanePickerCoordinating,
+        origin: PanePickerOrigin
+    ) async -> PanePickerNavigationState {
+        var pickerState = (try? await pickerCoordinator.connect(to: host))
+            ?? cachedPanePickerState(for: host, origin: origin)
+        if case let .panePicker(picker) = pickerState,
+           picker.message != nil,
+           picker.snapshot.sessions.isEmpty {
+            let cached = cachedPickerSnapshot(for: host)
+            if !cached.sessions.isEmpty {
+                pickerState = .panePicker(
+                    PanePickerState(
+                        host: picker.host,
+                        origin: picker.origin,
+                        snapshot: cached,
+                        message: picker.message
+                    )
+                )
+            }
+        }
+        return pickerState
     }
 
     /// Retakes the remembered pane over the fresh control plane when the

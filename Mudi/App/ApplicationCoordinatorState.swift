@@ -36,6 +36,12 @@ extension ApplicationCoordinator {
         activeTransportValue
     }
 
+    /// The transient Host value carrying the actual selected address. The
+    /// stable ID and saved endpoint list remain unchanged.
+    func activeHost() -> Host? {
+        activeHostValue
+    }
+
     func lastAutomaticMoshFailureClass() -> MoshFailureClass? {
         lastAutomaticMoshFailure
     }

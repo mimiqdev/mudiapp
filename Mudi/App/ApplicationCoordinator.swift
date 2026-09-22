@@ -14,6 +14,10 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
     let knownHostKeyStore: any KnownHostKeyStore
     let client: any HostKeyAwareSSHClient
     let moshTransport: any MoshTransportBootstrapping
+    let networkConnector: (any HostAddressNetworkConnecting)?
+    let networkHandoff: (any HostAddressNetworkHandoff)?
+    let addressRacePolicy: HostAddressRacePolicy
+    let addressRaceClock: any HostAddressRaceClock
     let reconnectTimeout: Duration
 
     var state: ConnectionState = .idle
@@ -22,6 +26,10 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
     var activeTransportValue: ActiveTransport?
     var lastAutomaticMoshFailure: MoshFailureClass?
     private var activeHostID: Host.ID?
+    var activeHostValue: Host?
+    private var addressPromotionEnabled = false
+    private var lastSuccessfulAddressByHostID: [Host.ID: HostAddress] = [:]
+    private var lastAddressRaceError: HostAddressConnectionRaceError?
     private var hostKeyError: (attemptID: UUID, error: ConnectionError)?
     private var inFlightConnectID: UUID?
     private var preserveTerminalSessionForAttempt = false
@@ -36,13 +44,21 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
         client: any HostKeyAwareSSHClient = CitadelSSHAdapter(),
         moshTransport: any MoshTransportBootstrapping = TraversioMoshAdapter(),
         reconnectTimeout: Duration = NetworkConnectionPolicy
-            .documentedDefault.perAttemptTimeout
+            .documentedDefault.perAttemptTimeout,
+        networkConnector: (any HostAddressNetworkConnecting)? = nil,
+        networkHandoff: (any HostAddressNetworkHandoff)? = nil,
+        addressRacePolicy: HostAddressRacePolicy = .default,
+        addressRaceClock: any HostAddressRaceClock = ContinuousHostAddressRaceClock()
     ) {
         self.hostStore = hostStore
         self.credentialStore = credentialStore
         self.knownHostKeyStore = knownHostKeyStore
         self.client = client
         self.moshTransport = moshTransport
+        self.networkConnector = networkConnector ?? (client as? any HostAddressNetworkConnecting)
+        self.networkHandoff = networkHandoff ?? (client as? any HostAddressNetworkHandoff)
+        self.addressRacePolicy = addressRacePolicy
+        self.addressRaceClock = addressRaceClock
         self.reconnectTimeout = reconnectTimeout
     }
 
@@ -51,6 +67,10 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
     }
 
     func save(_ host: Host) async throws {
+        if let lastSuccessfulAddress = lastSuccessfulAddressByHostID[host.id],
+           !host.addresses.contains(lastSuccessfulAddress) {
+            lastSuccessfulAddressByHostID[host.id] = nil
+        }
         try await hostStore.save(host)
     }
 
@@ -63,6 +83,7 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
     }
 
     func delete(_ host: Host) async throws {
+        lastSuccessfulAddressByHostID[host.id] = nil
         let deletesActiveHost = activeHostID == host.id
         if deletesActiveHost {
             await disconnect()
@@ -87,6 +108,7 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
 
         if deletesActiveHost {
             activeHostID = nil
+            activeHostValue = nil
             hostKeyError = nil
         }
         if let firstError {
@@ -99,6 +121,20 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
         credentials: SSHCredentials,
         hostKeyDecision: @escaping @Sendable (String) async -> HostKeyDecision
     ) async throws -> ConnectionState {
+        try await connect(
+            to: host,
+            credentials: credentials,
+            hostKeyDecision: hostKeyDecision,
+            progress: nil
+        )
+    }
+
+    func connect(
+        to host: Host,
+        credentials: SSHCredentials,
+        hostKeyDecision: @escaping @Sendable (String) async -> HostKeyDecision,
+        progress: (@Sendable (HostAddressRaceProgress) async -> Void)?
+    ) async throws -> ConnectionState { // pi-lens-ignore: function_body_length
         guard inFlightConnectID == nil,
               state != .connecting,
               state != .connected
@@ -108,8 +144,10 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
 
         let attemptID = UUID()
         activeHostID = host.id
+        activeHostValue = nil
         activeTransportValue = nil
         lastAutomaticMoshFailure = nil
+        lastAddressRaceError = nil
         hostKeyError = nil
         preserveTerminalSessionForAttempt = false
         disconnectRequestedFor = nil
@@ -117,65 +155,17 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
         setState(.connecting)
 
         do {
-            let channel = try await client.connect(
+            return try await establishConnection(
                 to: host,
                 credentials: credentials,
-                hostKeyDecision: { [weak self] fingerprint in
-                    guard let self else { return .reject }
-                    return await self.evaluateHostKey(
-                        fingerprint,
-                        for: attemptID,
-                        host: host,
-                        userDecision: hostKeyDecision
-                    )
-                }
+                hostKeyDecision: hostKeyDecision,
+                progress: progress,
+                attemptID: attemptID
             )
-            let bootstrapSession = SSHShellSession(connectedChannel: channel)
-            let selection: (transport: ActiveTransport, moshConnection: SSHShellSession?)
-            do {
-                selection = try await TransportSelectionStrategy.select(
-                    preference: host.preferredTransport,
-                    bootstrapSSH: {},
-                    connectMosh: { [moshTransport, bootstrapSession] in
-                        try await moshTransport.connect(
-                            to: host,
-                            credentials: credentials,
-                            using: bootstrapSession
-                        )
-                    },
-                    onMoshFailure: { [weak self] failureClass in
-                        await self?.recordAutomaticMoshFailure(failureClass)
-                    }
-                )
-            } catch {
-                await moshTransport.disconnect()
-                await bootstrapSession.disconnect()
-                throw error
-            }
-            let selectedTerminalSession = selection.moshConnection ?? bootstrapSession
-
-            guard inFlightConnectID == attemptID,
-                  activeHostID == host.id,
-                  disconnectRequestedFor != attemptID,
-                  !Task.isCancelled
-            else {
-                await selectedTerminalSession.disconnect()
-                if ObjectIdentifier(selectedTerminalSession) != ObjectIdentifier(bootstrapSession) {
-                    await bootstrapSession.disconnect()
-                }
-                await moshTransport.disconnect()
-                finishAttempt(attemptID, state: .disconnected)
-                throw ConnectionError.connectionFailed
-            }
-
-            session = bootstrapSession
-            terminalSession = selectedTerminalSession
-            activeTransportValue = selection.transport
-            inFlightConnectID = nil
-            disconnectRequestedFor = nil
-            setState(.connected)
-            return .connected
         } catch {
+            if let raceError = error as? HostAddressConnectionRaceError {
+                lastAddressRaceError = raceError
+            }
             let connectionError: ConnectionError
             if hostKeyError?.attemptID == attemptID {
                 connectionError = hostKeyError?.error ?? mapConnectionError(error)
@@ -197,6 +187,216 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
             )
             throw connectionError
         }
+    }
+
+    private func establishConnection(
+        to host: Host,
+        credentials: SSHCredentials,
+        hostKeyDecision: @escaping @Sendable (String) async -> HostKeyDecision,
+        progress: (@Sendable (HostAddressRaceProgress) async -> Void)?,
+        attemptID: UUID
+    ) async throws -> ConnectionState { // pi-lens-ignore: function_body_length
+        let orderedAddresses = orderedAddresses(for: host)
+        guard !orderedAddresses.isEmpty else {
+            throw HostAddressConnectionRaceError.invalidAddressList
+        }
+
+        let resolved = try await resolveConnectionHost(
+            for: host,
+            addresses: orderedAddresses,
+            progress: progress
+        )
+        let connectionHost = resolved.host
+        let networkConnection = resolved.networkConnection
+        guard inFlightConnectID == attemptID,
+              activeHostID == host.id,
+              !Task.isCancelled
+        else {
+            if let networkConnection {
+                await networkConnection.close()
+            }
+            throw CancellationError()
+        }
+
+        let channel: any PTYChannel
+        do {
+            if let networkConnection {
+                guard let networkHandoff else {
+                    throw ConnectionError.connectionFailed
+                }
+                channel = try await networkHandoff.connect(
+                    to: connectionHost,
+                    credentials: credentials,
+                    hostKeyDecision: { [weak self] fingerprint in
+                        guard let self else { return .reject }
+                        return await self.evaluateHostKey(
+                            fingerprint,
+                            for: attemptID,
+                            host: connectionHost,
+                            userDecision: hostKeyDecision
+                        )
+                    },
+                    using: networkConnection
+                )
+            } else {
+                channel = try await client.connect(
+                    to: connectionHost,
+                    credentials: credentials,
+                    hostKeyDecision: { [weak self] fingerprint in
+                        guard let self else { return .reject }
+                        return await self.evaluateHostKey(
+                            fingerprint,
+                            for: attemptID,
+                            host: connectionHost,
+                            userDecision: hostKeyDecision
+                        )
+                    }
+                )
+            }
+        } catch {
+            if let networkConnection {
+                await networkConnection.close()
+            }
+            throw error
+        }
+
+        guard inFlightConnectID == attemptID,
+              activeHostID == host.id,
+              !Task.isCancelled
+        else {
+            await channel.close()
+            throw CancellationError()
+        }
+
+        activeHostValue = connectionHost
+        let bootstrapSession = SSHShellSession(connectedChannel: channel)
+        let selection: (transport: ActiveTransport, moshConnection: SSHShellSession?)
+        do {
+            selection = try await TransportSelectionStrategy.select(
+                preference: connectionHost.preferredTransport,
+                bootstrapSSH: {},
+                connectMosh: { [moshTransport, bootstrapSession] in
+                    try await moshTransport.connect(
+                        to: connectionHost,
+                        credentials: credentials,
+                        using: bootstrapSession
+                    )
+                },
+                onMoshFailure: { [weak self] failureClass in
+                    await self?.recordAutomaticMoshFailure(failureClass)
+                }
+            )
+        } catch {
+            await moshTransport.disconnect()
+            await bootstrapSession.disconnect()
+            throw error
+        }
+        let selectedTerminalSession = selection.moshConnection ?? bootstrapSession
+
+        guard inFlightConnectID == attemptID,
+              activeHostID == host.id,
+              disconnectRequestedFor != attemptID,
+              !Task.isCancelled
+        else {
+            await selectedTerminalSession.disconnect()
+            if ObjectIdentifier(selectedTerminalSession) != ObjectIdentifier(bootstrapSession) {
+                await bootstrapSession.disconnect()
+            }
+            await moshTransport.disconnect()
+            finishAttempt(attemptID, state: .disconnected)
+            throw ConnectionError.connectionFailed
+        }
+
+        session = bootstrapSession
+        terminalSession = selectedTerminalSession
+        activeTransportValue = selection.transport
+        if let selectedTarget = connectionHost.selectedTarget {
+            lastSuccessfulAddressByHostID[host.id] = selectedTarget
+        }
+        inFlightConnectID = nil
+        disconnectRequestedFor = nil
+        setState(.connected)
+        return .connected
+    }
+
+    private func resolveConnectionHost(
+        for host: Host,
+        addresses: [HostAddress],
+        progress: (@Sendable (HostAddressRaceProgress) async -> Void)?
+    ) async throws -> (
+        host: Host,
+        networkConnection: (any HostAddressNetworkConnection)?
+    ) {
+        guard let firstAddress = addresses.first else {
+            throw HostAddressConnectionRaceError.invalidAddressList
+        }
+
+        // A client without both pre-authentication seams keeps the direct
+        // single-socket path. Production Citadel provides the network race
+        // and consumes its winning socket for SSH authentication.
+        guard addresses.count > 1,
+              let networkConnector,
+              networkHandoff != nil
+        else {
+            return (host.targeting(firstAddress), nil)
+        }
+
+        do {
+            let result = try await HostAddressConnectionRace.connect(
+                addresses: addresses,
+                policy: addressRacePolicy,
+                clock: addressRaceClock,
+                using: { [networkConnector] address in
+                    try await networkConnector.connectNetwork(
+                        to: host.targeting(address)
+                    )
+                },
+                onProgress: progress
+            )
+            return (host.targeting(result.target), result.connection)
+        } catch let error as HostAddressConnectionRaceError {
+            lastAddressRaceError = error
+            throw error
+        }
+    }
+
+    private func orderedAddresses(for host: Host) -> [HostAddress] {
+        if let selectedTarget = host.selectedTarget,
+           let index = host.addresses.firstIndex(of: selectedTarget) {
+            return [selectedTarget] + host.addresses.enumerated().compactMap {
+                $0.offset == index ? nil : $0.element
+            }
+        }
+        guard addressPromotionEnabled,
+              let lastSuccessful = lastSuccessfulAddressByHostID[host.id],
+              let index = host.addresses.firstIndex(of: lastSuccessful)
+        else {
+            return host.addresses
+        }
+        return [lastSuccessful] + host.addresses.enumerated().compactMap {
+            $0.offset == index ? nil : $0.element
+        }
+    }
+
+    private func reconnectTarget(for savedHost: Host) -> Host {
+        guard let selectedTarget = activeHostValue?.selectedTarget,
+              savedHost.addresses.contains(selectedTarget)
+        else {
+            return savedHost
+        }
+        return savedHost.targeting(selectedTarget)
+    }
+
+    func setAddressPromotionEnabled(_ enabled: Bool) {
+        addressPromotionEnabled = enabled
+    }
+
+    func isAddressPromotionEnabled() -> Bool {
+        addressPromotionEnabled
+    }
+
+    func lastAddressRaceFailure() -> HostAddressConnectionRaceError? {
+        lastAddressRaceError
     }
 
     /// Retires a pending bootstrap immediately. The underlying client may
@@ -333,7 +533,8 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
     ) async throws -> ConnectionState {
         try await reconnect(
             hostKeyDecision: hostKeyDecision,
-            preservingMoshSession: false
+            preservingMoshSession: false,
+            progress: nil
         )
     }
 
@@ -342,7 +543,8 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
     /// Mosh adapter again, which would otherwise tear it down.
     func reconnect(
         hostKeyDecision: @escaping @Sendable (String) async -> HostKeyDecision,
-        preservingMoshSession: Bool
+        preservingMoshSession: Bool = false,
+        progress: (@Sendable (HostAddressRaceProgress) async -> Void)? = nil
     ) async throws -> ConnectionState {
         try await runWithTimeout(
             reconnectTimeout,
@@ -352,7 +554,8 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
                 }
                 return try await self.performReconnect(
                     hostKeyDecision: hostKeyDecision,
-                    preservingMoshSession: preservingMoshSession
+                    preservingMoshSession: preservingMoshSession,
+                    progress: progress
                 )
             },
             onAbort: { [weak self] in
@@ -363,7 +566,8 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
 
     private func performReconnect(
         hostKeyDecision: @escaping @Sendable (String) async -> HostKeyDecision,
-        preservingMoshSession: Bool = false
+        preservingMoshSession: Bool = false,
+        progress: (@Sendable (HostAddressRaceProgress) async -> Void)? = nil
     ) async throws -> ConnectionState {
         try Task.checkCancellation()
         guard inFlightConnectID == nil else {
@@ -386,7 +590,7 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
                 setState(.failed)
                 throw ConnectionError.connectionFailed
             }
-            host = savedHost
+            host = reconnectTarget(for: savedHost)
         } catch let error as ConnectionError {
             throw error
         } catch {
@@ -427,7 +631,8 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
         return try await connect(
             to: host,
             credentials: credentials,
-            hostKeyDecision: hostKeyDecision
+            hostKeyDecision: hostKeyDecision,
+            progress: progress
         )
     }
 

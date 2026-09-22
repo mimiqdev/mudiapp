@@ -53,6 +53,14 @@ struct HostListView: View {
     /// The host with a live model attempt; it keeps the row connecting for the
     /// whole attempt, including the Herdr discovery phase.
     let connectingHostID: Host.ID?
+    /// The endpoint currently being tried by the address race. It is transient
+    /// and never changes the saved Host order.
+    let connectingAddress: HostAddress?
+    /// Full transient race status, including concurrently attempted backups
+    /// and the elapsed network wait.
+    let addressRaceProgress: HostAddressRaceProgress?
+    /// Final per-address failures retained on the failed Host row.
+    let addressRaceFailure: [HostAddressAttemptResult]?
     /// The host whose last attempt genuinely failed; it keeps the red warning
     /// and Retry even after the coordinator converges to `.disconnected`.
     let failedHostID: Host.ID?
@@ -72,6 +80,9 @@ struct HostListView: View {
         hosts: [Host],
         connectionState: ConnectionState,
         connectingHostID: Host.ID? = nil,
+        connectingAddress: HostAddress? = nil,
+        addressRaceProgress: HostAddressRaceProgress? = nil,
+        addressRaceFailure: [HostAddressAttemptResult]? = nil,
         failedHostID: Host.ID? = nil,
         stateOwnerHostID: Host.ID? = nil,
         showsConnectCancel: Bool = false,
@@ -87,6 +98,9 @@ struct HostListView: View {
         self.hosts = hosts
         self.connectionState = connectionState
         self.connectingHostID = connectingHostID
+        self.connectingAddress = connectingAddress
+        self.addressRaceProgress = addressRaceProgress
+        self.addressRaceFailure = addressRaceFailure
         self.failedHostID = failedHostID
         self.stateOwnerHostID = stateOwnerHostID
         self.showsConnectCancel = showsConnectCancel
@@ -129,6 +143,15 @@ struct HostListView: View {
                             } label: {
                                 HostRow(
                                     host: host,
+                                    displayedAddress: host.id == connectingHostID
+                                        ? connectingAddress
+                                        : nil,
+                                    raceProgress: host.id == connectingHostID
+                                        ? addressRaceProgress
+                                        : nil,
+                                    raceFailure: host.id == failedHostID
+                                        ? addressRaceFailure
+                                        : nil,
                                     showsChevron: presentation.state == .idle
                                 )
                             }
@@ -289,9 +312,73 @@ struct HostListView: View {
     }
 }
 
+func hostAddressProgressText(_ address: HostAddress, defaultPort: UInt16) -> String {
+    let endpoint = "\(address.address):\(address.effectivePort(defaultPort: defaultPort))"
+    guard let label = address.label else { return endpoint }
+    return "\(label) · \(endpoint)"
+}
+
+private extension HostAddressRaceProgress {
+    func detailText(defaultPort: UInt16) -> String? {
+        switch self {
+        case let .preferred(address, elapsed):
+            return "Trying \(hostAddressProgressText(address, defaultPort: defaultPort)) · \(elapsedText(elapsed))"
+        case let .racing(addresses, elapsed):
+            let targets = addresses
+                .map { hostAddressProgressText($0, defaultPort: defaultPort) }
+                .joined(separator: ", ")
+            return "Trying \(targets) · \(elapsedText(elapsed))"
+        case let .selected(address, elapsed):
+            return "Authenticating \(hostAddressProgressText(address, defaultPort: defaultPort)) · \(elapsedText(elapsed))"
+        case let .failed(outcomes):
+            let failures = outcomes.compactMap { outcome -> String? in
+                let address = hostAddressProgressText(
+                    outcome.address,
+                    defaultPort: defaultPort
+                )
+                switch outcome.outcome {
+                case let .failed(message):
+                    return "\(address): \(message)"
+                case .timedOut:
+                    return "\(address): timed out"
+                case .cancelled:
+                    return "\(address): cancelled"
+                case .notStarted:
+                    return "\(address): not started"
+                case .started, .succeeded:
+                    return nil
+                }
+            }
+            return failures.isEmpty ? nil : failures.joined(separator: " · ")
+        }
+    }
+
+    private func elapsedText(_ elapsed: Duration) -> String {
+        let seconds = elapsed.components.seconds
+        return seconds == 0 ? "<1s" : "\(seconds)s"
+    }
+}
+
 private struct HostRow: View {
     let host: Host
+    let displayedAddress: HostAddress?
+    let raceProgress: HostAddressRaceProgress?
+    let raceFailure: [HostAddressAttemptResult]?
     var showsChevron = true
+
+    init(
+        host: Host,
+        displayedAddress: HostAddress? = nil,
+        raceProgress: HostAddressRaceProgress? = nil,
+        raceFailure: [HostAddressAttemptResult]? = nil,
+        showsChevron: Bool = true
+    ) {
+        self.host = host
+        self.displayedAddress = displayedAddress
+        self.raceProgress = raceProgress
+        self.raceFailure = raceFailure
+        self.showsChevron = showsChevron
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -302,9 +389,30 @@ private struct HostRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(host.displayName)
                     .font(.headline)
-                Text("\(host.username)@\(host.hostname):\(host.port)")
+                let targetAddress = displayedAddress
+                    ?? host.selectedTarget
+                    ?? host.addresses.first
+                let address = targetAddress?.address ?? host.hostname
+                let port = targetAddress?.effectivePort(defaultPort: host.port)
+                    ?? host.port
+                Text("\(host.username)@\(address):\(port)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let raceProgress,
+                   let detail = raceProgress.detailText(defaultPort: host.port) {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(.tint)
+                        .lineLimit(2)
+                } else if let raceFailure,
+                          let detail = HostAddressRaceProgress
+                            .failed(outcomes: raceFailure)
+                            .detailText(defaultPort: host.port) {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .lineLimit(3)
+                }
             }
 
             Spacer()

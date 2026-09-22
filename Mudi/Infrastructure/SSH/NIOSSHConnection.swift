@@ -20,6 +20,13 @@ final class NIOSSHConnection: @unchecked Sendable {
     static let hostKeyDecisionTimeout: TimeAmount = .seconds(60)
     static let commandTimeout: TimeAmount = .seconds(10)
 
+    static func tcpEndpoint(for host: Host) -> NIOSSHConnectionEndpoint {
+        NIOSSHConnectionEndpoint(
+            hostname: host.hostname,
+            port: Int(host.effectivePort)
+        )
+    }
+
     let channel: Channel
     let sshHandler: NIOLoopBoundBox<NIOSSHHandler>
 
@@ -42,22 +49,10 @@ final class NIOSSHConnection: @unchecked Sendable {
 
         let bootstrap = ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
             .channelInitializer { channel in
-                let sshHandler = NIOSSHHandler(
-                    role: .client(configuredClient),
-                    allocator: channel.allocator,
-                    inboundChildChannelInitializer: { childChannel, _ in
-                        childChannel.eventLoop.makeSucceededVoidFuture()
-                    }
-                )
-                let handshakeHandler = MudiSSHHandshakeHandler(
-                    eventLoop: channel.eventLoop,
-                    loginTimeout: Self.hostKeyDecisionTimeout
-                )
-
                 do {
-                    try channel.pipeline.syncOperations.addHandlers(
-                        sshHandler,
-                        handshakeHandler
+                    try Self.addSSHHandlers(
+                        to: channel,
+                        configuration: configuredClient
                     )
                     return channel.eventLoop.makeSucceededVoidFuture()
                 } catch {
@@ -81,25 +76,141 @@ final class NIOSSHConnection: @unchecked Sendable {
                 value: 1
             )
 
+        let endpoint = tcpEndpoint(for: host)
         let channel = try await bootstrap
-            .connect(host: host.hostname, port: Int(host.port))
+            .connect(host: endpoint.hostname, port: endpoint.port)
             .get()
 
         do {
-            let handshakeHandler = try await channel.pipeline
-                .handler(type: MudiSSHHandshakeHandler.self)
-                .get()
-            try await handshakeHandler.authenticated.get()
-
-            let sshHandlerBox = try await channel.eventLoop.submit {
-                let sshHandler = try channel.pipeline.syncOperations.handler(
-                    type: NIOSSHHandler.self
-                )
-                return NIOLoopBoundBox(sshHandler, eventLoop: channel.eventLoop)
-            }.get()
-            return NIOSSHConnection(channel: channel, sshHandler: sshHandlerBox)
+            return try await finishConnection(on: channel)
         } catch {
             try? await channel.close()
+            throw error
+        }
+    }
+
+    /// Authenticates an already-established TCP channel. The caller owns the
+    /// channel until this method succeeds; no second DNS/TCP dial occurs.
+    static func connect(
+        channel: Channel,
+        host: Host,
+        authenticationMethod: Citadel.SSHAuthenticationMethod,
+        hostKeyValidator: Citadel.SSHHostKeyValidator
+    ) async throws -> NIOSSHConnection {
+        var clientConfiguration = SSHClientConfiguration(
+            userAuthDelegate: authenticationMethod,
+            serverAuthDelegate: hostKeyValidator
+        )
+        clientConfiguration.hostname = host.hostname
+        do {
+            return try await withTaskCancellationHandler {
+                try await channel.eventLoop.submit {
+                    try Self.addSSHHandlers(
+                        to: channel,
+                        configuration: clientConfiguration
+                    )
+                }.get()
+                try await Self.enableSSHReads(on: channel)
+                return try await finishConnection(on: channel)
+            } onCancel: {
+                channel.close(promise: nil)
+            }
+        } catch {
+            try? await channel.close()
+            throw error
+        }
+    }
+
+    /// Keeps a probe socket from draining the server identification string
+    /// before the late SSH pipeline is installed.
+    static func disableAutomaticReads(on channel: Channel) -> EventLoopFuture<Void> {
+        channel.setOption(ChannelOptions.autoRead, value: false)
+    }
+
+    /// Re-enables reads only after the late SSH pipeline is installed. The
+    /// probe channel starts with autoRead disabled so a server identification
+    /// string remains in the socket until NIOSSHHandler can consume it.
+    static func enableSSHReads(on channel: Channel) async throws {
+        try await channel.setOption(ChannelOptions.autoRead, value: true).get()
+        channel.read()
+    }
+    private static func addSSHHandlers(
+        to channel: Channel,
+        configuration: SSHClientConfiguration
+    ) throws {
+        let sshHandler = NIOSSHHandler(
+            role: .client(configuration),
+            allocator: channel.allocator,
+            inboundChildChannelInitializer: { childChannel, _ in
+                childChannel.eventLoop.makeSucceededVoidFuture()
+            }
+        )
+        let handshakeHandler = MudiSSHHandshakeHandler(
+            eventLoop: channel.eventLoop,
+            loginTimeout: Self.hostKeyDecisionTimeout
+        )
+        try channel.pipeline.syncOperations.addHandlers(
+            sshHandler,
+            handshakeHandler
+        )
+    }
+
+    private static func finishConnection(on channel: Channel) async throws -> NIOSSHConnection {
+        let handshakeHandler = try await channel.pipeline
+            .handler(type: MudiSSHHandshakeHandler.self)
+            .get()
+        try await handshakeHandler.authenticated.get()
+
+        let sshHandlerBox = try await channel.eventLoop.submit {
+            let sshHandler = try channel.pipeline.syncOperations.handler(
+                type: NIOSSHHandler.self
+            )
+            return NIOLoopBoundBox(sshHandler, eventLoop: channel.eventLoop)
+        }.get()
+        return NIOSSHConnection(channel: channel, sshHandler: sshHandlerBox)
+    }
+
+    /// Opens only TCP/DNS for a Host target. Authentication and host-key
+    /// validation are deliberately absent so multiple Host addresses can be
+    /// raced without producing concurrent credential or TOFU prompts.
+    static func connectNetwork(to host: Host) async throws -> any HostAddressNetworkConnection {
+        guard let target = host.selectedTarget ?? host.addresses.first else {
+            throw HostAddressConnectionRaceError.invalidAddressList
+        }
+        let cancellation = NIOChannelCancellation()
+        let bootstrap = ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+            .channelInitializer { channel in
+                cancellation.register(channel)
+                return Self.disableAutomaticReads(on: channel)
+            }
+            .connectTimeout(Self.connectTimeout)
+            .channelOption(
+                ChannelOptions.connectTimeout,
+                value: Self.connectTimeout
+            )
+            .channelOption(
+                ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR),
+                value: 1
+            )
+            .channelOption(
+                ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), TCP_NODELAY),
+                value: 1
+            )
+        do {
+            let channel = try await withTaskCancellationHandler {
+                let endpoint = tcpEndpoint(for: host)
+                let channel = try await bootstrap
+                    .connect(host: endpoint.hostname, port: endpoint.port)
+                    .get()
+                try Task.checkCancellation()
+                return channel
+            } onCancel: {
+                cancellation.cancel()
+            }
+            cancellation.finish(successful: channel)
+            return NIOHostAddressNetworkConnection(channel: channel, target: target)
+        } catch {
+            cancellation.cancel()
             throw error
         }
     }
@@ -159,6 +270,76 @@ final class NIOSSHConnection: @unchecked Sendable {
         )
         try await interactiveChannel.start()
         return interactiveChannel
+    }
+}
+
+struct NIOSSHConnectionEndpoint: Equatable, Sendable {
+    let hostname: String
+    let port: Int
+}
+
+private final class NIOChannelCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var channels: [ObjectIdentifier: Channel] = [:]
+    private var isCancelled = false
+    private var isFinished = false
+
+    func register(_ channel: Channel) {
+        let shouldClose: Bool
+        lock.lock()
+        shouldClose = isCancelled || isFinished
+        if !shouldClose {
+            channels[ObjectIdentifier(channel)] = channel
+        }
+        lock.unlock()
+        if shouldClose {
+            channel.close(promise: nil)
+        }
+    }
+
+    func cancel() {
+        lock.lock()
+        isCancelled = true
+        let channels = Array(self.channels.values)
+        self.channels.removeAll()
+        lock.unlock()
+        channels.forEach { $0.close(promise: nil) }
+    }
+
+    func finish(successful channel: Channel) {
+        lock.lock()
+        isFinished = true
+        self.channels[ObjectIdentifier(channel)] = nil
+        let losers = Array(self.channels.values)
+        self.channels.removeAll()
+        lock.unlock()
+        losers.forEach { $0.close(promise: nil) }
+    }
+}
+
+final class NIOHostAddressNetworkConnection: HostAddressNetworkConnection, @unchecked Sendable {
+    let target: HostAddress
+    private let lock = NSLock()
+    private var channelValue: Channel?
+
+    init(channel: Channel, target: HostAddress) {
+        channelValue = channel
+        self.target = target
+    }
+
+    /// Transfers the established TCP channel to the SSH pipeline. Once
+    /// transferred, close() becomes a no-op because NIOSSHConnection owns it.
+    func takeChannel() -> Channel? {
+        lock.lock()
+        defer { lock.unlock() }
+        let channel = channelValue
+        channelValue = nil
+        return channel
+    }
+
+    func close() async {
+        guard let channel = takeChannel() else { return }
+        _ = try? await channel.close()
     }
 }
 
