@@ -106,7 +106,7 @@ struct PanePickerView: View {
                             ForEach(session.roots) { root in
                                 PanePickerWorkspaceNodeView(
                                     node: root,
-                                    attachedPaneID: state.attachedTerminal?.pane.id,
+                                    currentPaneID: state.currentPaneID,
                                     onSelectPane: onSelectPane
                                 )
                             }
@@ -155,7 +155,7 @@ struct PanePickerView: View {
 
 private struct PanePickerWorkspaceNodeView: View {
     let node: PanePickerWorkspacePresentation
-    let attachedPaneID: Pane.ID?
+    let currentPaneID: Pane.ID?
     let onSelectPane: (Pane.ID) -> Void
 
     var body: some View {
@@ -165,28 +165,61 @@ private struct PanePickerWorkspaceNodeView: View {
                 .foregroundStyle(.secondary)
 
             ForEach(node.rows) { row in
-                Button {
-                    onSelectPane(row.paneID)
-                } label: {
-                    HerdrPaneRow(
-                        pane: row.pane,
-                        isAttached: attachedPaneID == row.paneID,
-                        workspaceContext: row.workspaceContext
-                    )
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("pane-picker-pane-\(row.paneID)")
+                PanePickerPaneRowView(
+                    row: row,
+                    highlight: PanePickerRowHighlight.resolve(
+                        paneID: row.paneID,
+                        currentPaneID: currentPaneID
+                    ),
+                    onSelectPane: onSelectPane
+                )
             }
 
             ForEach(node.children) { child in
                 PanePickerWorkspaceNodeView(
                     node: child,
-                    attachedPaneID: attachedPaneID,
+                    currentPaneID: currentPaneID,
                     onSelectPane: onSelectPane
                 )
                 .padding(.leading, 16)
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+/// One tappable pane row. The current-pane mark is a pure function of the
+/// real attached pane identity (``PanePickerRowHighlight``), so a refresh
+/// that relocates the pane keeps the same row marked, and the mark is
+/// announced instead of only being a trailing glyph.
+private struct PanePickerPaneRowView: View {
+    let row: PanePickerPresentationRow
+    let highlight: PanePickerRowHighlight
+    let onSelectPane: (Pane.ID) -> Void
+
+    var body: some View {
+        Button {
+            onSelectPane(row.paneID)
+        } label: {
+            HerdrPaneRow(
+                pane: row.pane,
+                isAttached: highlight.isCurrent,
+                workspaceContext: row.workspaceContext
+            )
+            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .background {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(
+                        highlight.isCurrent
+                            ? Color.accentColor.opacity(0.14)
+                            : Color.clear
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("pane-picker-pane-\(row.paneID)")
+        .accessibilityAddTraits(highlight.isCurrent ? .isSelected : [])
+        .accessibilityValue(highlight.accessibilityValue ?? "")
     }
 }
