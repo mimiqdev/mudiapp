@@ -233,6 +233,7 @@ extension RootViewModel {
                 started: reconnectStarted,
                 trigger: trigger,
                 preservesMoshSession: preservesMoshSession,
+                hostID: context.host.id,
                 isSuperseded: isSuperseded
             )
         }
@@ -253,6 +254,7 @@ extension RootViewModel {
 
     private func resetInFlightConnectionForReconnect() -> UUID {
         errorMessage = nil
+        failedHostID = nil
         pendingTerminalCloseIdentity = nil
         connectionTask?.cancel()
         connectionTask = nil
@@ -268,6 +270,7 @@ extension RootViewModel {
         started: ContinuousClock.Instant,
         trigger: TransparentReconnectTrigger,
         preservesMoshSession: Bool,
+        hostID: Host.ID,
         isSuperseded: () -> Bool
     ) {
         let reconnectMs = (ContinuousClock.now - started) / .milliseconds(1)
@@ -290,6 +293,9 @@ extension RootViewModel {
         }
         errorMessage = Self.transparentReconnectFailureMessage
         returnToHosts()
+        // The network failure must outlive the fallback to Hosts: a deliberate
+        // leave presents idle, this one keeps the red warning and Retry.
+        failedHostID = hostID
     }
 
     private func retireStaleControlPlaneBeforeReconnect(

@@ -12,7 +12,6 @@ enum HostRowConnectionState: Equatable, Sendable {
     case connecting
     case connected
     case failed
-    case disconnected
 }
 
 extension HostRowConnectionState {
@@ -23,25 +22,31 @@ extension HostRowConnectionState {
     /// A live model attempt wins for its whole duration: SSH is already up
     /// while Herdr discovery still runs, so the row must keep its connecting
     /// animation and Cancel affordance until the attempt actually settles.
+    ///
+    /// A genuine failure is sticky through `failedHostID`, because the
+    /// teardown that follows a network/transparent-reconnect failure
+    /// converges the coordinator to `.disconnected`. A deliberate return to
+    /// Hosts never records a failure, so its row goes back to idle instead of
+    /// showing a disconnected indicator.
     static func resolve(
         host: Host,
         connectingHostID: Host.ID?,
+        failedHostID: Host.ID?,
         stateOwnerHostID: Host.ID?,
         connectionState: ConnectionState
     ) -> HostRowConnectionState {
         if host.id == connectingHostID { return .connecting }
+        if host.id == failedHostID { return .failed }
         guard host.id == stateOwnerHostID else { return .idle }
         switch connectionState {
         case .connected:
             return .connected
         case .failed:
             return .failed
-        case .disconnected:
-            return .disconnected
-        case .idle, .connecting:
+        case .idle, .connecting, .disconnected:
             // `.connecting` without a live model attempt is a control-plane
-            // rebuild behind the terminal; the Hosts list has no row feedback
-            // for it.
+            // rebuild behind the terminal; `.disconnected` is the settled
+            // state of a deliberate leave. Neither has row feedback.
             return .idle
         }
     }
@@ -56,7 +61,6 @@ struct HostRowConnectionPresentation: Equatable, Sendable {
     let canConnect: Bool
     let showsConnected: Bool
     let showsFailure: Bool
-    let showsDisconnected: Bool
     let showsRetry: Bool
 
     var isConnecting: Bool {
@@ -76,7 +80,6 @@ struct HostRowConnectionPresentation: Equatable, Sendable {
                 canConnect: true,
                 showsConnected: false,
                 showsFailure: false,
-                showsDisconnected: false,
                 showsRetry: false
             )
         case .connecting:
@@ -90,7 +93,6 @@ struct HostRowConnectionPresentation: Equatable, Sendable {
                 canConnect: false,
                 showsConnected: false,
                 showsFailure: false,
-                showsDisconnected: false,
                 showsRetry: false
             )
         case .connected:
@@ -101,7 +103,6 @@ struct HostRowConnectionPresentation: Equatable, Sendable {
                 canConnect: false,
                 showsConnected: true,
                 showsFailure: false,
-                showsDisconnected: false,
                 showsRetry: false
             )
         case .failed:
@@ -112,18 +113,6 @@ struct HostRowConnectionPresentation: Equatable, Sendable {
                 canConnect: true,
                 showsConnected: false,
                 showsFailure: true,
-                showsDisconnected: false,
-                showsRetry: true
-            )
-        case .disconnected:
-            HostRowConnectionPresentation(
-                state: .disconnected,
-                showsProgress: false,
-                showsCancel: false,
-                canConnect: true,
-                showsConnected: false,
-                showsFailure: false,
-                showsDisconnected: true,
                 showsRetry: true
             )
         }

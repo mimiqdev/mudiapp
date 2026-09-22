@@ -33,6 +33,12 @@ final class RootViewModel: ObservableObject {
     /// when the attempt starts - never as a reaction to a result - and
     /// cleared on success, failure, or cancel.
     @Published internal(set) var connectingHostID: Host.ID?
+    /// Phase 10: the host whose attempt genuinely failed (connect failure or a
+    /// network/transparent-reconnect failure). Sticky across the teardown that
+    /// follows, so its row keeps the red warning and Retry. A deliberate
+    /// return to Hosts never records a failure, and a new attempt clears it,
+    /// so a deliberate leave presents the row as idle.
+    @Published internal(set) var failedHostID: Host.ID?
     /// Phase 10: true once the connecting row outlived the cancel threshold.
     @Published internal(set) var showsConnectCancel = false
 
@@ -231,6 +237,9 @@ extension RootViewModel {
     func delete(_ host: Host) {
         let deletesActiveConnection = lastHostID == host.id
             || activeConnection?.host.id == host.id
+        if failedHostID == host.id {
+            failedHostID = nil
+        }
         if deletesActiveConnection {
             terminalSessionCloseSuppressed = false
             invalidateConnectionAttempt()
@@ -359,19 +368,12 @@ extension RootViewModel {
                     workflow: workflow
                 )
             } catch {
-                guard let self, self.isCurrentConnection(generation) else { return }
-                self.invalidatePanePickerPresentation()
-                self.answerHostKeyPrompt(.reject)
-                self.workflow = nil
-                self.herdrState = nil
-                self.activeConnection = nil
-                self.activeTransport = nil
-                self.baseSession = nil
-                self.baseTerminalSession = nil
-                self.connectionTask = nil
-                self.finishConnectingFeedback(generation: generation)
-                self.connectionState = await coordinator.connectionState()
-                self.errorMessage = error.localizedDescription
+                guard let self else { return }
+                await self.handleConnectFailure(
+                    hostID: host.id,
+                    generation: generation,
+                    error: error
+                )
             }
         }
     }
@@ -472,21 +474,44 @@ extension RootViewModel {
                     workflow: workflow
                 )
             } catch {
-                guard let self, self.isCurrentConnection(generation) else { return }
-                self.invalidatePanePickerPresentation()
-                self.answerHostKeyPrompt(.reject)
-                self.workflow = nil
-                self.herdrState = nil
-                self.activeConnection = nil
-                self.activeTransport = nil
-                self.baseSession = nil
-                self.baseTerminalSession = nil
-                self.connectionTask = nil
-                self.finishConnectingFeedback(generation: generation)
-                self.connectionState = await coordinator.connectionState()
-                self.errorMessage = error.localizedDescription
+                guard let self else { return }
+                await self.handleConnectFailure(
+                    hostID: hostID,
+                    generation: generation,
+                    error: error
+                )
             }
         }
+    }
+
+    /// Publishes a genuine attempt failure for `hostID`.
+    ///
+    /// The coordinator state is read before anything is published and the
+    /// generation is re-checked after that await, so a superseded attempt
+    /// cannot clear a retry or mark its row as failed. The failure marker is
+    /// set last so the row's red warning and Retry appear together with the
+    /// failure message.
+    private func handleConnectFailure(
+        hostID: Host.ID,
+        generation: UUID,
+        error: Error
+    ) async {
+        guard isCurrentConnection(generation) else { return }
+        let coordinatorState = await coordinator.connectionState()
+        guard isCurrentConnection(generation) else { return }
+        invalidatePanePickerPresentation()
+        answerHostKeyPrompt(.reject)
+        workflow = nil
+        herdrState = nil
+        activeConnection = nil
+        activeTransport = nil
+        baseSession = nil
+        baseTerminalSession = nil
+        connectionTask = nil
+        errorMessage = error.localizedDescription
+        connectionState = coordinatorState
+        finishConnectingFeedback(generation: generation)
+        failedHostID = hostID
     }
 
 }
@@ -507,6 +532,7 @@ extension RootViewModel {
         HostRowConnectionState.resolve(
             host: host,
             connectingHostID: connectingHostID,
+            failedHostID: failedHostID,
             stateOwnerHostID: connectionStateHostID,
             connectionState: connectionState
         )
@@ -538,6 +564,7 @@ extension RootViewModel {
         )
         clearConnectingFeedback()
         errorMessage = nil
+        failedHostID = nil
         invalidatePanePickerPresentation()
         invalidateConnectionAttempt()
         panePickerCoordinator = nil
@@ -1083,6 +1110,7 @@ extension RootViewModel {
             self.lastPaneHostID = nil
         }
         lastHostID = hostID
+        failedHostID = nil
         workflow = nil
         herdrState = nil
         hasLastPane = false

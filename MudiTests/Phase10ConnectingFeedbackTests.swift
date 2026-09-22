@@ -52,8 +52,9 @@ final class Phase10ConnectingFeedbackTests: XCTestCase {  // pi-lens-ignore: typ
         )
     }
 
-    /// Every result state is presented by the row: connected, failed with a
-    /// retry path, and disconnected with a retry path.
+    /// Result states are presented by the row: connected and a genuine
+    /// failure with a retry path. A deliberate leave is idle, so there is no
+    /// disconnected presentation at all.
     func testHostRowPresentationCoversResultStates() {
         let connected = HostRowConnectionPresentation.resolve(
             state: .connected,
@@ -62,7 +63,6 @@ final class Phase10ConnectingFeedbackTests: XCTestCase {  // pi-lens-ignore: typ
         XCTAssertTrue(connected.showsConnected)
         XCTAssertFalse(connected.showsProgress)
         XCTAssertFalse(connected.showsFailure)
-        XCTAssertFalse(connected.showsDisconnected)
         XCTAssertFalse(connected.showsRetry)
         XCTAssertFalse(
             connected.canConnect,
@@ -80,20 +80,7 @@ final class Phase10ConnectingFeedbackTests: XCTestCase {  // pi-lens-ignore: typ
         )
         XCTAssertFalse(failed.showsProgress)
         XCTAssertFalse(failed.showsConnected)
-        XCTAssertFalse(failed.showsDisconnected)
         XCTAssertTrue(failed.canConnect)
-
-        let disconnected = HostRowConnectionPresentation.resolve(
-            state: .disconnected,
-            showsCancel: false
-        )
-        XCTAssertTrue(disconnected.showsDisconnected)
-        XCTAssertTrue(
-            disconnected.showsRetry,
-            "A disconnected row must keep the retry affordance"
-        )
-        XCTAssertFalse(disconnected.showsFailure)
-        XCTAssertTrue(disconnected.canConnect)
     }
 
     /// Only the owning row renders the coordinator's state; every other row
@@ -126,21 +113,23 @@ final class Phase10ConnectingFeedbackTests: XCTestCase {  // pi-lens-ignore: typ
         try await waitUntil {
             application.model.connectionState == .disconnected
         }
+        try await waitUntil { !application.model.isTearingDown }
         XCTAssertEqual(
             application.model.rowConnectionState(for: owner),
-            .disconnected
+            .idle,
+            "A deliberate leave must present the owner row as idle"
         )
         XCTAssertEqual(
             application.model.rowConnectionState(for: other),
             .idle
         )
-        XCTAssertTrue(
-            application.model.rowConnectionPresentation(for: owner).showsRetry
+        XCTAssertFalse(
+            application.model.rowConnectionPresentation(for: owner).showsRetry,
+            "A deliberate leave must not offer Retry"
         )
         XCTAssertFalse(
             application.model.rowConnectionPresentation(for: other).showsRetry
         )
-        try await waitUntil { !application.model.isTearingDown }
     }
 
     // MARK: - State timing
@@ -678,20 +667,26 @@ final class Phase10ConnectingFeedbackTests: XCTestCase {  // pi-lens-ignore: typ
         )
 
         application.model.returnToHosts()
-        let disconnectedShown = await harness.waitUntil {
-            harness.view(with: "host-disconnected-\(host.id.uuidString)") != nil
+        try await waitUntil {
+            application.model.connectionState == .disconnected
         }
-        XCTAssertTrue(
-            disconnectedShown,
-            "A disconnected host must show its state on the row"
+        try await waitUntil { !application.model.isTearingDown }
+        try await settle()
+        XCTAssertEqual(
+            application.model.rowConnectionState(for: host),
+            .idle,
+            "A deliberate leave must present the row as idle"
         )
-        XCTAssertNotNil(
-            harness.view(with: "host-retry-\(host.id.uuidString)"),
-            "The disconnected row must keep a retry path"
+        let settledPresentation = application.model.rowConnectionPresentation(
+            for: host
         )
+        XCTAssertFalse(settledPresentation.showsFailure)
+        XCTAssertFalse(settledPresentation.showsRetry)
+        XCTAssertNil(harness.view(with: "host-failed-\(host.id.uuidString)"))
+        XCTAssertNil(harness.view(with: "host-retry-\(host.id.uuidString)"))
         XCTAssertNil(
             harness.view(with: "hosts-connection-banner"),
-            "Disconnected must not bring the banner back"
+            "A deliberate leave must not bring the banner back"
         )
     }
 
@@ -789,6 +784,114 @@ final class Phase10ConnectingFeedbackTests: XCTestCase {  // pi-lens-ignore: typ
         XCTAssertNil(
             harness.view(with: "hosts-connection-banner"),
             "The global banner must stay removed"
+        )
+    }
+
+    /// A deliberate back-to-Hosts/leave is not a failure: the owning row goes
+    /// back to idle with no disconnected indicator and no Retry.
+    func testDeliberateLeavePresentsRowAsIdle() async throws {
+        let fixture = try Phase3HerdrFixtures.single()
+        let host = phase4Host()
+        let client = Phase10GatedSSHClient()
+        let application = makePhase10Application(
+            fixture: fixture,
+            client: client,
+            clock: Phase10CancelThresholdClock()
+        )
+        try await application.save(host)
+        let harness = Phase7RootViewHarness(
+            rootView: RootView(model: application.model)
+        )
+        defer { harness.close() }
+
+        let hostShown = await harness.waitUntil {
+            harness.view(with: "host-connect-\(host.id.uuidString)") != nil
+        }
+        XCTAssertTrue(hostShown)
+        XCTAssertTrue(
+            activate("host-connect-\(host.id.uuidString)", in: harness)
+        )
+        try await waitUntil { application.model.activeConnection != nil }
+
+        application.model.returnToHosts()
+        try await waitUntil {
+            application.model.connectionState == .disconnected
+        }
+        try await waitUntil { !application.model.isTearingDown }
+        try await settle()
+
+        XCTAssertEqual(
+            application.model.rowConnectionState(for: host),
+            .idle,
+            "A deliberate leave must present the row as idle"
+        )
+        let presentation = application.model.rowConnectionPresentation(
+            for: host
+        )
+        XCTAssertFalse(presentation.showsFailure)
+        XCTAssertFalse(presentation.showsRetry)
+        XCTAssertFalse(presentation.showsProgress)
+        XCTAssertNil(harness.view(with: "host-failed-\(host.id.uuidString)"))
+        XCTAssertNil(harness.view(with: "host-retry-\(host.id.uuidString)"))
+        XCTAssertNil(
+            harness.view(with: "host-disconnected-\(host.id.uuidString)"),
+            "A deliberate leave must not add a disconnected indicator"
+        )
+    }
+
+    /// A genuine network/transparent-reconnect failure still owns the row: the
+    /// red warning and Retry survive the fallback to the Host list.
+    func testTransparentReconnectFailurePresentsRowFailure() async throws {
+        let fixture = try Phase3HerdrFixtures.single()
+        let host = phase4Host()
+        let application = makePhase4NavigationApplication(
+            fixture: fixture,
+            client: Phase2SSHClient(
+                presentedFingerprint: "SHA256:phase4-test-key",
+                outcomes: [false, true]
+            ),
+            connectCancelScheduler: Phase10CancelThresholdClock()
+        )
+        try await application.save(host)
+        let harness = Phase7RootViewHarness(
+            rootView: RootView(model: application.model)
+        )
+        defer { harness.close() }
+
+        application.model.connect(to: host)
+        try await waitUntil { application.model.activeConnection != nil }
+
+        await application.transport.simulateBaseSessionDeath()
+        await application.model.transparentControlPlaneReconnect(
+            restoring: .rememberedPane
+        )
+
+        XCTAssertNil(application.model.activeConnection)
+        XCTAssertEqual(
+            application.model.errorMessage,
+            RootViewModel.transparentReconnectFailureMessage
+        )
+        try await waitUntil { !application.model.isTearingDown }
+        XCTAssertEqual(
+            application.model.rowConnectionState(for: host),
+            .failed,
+            "A transparent-reconnect failure must keep the failure state"
+        )
+        let presentation = application.model.rowConnectionPresentation(
+            for: host
+        )
+        XCTAssertTrue(presentation.showsFailure)
+        XCTAssertTrue(
+            presentation.showsRetry,
+            "A network failure must keep the retry affordance"
+        )
+
+        let failedShown = await harness.waitUntil {
+            harness.view(with: "host-failed-\(host.id.uuidString)") != nil
+        }
+        XCTAssertTrue(failedShown)
+        XCTAssertNotNil(
+            harness.view(with: "host-retry-\(host.id.uuidString)")
         )
     }
 

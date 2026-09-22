@@ -53,6 +53,9 @@ struct HostListView: View {
     /// The host with a live model attempt; it keeps the row connecting for the
     /// whole attempt, including the Herdr discovery phase.
     let connectingHostID: Host.ID?
+    /// The host whose last attempt genuinely failed; it keeps the red warning
+    /// and Retry even after the coordinator converges to `.disconnected`.
+    let failedHostID: Host.ID?
     /// The row that owns `connectionState`; every other row stays idle.
     let stateOwnerHostID: Host.ID?
     let showsConnectCancel: Bool
@@ -69,6 +72,7 @@ struct HostListView: View {
         hosts: [Host],
         connectionState: ConnectionState,
         connectingHostID: Host.ID? = nil,
+        failedHostID: Host.ID? = nil,
         stateOwnerHostID: Host.ID? = nil,
         showsConnectCancel: Bool = false,
         errorMessage: String?,
@@ -83,6 +87,7 @@ struct HostListView: View {
         self.hosts = hosts
         self.connectionState = connectionState
         self.connectingHostID = connectingHostID
+        self.failedHostID = failedHostID
         self.stateOwnerHostID = stateOwnerHostID
         self.showsConnectCancel = showsConnectCancel
         self.errorMessage = errorMessage
@@ -112,6 +117,7 @@ struct HostListView: View {
                             state: HostRowConnectionState.resolve(
                                 host: host,
                                 connectingHostID: connectingHostID,
+                                failedHostID: failedHostID,
                                 stateOwnerHostID: stateOwnerHostID,
                                 connectionState: connectionState
                             ),
@@ -178,8 +184,9 @@ struct HostListView: View {
                             }
 
                             // The result states replace the former global
-                            // banner: connected, failed, and disconnected all
-                            // render on the owning row.
+                            // banner: connected and a genuine failure both
+                            // render on the owning row; a deliberate leave
+                            // presents idle.
                             if presentation.showsConnected {
                                 stateIndicator(
                                     systemImage: "checkmark.circle.fill",
@@ -198,17 +205,8 @@ struct HostListView: View {
                                 )
                             }
 
-                            if presentation.showsDisconnected {
-                                stateIndicator(
-                                    systemImage: "wifi.slash",
-                                    tint: .secondary,
-                                    label: "Disconnected",
-                                    identifier: "host-disconnected-\(host.id.uuidString)"
-                                )
-                            }
-
                             // The old banner owned Reconnect; the row keeps
-                            // that retry path for failed/disconnected hosts.
+                            // that retry path for a genuine failure.
                             if presentation.showsRetry {
                                 Button("Retry", action: onReconnect)
                                     .buttonStyle(.bordered)
