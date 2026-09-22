@@ -64,6 +64,10 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
     }
 
     func save(_ host: Host) async throws {
+        if let lastSuccessfulAddress = lastSuccessfulAddressByHostID[host.id],
+           !host.addresses.contains(lastSuccessfulAddress) {
+            lastSuccessfulAddressByHostID[host.id] = nil
+        }
         try await hostStore.save(host)
     }
 
@@ -76,6 +80,7 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
     }
 
     func delete(_ host: Host) async throws {
+        lastSuccessfulAddressByHostID[host.id] = nil
         let deletesActiveHost = activeHostID == host.id
         if deletesActiveHost {
             await disconnect()
@@ -187,31 +192,70 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
         hostKeyDecision: @escaping @Sendable (String) async -> HostKeyDecision,
         progress: (@Sendable (HostAddressRaceProgress) async -> Void)?,
         attemptID: UUID
-    ) async throws -> ConnectionState {
-        let connectionHost = try await resolveConnectionHost(
-            for: host,
-            progress: progress
-        )
-        guard inFlightConnectID == attemptID,
-              activeHostID == host.id,
-              !Task.isCancelled
-        else {
-            throw CancellationError()
+    ) async throws -> ConnectionState { // pi-lens-ignore: function_body_length
+        let orderedAddresses = orderedAddresses(for: host)
+        guard !orderedAddresses.isEmpty else {
+            throw HostAddressConnectionRaceError.invalidAddressList
         }
-        activeHostValue = connectionHost
-        let channel = try await client.connect(
-            to: connectionHost,
-            credentials: credentials,
-            hostKeyDecision: { [weak self] fingerprint in
-                guard let self else { return .reject }
-                return await self.evaluateHostKey(
-                    fingerprint,
-                    for: attemptID,
-                    host: connectionHost,
-                    userDecision: hostKeyDecision
+
+        var remainingAddresses = orderedAddresses
+        var authenticatedConnection: (host: Host, channel: any PTYChannel)?
+        while authenticatedConnection == nil {
+            let connectionHost = try await resolveConnectionHost(
+                for: host,
+                addresses: remainingAddresses,
+                progress: progress
+            )
+            guard inFlightConnectID == attemptID,
+                  activeHostID == host.id,
+                  !Task.isCancelled
+            else {
+                throw CancellationError()
+            }
+
+            do {
+                let channel = try await client.connect(
+                    to: connectionHost,
+                    credentials: credentials,
+                    hostKeyDecision: { [weak self] fingerprint in
+                        guard let self else { return .reject }
+                        return await self.evaluateHostKey(
+                            fingerprint,
+                            for: attemptID,
+                            host: connectionHost,
+                            userDecision: hostKeyDecision
+                        )
+                    }
+                )
+                guard inFlightConnectID == attemptID,
+                      activeHostID == host.id,
+                      !Task.isCancelled
+                else {
+                    await channel.close()
+                    throw CancellationError()
+                }
+                authenticatedConnection = (connectionHost, channel)
+            } catch {
+                guard networkConnector != nil,
+                      shouldRetryAddress(after: error, attemptID: attemptID),
+                      let selectedAddress = connectionHost.selectedTarget,
+                      let selectedIndex = remainingAddresses.firstIndex(of: selectedAddress),
+                      selectedIndex + 1 < remainingAddresses.count
+                else {
+                    throw error
+                }
+                remainingAddresses = Array(
+                    remainingAddresses.dropFirst(selectedIndex + 1)
                 )
             }
-        )
+        }
+
+        guard let authenticatedConnection else {
+            throw ConnectionError.connectionFailed
+        }
+        let connectionHost = authenticatedConnection.host
+        let channel = authenticatedConnection.channel
+        activeHostValue = connectionHost
         let bootstrapSession = SSHShellSession(connectedChannel: channel)
         let selection: (transport: ActiveTransport, moshConnection: SSHShellSession?)
         do {
@@ -264,17 +308,17 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
 
     private func resolveConnectionHost(
         for host: Host,
+        addresses: [HostAddress],
         progress: (@Sendable (HostAddressRaceProgress) async -> Void)?
     ) async throws -> Host {
-        let orderedAddresses = orderedAddresses(for: host)
-        guard let firstAddress = orderedAddresses.first else {
+        guard let firstAddress = addresses.first else {
             throw HostAddressConnectionRaceError.invalidAddressList
         }
 
         // A legacy/test client without the pre-auth network seam keeps the
-        // single-address behavior. Production Citadel supplies the seam, so
-        // multi-address racing never starts authentication on a loser.
-        guard orderedAddresses.count > 1,
+        // direct path. Production Citadel supplies the seam, so serial
+        // network probing never authenticates a later address concurrently.
+        guard addresses.count > 1,
               let networkConnector
         else {
             return host.targeting(firstAddress)
@@ -282,7 +326,7 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
 
         do {
             let result = try await HostAddressConnectionRace.connect(
-                addresses: orderedAddresses,
+                addresses: addresses,
                 policy: addressRacePolicy,
                 clock: addressRaceClock,
                 using: { [networkConnector] address in
@@ -298,6 +342,13 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
             lastAddressRaceError = error
             throw error
         }
+    }
+
+    private func shouldRetryAddress(after error: Error, attemptID: UUID) -> Bool {
+        guard !Task.isCancelled,
+              hostKeyError?.attemptID != attemptID
+        else { return false }
+        return isRecoverableNetworkAddressError(error)
     }
 
     private func orderedAddresses(for host: Host) -> [HostAddress] {

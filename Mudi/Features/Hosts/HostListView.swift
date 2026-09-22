@@ -321,8 +321,12 @@ private struct HostRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(host.displayName)
                     .font(.headline)
-                let address = displayedAddress?.address ?? host.hostname
-                let port = displayedAddress?.effectivePort(defaultPort: host.port) ?? host.port
+                let targetAddress = displayedAddress
+                    ?? host.selectedTarget
+                    ?? host.addresses.first
+                let address = targetAddress?.address ?? host.hostname
+                let port = targetAddress?.effectivePort(defaultPort: host.port)
+                    ?? host.port
                 Text("\(host.username)@\(address):\(port)")
                     .font(.caption)
                     .foregroundStyle(.secondary)

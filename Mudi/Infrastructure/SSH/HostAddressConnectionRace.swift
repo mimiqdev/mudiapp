@@ -1,8 +1,8 @@
 import Foundation
 import HerdrKit
 
-/// A clock seam for the multi-address network race. Human authentication and
-/// TOFU prompts are intentionally outside this boundary.
+/// A clock seam for serial multi-address network attempts. Human
+/// authentication and TOFU prompts are intentionally outside this boundary.
 protocol HostAddressRaceClock: Sendable {
     func sleep(for duration: Duration) async throws
     func now() async -> Duration
@@ -30,26 +30,48 @@ protocol HostAddressNetworkConnecting: Sendable {
     func connectNetwork(to host: Host) async throws -> any HostAddressNetworkConnection
 }
 
-/// The pre-authentication network socket won by a Host address race. The
-/// winner is closed before the existing SSH adapter performs authentication;
-/// the abstraction still makes loser cleanup explicit and testable.
+/// The pre-authentication network socket for one Host address. The
+/// coordinator closes it before handing the selected target to the existing
+/// SSH adapter; serial callers never retain more than one candidate.
 protocol HostAddressNetworkConnection: Sendable {
     var target: HostAddress { get }
     func close() async
 }
 
 struct HostAddressRacePolicy: Equatable, Sendable {
-    let preferredExclusiveWindow: Duration
-    let backupStagger: Duration
-    /// One budget shared by the preferred attempt and every backup. It starts
-    /// when the preferred network attempt starts and is never reset.
+    /// The maximum time given to one network attempt before it is cancelled
+    /// and the next saved address is tried.
+    let perAddressTimeout: Duration
+    /// A single budget shared by the complete ordered sequence.
     let networkDeadline: Duration
 
-    static let `default` = HostAddressRacePolicy(
-        preferredExclusiveWindow: .seconds(2),
-        backupStagger: .milliseconds(500),
-        networkDeadline: .seconds(30)
-    )
+    init(
+        perAddressTimeout: Duration = .seconds(5),
+        networkDeadline: Duration = .seconds(30)
+    ) {
+        self.perAddressTimeout = perAddressTimeout
+        self.networkDeadline = networkDeadline
+    }
+
+    /// Source compatibility for the former parallel-race policy. The first
+    /// parameter now supplies the serial per-address timeout; the stagger is
+    /// deliberately ignored because serial attempts never overlap.
+    init(
+        preferredExclusiveWindow: Duration,
+        backupStagger _: Duration,
+        networkDeadline: Duration
+    ) {
+        self.init(
+            perAddressTimeout: preferredExclusiveWindow,
+            networkDeadline: networkDeadline
+        )
+    }
+
+    /// Compatibility accessors for callers that still display the old policy.
+    var preferredExclusiveWindow: Duration { perAddressTimeout }
+    var backupStagger: Duration { .zero }
+
+    static let `default` = HostAddressRacePolicy()
 }
 
 enum HostAddressAttemptOutcome: Equatable, Sendable {
@@ -95,6 +117,9 @@ enum HostAddressConnectionRaceError: Error, Equatable, LocalizedError, Sendable 
 
 enum HostAddressRaceProgress: Equatable, Sendable {
     case preferred(address: HostAddress, elapsed: Duration)
+    case attempting(address: HostAddress, elapsed: Duration)
+    /// Retained as a source-compatible progress case for older observers. A
+    /// serial race does not emit it.
     case racing(addresses: [HostAddress], elapsed: Duration)
     case selected(address: HostAddress, elapsed: Duration)
     case failed(outcomes: [HostAddressAttemptResult])
@@ -139,7 +164,6 @@ enum HostAddressConnectionRace {
             try await runner.run()
         } onCancel: {
             Task {
-                await registry.cancelAll()
                 await cancellation.cancel()
             }
         }
@@ -147,13 +171,11 @@ enum HostAddressConnectionRace {
 }
 
 private enum HostAddressRaceEvent: Sendable {
-    case backupWindowExpired
-    case backupLaunch
-    case deadline
+    case succeeded(index: Int)
     case failed(index: Int, message: String)
     case cancelled(index: Int)
-    case lost(index: Int)
-    case won(index: Int)
+    case timedOut(index: Int)
+    case deadline
     case cancelledRace
 }
 
@@ -169,11 +191,10 @@ private final class HostAddressRaceRunner: @unchecked Sendable {
     var continuation: AsyncStream<HostAddressRaceEvent>.Continuation!
     var outcomes: [HostAddressAttemptResult]
     var attemptTasks: [Int: Task<Void, Never>] = [:]
-    var timerTasks: [Task<Void, Never>] = []
-    var backupPhaseStarted = false
-    var nextBackupIndex = 1
-    var backupLaunchScheduled = false
-    var activeAttempts = 0
+    var timeoutTasks: [Int: Task<Void, Never>] = [:]
+    var deadlineTask: Task<Void, Never>?
+    var currentIndex: Int?
+    var raceStartedAt: Duration?
     var didCleanUp = false
 
     init(
@@ -208,9 +229,11 @@ private final class HostAddressRaceRunner: @unchecked Sendable {
         let events = AsyncStream<HostAddressRaceEvent> { continuation = $0 }
         self.continuation = continuation
         await cancellation.install(continuation)
+
+        let startedAt = await clock.now()
+        raceStartedAt = startedAt
+        scheduleDeadline(from: startedAt)
         await beginAttempt(0)
-        schedule(policy.preferredExclusiveWindow, .backupWindowExpired)
-        schedule(policy.networkDeadline, .deadline)
 
         do {
             for await event in events {
@@ -221,18 +244,21 @@ private final class HostAddressRaceRunner: @unchecked Sendable {
             }
             throw CancellationError()
         } catch {
-            let waitsForCancelledAttempts: Bool
+            let waitForCancelledAttempts: Bool
             if let raceError = error as? HostAddressConnectionRaceError {
                 switch raceError {
                 case .deadlineExceeded:
-                    waitsForCancelledAttempts = false
+                    waitForCancelledAttempts = false
                 case .invalidAddressList, .allAttemptsFailed:
-                    waitsForCancelledAttempts = true
+                    waitForCancelledAttempts = true
                 }
             } else {
-                waitsForCancelledAttempts = true
+                waitForCancelledAttempts = true
             }
-            await cleanUp(waitForCancelledAttempts: waitsForCancelledAttempts)
+            await cleanUp(
+                keeping: nil,
+                waitForCancelledAttempts: waitForCancelledAttempts
+            )
             throw error
         }
     }
@@ -241,22 +267,18 @@ private final class HostAddressRaceRunner: @unchecked Sendable {
         _ event: HostAddressRaceEvent
     ) async throws -> HostAddressConnectionRaceResult? {
         switch event {
-        case .cancelledRace:
-            throw CancellationError()
-        case .backupWindowExpired:
-            await startBackupPhase()
-        case .backupLaunch:
-            await launchScheduledBackup()
+        case let .succeeded(index):
+            return try await handleSuccess(index: index)
         case let .failed(index, message):
             try await handleFailure(index: index, message: message)
         case let .cancelled(index):
             try await handleCancellation(index: index)
-        case let .lost(index):
-            handleLost(index: index)
-        case let .won(index):
-            return try await handleWinner(index: index)
+        case let .timedOut(index):
+            try await handleTimeout(index: index)
         case .deadline:
             try await handleDeadline()
+        case .cancelledRace:
+            throw CancellationError()
         }
         return nil
     }
@@ -265,24 +287,25 @@ private final class HostAddressRaceRunner: @unchecked Sendable {
         guard index < addresses.count,
               outcomes[index].outcome == .notStarted
         else { return }
+
+        currentIndex = index
         let startedAt = await clock.now()
         updateOutcome(index, startedAt: startedAt, outcome: .started)
-        activeAttempts += 1
         if index == 0 {
             await report(.preferred(address: addresses[index], elapsed: startedAt))
         } else {
-            let activeAddresses = outcomes.compactMap {
-                $0.outcome == .started ? $0.address : nil
-            }
-            await report(.racing(addresses: activeAddresses, elapsed: startedAt))
+            await report(.attempting(address: addresses[index], elapsed: startedAt))
         }
 
         let address = addresses[index]
         let task = Task { [self] in
             do {
                 let connection = try await connector(address)
-                let won = await registry.claim(index: index, connection: connection)
-                continuation.yield(won ? .won(index: index) : .lost(index: index))
+                guard await registry.claim(index: index, connection: connection) else {
+                    continuation.yield(.cancelled(index: index))
+                    return
+                }
+                continuation.yield(.succeeded(index: index))
             } catch is CancellationError {
                 continuation.yield(.cancelled(index: index))
             } catch {
@@ -292,81 +315,44 @@ private final class HostAddressRaceRunner: @unchecked Sendable {
             }
         }
         attemptTasks[index] = task
+
+        let remaining = await remainingBudget()
+        let timeout = min(policy.perAddressTimeout, remaining)
+        scheduleTimeout(index: index, after: timeout)
     }
 
-    private func schedule(_ duration: Duration, _ event: HostAddressRaceEvent) {
-        let task = Task { [self] in
+    private func scheduleDeadline(from startedAt: Duration) {
+        deadlineTask = Task { [self] in
             do {
-                try await clock.sleep(for: duration)
-                continuation.yield(event)
+                try await clock.sleep(for: policy.networkDeadline)
+                continuation.yield(.deadline)
             } catch is CancellationError {
                 // The race owns cancellation and performs cleanup.
             } catch {
                 continuation.yield(.cancelledRace)
             }
         }
-        timerTasks.append(task)
+        _ = startedAt
     }
 
-    private func startBackupPhase() async {
-        guard !backupPhaseStarted else { return }
-        backupPhaseStarted = true
-        await launchNextBackup()
-    }
-
-    private func launchScheduledBackup() async {
-        backupLaunchScheduled = false
-        await launchNextBackup()
-    }
-
-    private func launchNextBackup() async {
-        guard nextBackupIndex < addresses.count else { return }
-        let index = nextBackupIndex
-        nextBackupIndex += 1
-        await beginAttempt(index)
-        scheduleNextBackup()
-    }
-
-    private func scheduleNextBackup() {
-        guard nextBackupIndex < addresses.count,
-              !backupLaunchScheduled
-        else { return }
-        backupLaunchScheduled = true
-        schedule(policy.backupStagger, .backupLaunch)
-    }
-
-    private func handleFailure(index: Int, message: String) async throws {
-        guard outcomes[index].outcome == .started else { return }
-        activeAttempts -= 1
-        updateOutcome(index, outcome: .failed(message))
-        if index == 0 {
-            await startBackupPhase()
-        } else {
-            scheduleNextBackup()
+    private func scheduleTimeout(index: Int, after duration: Duration) {
+        timeoutTasks[index] = Task { [self] in
+            do {
+                try await clock.sleep(for: duration)
+                continuation.yield(.timedOut(index: index))
+            } catch is CancellationError {
+                // The attempt completed or the race was cancelled.
+            } catch {
+                continuation.yield(.cancelledRace)
+            }
         }
-        try await finishIfNoWork()
     }
 
-    private func handleCancellation(index: Int) async throws {
-        guard outcomes[index].outcome == .started else { return }
-        activeAttempts -= 1
-        updateOutcome(index, outcome: .cancelled)
-        try await finishIfNoWork()
-    }
-
-    private func handleLost(index: Int) {
-        guard outcomes[index].outcome == .started else { return }
-        activeAttempts -= 1
-        updateOutcome(index, outcome: .cancelled)
-    }
-
-    private func handleWinner(
-        index: Int
-    ) async throws -> HostAddressConnectionRaceResult? {
-        guard outcomes[index].outcome == .started,
-              await registry.winnerIndex() == index
+    private func handleSuccess(index: Int) async throws -> HostAddressConnectionRaceResult? {
+        guard currentIndex == index,
+              outcomes[index].outcome == .started
         else { return nil }
-        activeAttempts -= 1
+        await finishAttempt(index, retireConnection: false)
         updateOutcome(index, outcome: .succeeded)
         await cleanUp(keeping: index)
         guard let connection = await registry.connection(for: index) else {
@@ -382,6 +368,44 @@ private final class HostAddressRaceRunner: @unchecked Sendable {
         )
     }
 
+    private func handleFailure(index: Int, message: String) async throws {
+        guard currentIndex == index,
+              outcomes[index].outcome == .started
+        else { return }
+        await finishAttempt(index, retireConnection: false)
+        updateOutcome(index, outcome: .failed(message))
+        try await startNextAttempt(after: index)
+    }
+
+    private func handleTimeout(index: Int) async throws {
+        guard currentIndex == index,
+              outcomes[index].outcome == .started
+        else { return }
+        await finishAttempt(index, retireConnection: true)
+        updateOutcome(index, outcome: .timedOut)
+        try await startNextAttempt(after: index)
+    }
+
+    private func handleCancellation(index: Int) async throws {
+        guard currentIndex == index,
+              outcomes[index].outcome == .started
+        else { return }
+        throw CancellationError()
+    }
+
+    private func startNextAttempt(after index: Int) async throws {
+        let nextIndex = index + 1
+        guard nextIndex < addresses.count else {
+            await report(.failed(outcomes: outcomes))
+            throw HostAddressConnectionRaceError.allAttemptsFailed(outcomes)
+        }
+        guard await remainingBudget() > .zero else {
+            try await handleDeadline()
+            return
+        }
+        await beginAttempt(nextIndex)
+    }
+
     private func handleDeadline() async throws {
         for index in outcomes.indices {
             switch outcomes[index].outcome {
@@ -395,13 +419,25 @@ private final class HostAddressRaceRunner: @unchecked Sendable {
         throw HostAddressConnectionRaceError.deadlineExceeded(outcomes)
     }
 
-    private func finishIfNoWork() async throws {
-        guard activeAttempts == 0,
-              nextBackupIndex >= addresses.count,
-              !backupLaunchScheduled
-        else { return }
-        await report(.failed(outcomes: outcomes))
-        throw HostAddressConnectionRaceError.allAttemptsFailed(outcomes)
+    private func finishAttempt(_ index: Int, retireConnection: Bool) async {
+        // Do not await an arbitrary connector after requesting cancellation.
+        // The registry is authoritative: a late result for a retired attempt
+        // is closed by claim(), so the next serial address can start within
+        // the timeout budget even if a third-party connector is not perfectly
+        // cancellation-cooperative.
+        timeoutTasks[index]?.cancel()
+        timeoutTasks[index] = nil
+        if retireConnection {
+            await registry.retire(index: index)
+        }
+        attemptTasks[index]?.cancel()
+    }
+
+    private func remainingBudget() async -> Duration {
+        guard let raceStartedAt else { return policy.networkDeadline }
+        let elapsed = await clock.now() - raceStartedAt
+        guard elapsed < policy.networkDeadline else { return .zero }
+        return policy.networkDeadline - elapsed
     }
 
     private func updateOutcome(
@@ -421,12 +457,13 @@ private final class HostAddressRaceRunner: @unchecked Sendable {
     }
 
     private func cleanUp(
-        keeping winner: Int? = nil,
+        keeping winner: Int?,
         waitForCancelledAttempts: Bool = true
     ) async {
         guard !didCleanUp else { return }
         didCleanUp = true
-        timerTasks.forEach { $0.cancel() }
+        deadlineTask?.cancel()
+        timeoutTasks.values.forEach { $0.cancel() }
         for (index, task) in attemptTasks where index != winner {
             task.cancel()
             if outcomes[index].outcome == .started
@@ -434,23 +471,26 @@ private final class HostAddressRaceRunner: @unchecked Sendable {
                 updateOutcome(index, outcome: .cancelled)
             }
         }
-        if winner == nil {
-            await registry.cancelAll()
-        } else {
+        if let winner {
+            await registry.closeAll(keeping: winner)
             for index in outcomes.indices where index != winner {
                 if outcomes[index].outcome == .notStarted {
                     updateOutcome(index, outcome: .cancelled)
                 }
             }
-            await registry.closeLosers(keeping: winner)
+        } else {
+            await registry.cancelAll()
         }
         if waitForCancelledAttempts {
-            for task in timerTasks {
+            if let deadlineTask {
+                await deadlineTask.value
+            }
+            for task in timeoutTasks.values {
                 await task.value
             }
-            for (index, task) in attemptTasks where index != winner {
-                await task.value
-            }
+            // Connector tasks are deliberately not awaited here. Cancellation
+            // is advisory at the task boundary; registry cancellation/retire
+            // closes any connection that arrives after this race has moved on.
         }
         continuation.finish()
     }
@@ -467,38 +507,51 @@ private final class HostAddressRaceRunner: @unchecked Sendable {
 
 private actor HostAddressRaceRegistry {
     private var connections: [Int: any HostAddressNetworkConnection] = [:]
-    private var selectedIndex: Int?
+    private var retired: Set<Int> = []
     private var cancelled = false
 
-    func claim(index: Int, connection: any HostAddressNetworkConnection) async -> Bool {
-        guard !cancelled, selectedIndex == nil else {
+    func claim(
+        index: Int,
+        connection: any HostAddressNetworkConnection
+    ) async -> Bool {
+        guard !cancelled, !retired.contains(index) else {
             await connection.close()
             return false
         }
         connections[index] = connection
-        selectedIndex = index
         return true
     }
-
-    func winnerIndex() -> Int? { selectedIndex }
 
     func connection(for index: Int) -> (any HostAddressNetworkConnection)? {
         connections[index]
     }
 
-    func closeLosers(keeping winner: Int?) async {
-        let losers = connections.filter { $0.key != winner }.map(\.value)
-        for loser in losers {
-            await loser.close()
+    func retire(index: Int) async {
+        retired.insert(index)
+        guard let connection = connections.removeValue(forKey: index) else { return }
+        await connection.close()
+    }
+
+    func closeAll(keeping winner: Int?) async {
+        if let winner {
+            // The winner is the only connection the caller may still consume;
+            // every later result belongs to a race that is already settled.
+            cancelled = true
+            let loserEntries = connections.filter { $0.key != winner }
+            connections = connections.filter { $0.key == winner }
+            retired.formUnion(loserEntries.keys)
+            for loser in loserEntries.values {
+                await loser.close()
+            }
+        } else {
+            await cancelAll()
         }
-        connections = connections.filter { $0.key == winner }
     }
 
     func cancelAll() async {
         cancelled = true
         let values = Array(connections.values)
         connections.removeAll()
-        selectedIndex = nil
         for connection in values {
             await connection.close()
         }

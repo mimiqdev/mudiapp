@@ -24,6 +24,40 @@ extension ApplicationCoordinator {
         return .connectionFailed
     }
 
+    /// Only transport failures may advance to another saved address. SSH
+    /// authentication and host-key errors deliberately return false even when
+    /// they eventually map to the same presentable connection error.
+    func isRecoverableNetworkAddressError(_ error: Error) -> Bool {
+        if error is SSHClientError {
+            return false
+        }
+        if let shellError = error as? SSHShellError {
+            switch shellError {
+            case .connectionFailed:
+                return true
+            case .authenticationFailed,
+                 .commandExecutionUnavailable,
+                 .notConnected,
+                 .alreadyConnected:
+                return false
+            }
+        }
+        if let connectionError = error as? ConnectionError {
+            switch connectionError {
+            case .connectionFailed,
+                 .connectionTimedOut,
+                 .hostUnreachable,
+                 .connectionRefused:
+                return true
+            case .moshUnavailable,
+                 .hostKeyRejected,
+                 .hostKeyMismatch:
+                return false
+            }
+        }
+        return mapNetworkConnectionError(error) != nil
+    }
+
     /// Converts NIO's transport details at the application boundary. The
     /// coordinator never lets NIO/NIOSSH descriptions reach the UI.
     private func mapNetworkConnectionError(_ error: Error) -> ConnectionError? {

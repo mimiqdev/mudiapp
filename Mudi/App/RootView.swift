@@ -157,6 +157,9 @@ extension RootViewModel {
     func loadPreferences() async {
         do {
             preferences = try await preferencesStore.load()
+            await coordinator.setAddressPromotionEnabled(
+                preferences.isAddressPromotionEnabled
+            )
             DiagnosticLogger.shared.configure(
                 isDebugLoggingEnabled: preferences.isDebugLoggingEnabled,
                 isSaveLogsEnabled: preferences.isSaveLogsEnabled
@@ -200,6 +203,15 @@ extension RootViewModel {
             isDebugLoggingEnabled: preferences.isDebugLoggingEnabled,
             isSaveLogsEnabled: isEnabled
         )
+        persistPreferences()
+    }
+
+    func updateAddressPromotionEnabled(_ isEnabled: Bool) {
+        preferences.isAddressPromotionEnabled = isEnabled
+        let coordinator = self.coordinator
+        Task {
+            await coordinator.setAddressPromotionEnabled(isEnabled)
+        }
         persistPreferences()
     }
 
@@ -650,7 +662,7 @@ extension RootViewModel {
         else { return }
         addressRaceProgress = progress
         switch progress {
-        case let .preferred(address, _), let .selected(address, _):
+        case let .preferred(address, _), let .attempting(address, _), let .selected(address, _):
             connectingAddress = address
         case let .racing(addresses, _):
             connectingAddress = addresses.last

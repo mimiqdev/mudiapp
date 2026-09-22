@@ -17,6 +17,17 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Connections") {
+                Toggle(
+                    "Prefer last successful address",
+                    isOn: Binding(
+                        get: { model.preferences.isAddressPromotionEnabled },
+                        set: { model.updateAddressPromotionEnabled($0) }
+                    )
+                )
+                .accessibilityIdentifier("settings-address-promotion-toggle")
+            }
+
             TerminalAppearanceSection(model: model)
             DiagnosticsSettingsSection(model: model)
         }

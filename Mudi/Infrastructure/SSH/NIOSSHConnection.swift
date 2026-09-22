@@ -20,6 +20,13 @@ final class NIOSSHConnection: @unchecked Sendable {
     static let hostKeyDecisionTimeout: TimeAmount = .seconds(60)
     static let commandTimeout: TimeAmount = .seconds(10)
 
+    static func tcpEndpoint(for host: Host) -> NIOSSHConnectionEndpoint {
+        NIOSSHConnectionEndpoint(
+            hostname: host.hostname,
+            port: Int(host.effectivePort)
+        )
+    }
+
     let channel: Channel
     let sshHandler: NIOLoopBoundBox<NIOSSHHandler>
 
@@ -81,8 +88,9 @@ final class NIOSSHConnection: @unchecked Sendable {
                 value: 1
             )
 
+        let endpoint = tcpEndpoint(for: host)
         let channel = try await bootstrap
-            .connect(host: host.hostname, port: Int(host.port))
+            .connect(host: endpoint.hostname, port: endpoint.port)
             .get()
 
         do {
@@ -132,8 +140,9 @@ final class NIOSSHConnection: @unchecked Sendable {
             )
         do {
             let channel = try await withTaskCancellationHandler {
+                let endpoint = tcpEndpoint(for: host)
                 let channel = try await bootstrap
-                    .connect(host: host.hostname, port: Int(host.effectivePort))
+                    .connect(host: endpoint.hostname, port: endpoint.port)
                     .get()
                 try Task.checkCancellation()
                 return channel
@@ -204,6 +213,11 @@ final class NIOSSHConnection: @unchecked Sendable {
         try await interactiveChannel.start()
         return interactiveChannel
     }
+}
+
+struct NIOSSHConnectionEndpoint: Equatable, Sendable {
+    let hostname: String
+    let port: Int
 }
 
 private final class NIOChannelCancellation: @unchecked Sendable {
