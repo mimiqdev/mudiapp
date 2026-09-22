@@ -2,6 +2,7 @@ import Foundation
 import HerdrKit
 import SwiftUI
 import UIKit
+import XCTest
 @testable import Mudi
 
 /// Hosts the Hosts list directly so row rendering can be asserted without the
@@ -236,5 +237,89 @@ actor Phase10GatedMoshTransport: MoshTransportBootstrapping {
 
     func disconnectCount() -> Int {
         disconnectCountValue
+    }
+}
+
+/// Shared helpers for the Phase 10 suites. A base class keeps them scoped to
+/// these tests instead of extending every XCTestCase in the target.
+@MainActor
+class Phase10TestCase: XCTestCase {
+    func makePhase10Application(
+        fixture: Phase3HerdrFixture,
+        client: Phase10GatedSSHClient,
+        moshTransport: any MoshTransportBootstrapping = Phase4MoshTransport(),
+        clock: Phase10CancelThresholdClock,
+        discoveryGate: Phase2ConnectionGate? = nil
+    ) -> Phase4NavigationApplication {
+        makePhase4NavigationApplication(
+            fixture: fixture,
+            client: client,
+            moshTransport: moshTransport,
+            connectCancelScheduler: clock,
+            discoveryGate: discoveryGate
+        )
+    }
+
+    func tearDownConnection(
+        _ application: Phase4NavigationApplication
+    ) async {
+        application.model.disconnect()
+        try? await waitUntil { !application.model.isTearingDown }
+    }
+
+    /// Gives MainActor continuations (including the stale-attempt paths) a
+    /// chance to run before a terminal assertion.
+    func settle() async throws {
+        try await Task.sleep(for: .milliseconds(100))
+    }
+
+    func waitUntil(
+        timeoutSeconds: Double = 3,
+        line: Int = #line,
+        _ condition: @escaping @MainActor () -> Bool
+    ) async throws {
+        let deadline = ContinuousClock.now + .seconds(timeoutSeconds)
+        while ContinuousClock.now < deadline {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let reached = condition()
+        XCTAssertTrue(reached, "Timed out (line \(line)) waiting for condition")
+    }
+
+    func waitUntilAsync(
+        timeoutSeconds: Double = 3,
+        line: Int = #line,
+        _ condition: @escaping () async -> Bool
+    ) async throws {
+        let deadline = ContinuousClock.now + .seconds(timeoutSeconds)
+        while ContinuousClock.now < deadline {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let reached = await condition()
+        XCTAssertTrue(reached, "Timed out (line \(line)) waiting for async condition")
+    }
+
+    /// The harness's own lookup returns the first view carrying an
+    /// identifier; SwiftUI may place it on a wrapper while the bridged
+    /// UIControl carries the action. Prefer the bridged control, then fall
+    /// back to accessibility activation.
+    func activate(
+        _ identifier: String,
+        in harness: Phase7RootViewHarness
+    ) -> Bool {
+        let matches = phase7Descendants(of: harness.controller.view)
+            .filter { $0.accessibilityIdentifier == identifier }
+        for match in matches {
+            if let control = match as? UIControl {
+                control.sendActions(for: .touchUpInside)
+                return true
+            }
+        }
+        for match in matches where match.accessibilityActivate() {
+            return true
+        }
+        return false
     }
 }

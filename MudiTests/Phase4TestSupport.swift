@@ -224,6 +224,10 @@ struct Phase4WorkflowFactory: HerdrWorkflowFactory {
     let workspaceCreationRecorder: Phase6WorkspaceCreationRecorder?
     /// Phase 10 cancel tests can hold discovery open; other tests leave it nil.
     let discoveryGate: Phase2ConnectionGate?
+    /// Upcoming discovery failures for the Phase 10 fallback test.
+    let discoveryFailures: Int
+    /// Discovery calls that succeed before those failures start.
+    let discoverySuccessesBeforeFailure: Int
 
     init(
         fixture: Phase3HerdrFixture,
@@ -233,7 +237,9 @@ struct Phase4WorkflowFactory: HerdrWorkflowFactory {
         workspaceCreationShouldFail: Bool = false,
         workspaceCreationGate: Phase2ConnectionGate? = nil,
         workspaceCreationRecorder: Phase6WorkspaceCreationRecorder? = nil,
-        discoveryGate: Phase2ConnectionGate? = nil
+        discoveryGate: Phase2ConnectionGate? = nil,
+        discoverySuccessesBeforeFailure: Int = 0,
+        discoveryFailures: Int = 0
     ) {
         self.fixture = fixture
         self.transport = transport
@@ -243,6 +249,8 @@ struct Phase4WorkflowFactory: HerdrWorkflowFactory {
         self.workspaceCreationGate = workspaceCreationGate
         self.workspaceCreationRecorder = workspaceCreationRecorder
         self.discoveryGate = discoveryGate
+        self.discoverySuccessesBeforeFailure = discoverySuccessesBeforeFailure
+        self.discoveryFailures = discoveryFailures
     }
 
     func makeWorkflow(
@@ -258,7 +266,9 @@ struct Phase4WorkflowFactory: HerdrWorkflowFactory {
                 workspaceCreationShouldFail: workspaceCreationShouldFail,
                 workspaceCreationGate: workspaceCreationGate,
                 workspaceCreationRecorder: workspaceCreationRecorder,
-                discoveryGate: discoveryGate
+                discoveryGate: discoveryGate,
+                discoverySuccessesBeforeFailure: discoverySuccessesBeforeFailure,
+                discoveryFailures: discoveryFailures
             ),
             transport: transport,
             lastPaneID: rememberedPaneID
@@ -282,7 +292,9 @@ struct Phase4WorkflowFactory: HerdrWorkflowFactory {
                     workspaceCreationShouldFail: workspaceCreationShouldFail,
                     workspaceCreationGate: workspaceCreationGate,
                     workspaceCreationRecorder: workspaceCreationRecorder,
-                    discoveryGate: discoveryGate
+                    discoveryGate: discoveryGate,
+                    discoverySuccessesBeforeFailure: discoverySuccessesBeforeFailure,
+                    discoveryFailures: discoveryFailures
                 ),
                 transport: MoshHerdrTerminalTransport(
                     session: session,
@@ -340,6 +352,8 @@ final class Phase4NavigationApplication {
         connectCancelScheduler: any HostConnectingDelayScheduling =
             LiveHostConnectingDelayScheduler(),
         discoveryGate: Phase2ConnectionGate? = nil,
+        discoverySuccessesBeforeFailure: Int = 0,
+        discoveryFailures: Int = 0,
     ) {
         self.transport = transport
         self.panePickerScheduler = panePickerScheduler
@@ -364,7 +378,9 @@ final class Phase4NavigationApplication {
                 workspaceCreationShouldFail: workspaceCreationShouldFail,
                 workspaceCreationGate: workspaceCreationGate,
                 workspaceCreationRecorder: workspaceCreationRecorder,
-                discoveryGate: discoveryGate
+                discoveryGate: discoveryGate,
+                discoverySuccessesBeforeFailure: discoverySuccessesBeforeFailure,
+                discoveryFailures: discoveryFailures
             ),
             preferencesStore: preferencesStore ?? UserDefaultsPreferencesStore(),
             panePickerScheduler: panePickerScheduler,
@@ -416,7 +432,9 @@ func makePhase4NavigationApplication(
         .defaultConnectCancelThreshold,
     connectCancelScheduler: any HostConnectingDelayScheduling =
         LiveHostConnectingDelayScheduler(),
-    discoveryGate: Phase2ConnectionGate? = nil
+    discoveryGate: Phase2ConnectionGate? = nil,
+    discoverySuccessesBeforeFailure: Int = 0,
+    discoveryFailures: Int = 0
 ) -> Phase4NavigationApplication {
     Phase4NavigationApplication(
         hostFileURL: hostFileURL,
@@ -440,7 +458,9 @@ func makePhase4NavigationApplication(
         rememberedPaneHostID: rememberedPaneHostID,
         connectCancelThreshold: connectCancelThreshold,
         connectCancelScheduler: connectCancelScheduler,
-        discoveryGate: discoveryGate
+        discoveryGate: discoveryGate,
+        discoverySuccessesBeforeFailure: discoverySuccessesBeforeFailure,
+        discoveryFailures: discoveryFailures
     )
 }
 

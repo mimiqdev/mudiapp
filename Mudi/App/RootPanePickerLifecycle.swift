@@ -156,10 +156,10 @@ extension RootViewModel {
                 await applyPanePickerState(state, workflow: workflow)
             case let .panePicker(picker):
                 errorMessage = picker.message ?? Self.terminalConnectionLostMessage
-                returnToHosts()
+                returnToHostsAfterFailure()
             default:
                 errorMessage = Self.terminalConnectionLostMessage
-                returnToHosts()
+                returnToHostsAfterFailure()
             }
             return
         }
@@ -326,10 +326,10 @@ extension RootViewModel {
             )
         case let .panePicker(picker):
             errorMessage = picker.message ?? Self.terminalConnectionLostMessage
-            returnToHosts()
+            returnToHostsAfterFailure()
         default:
             errorMessage = Self.terminalConnectionLostMessage
-            returnToHosts()
+            returnToHostsAfterFailure()
         }
     }
 

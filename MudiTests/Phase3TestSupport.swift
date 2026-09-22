@@ -24,6 +24,14 @@ protocol Phase3Application: Sendable {
 extension HerdrWorkflowCoordinator: Phase3Application
 where Discovery == Phase3HerdrDiscovery, Transport == Phase3TerminalTransport {}
 
+enum Phase3HerdrDiscoveryError: Error, Equatable, LocalizedError, Sendable {
+    case unavailable
+
+    var errorDescription: String? {
+        "Herdr discovery is unavailable."
+    }
+}
+
 /// A fake discovery boundary fed by decoded command transcripts. It keeps the
 /// coordinator tests independent of SSH while preserving real Herdr IDs.
 actor Phase3HerdrDiscovery: HerdrDiscovering, HerdrWorkspaceCreating {
@@ -36,6 +44,12 @@ actor Phase3HerdrDiscovery: HerdrDiscovering, HerdrWorkspaceCreating {
     /// Optional hold used by the Phase 10 cancel tests to keep discovery in
     /// flight; released gates stay released so a retry answers immediately.
     private let discoveryGate: Phase2ConnectionGate?
+    /// Number of upcoming discovery calls that fail, used by the Phase 10
+    /// failure-fallback test to make a picker refresh report a connection
+    /// loss. `successesBeforeFailures` lets the initial connect succeed while
+    /// the follow-up refresh fails.
+    private var successesRemaining: Int
+    private var failuresRemaining: Int
     private var requestedHosts: [Host] = []
     private var didCreateWorkspace = false
 
@@ -46,7 +60,9 @@ actor Phase3HerdrDiscovery: HerdrDiscovering, HerdrWorkspaceCreating {
         workspaceCreationShouldFail: Bool = false,
         workspaceCreationGate: Phase2ConnectionGate? = nil,
         workspaceCreationRecorder: Phase6WorkspaceCreationRecorder? = nil,
-        discoveryGate: Phase2ConnectionGate? = nil
+        discoveryGate: Phase2ConnectionGate? = nil,
+        discoverySuccessesBeforeFailure: Int = 0,
+        discoveryFailures: Int = 0
     ) {
         self.fixture = fixture
         self.workspaceCreation = workspaceCreation
@@ -55,6 +71,8 @@ actor Phase3HerdrDiscovery: HerdrDiscovering, HerdrWorkspaceCreating {
         self.workspaceCreationGate = workspaceCreationGate
         self.workspaceCreationRecorder = workspaceCreationRecorder
         self.discoveryGate = discoveryGate
+        successesRemaining = discoverySuccessesBeforeFailure
+        failuresRemaining = discoveryFailures
     }
 
     func snapshot(for host: Host) async throws -> HerdrSnapshot {
@@ -62,6 +80,12 @@ actor Phase3HerdrDiscovery: HerdrDiscovering, HerdrWorkspaceCreating {
         if let discoveryGate {
             await discoveryGate.markStarted()
             await discoveryGate.waitUntilReleased()
+        }
+        if successesRemaining > 0 {
+            successesRemaining -= 1
+        } else if failuresRemaining > 0 {
+            failuresRemaining -= 1
+            throw Phase3HerdrDiscoveryError.unavailable
         }
         if didCreateWorkspace, let snapshotAfterWorkspaceCreation {
             return snapshotAfterWorkspaceCreation

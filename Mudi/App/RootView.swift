@@ -955,6 +955,18 @@ extension RootViewModel {
         scheduleTeardown(workflow: workflow)
     }
 
+    /// Leaves the terminal for the Host list because the connection failed.
+    ///
+    /// Unlike a deliberate `returnToHosts()`, the owning row must keep its
+    /// failure feedback: `.disconnected` alone now presents as idle, so the
+    /// failure is recorded explicitly before the teardown clears the context.
+    func returnToHostsAfterFailure() {
+        let failedHost = activeConnection?.host.id ?? lastHostID
+        returnToHosts()
+        guard let failedHost else { return }
+        failedHostID = failedHost
+    }
+
     func disconnect() {
         terminalSessionCloseSuppressed = false
         terminalKeyboardFocusActive = false
