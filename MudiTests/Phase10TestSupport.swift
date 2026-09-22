@@ -1,6 +1,46 @@
 import Foundation
 import HerdrKit
+import SwiftUI
+import UIKit
 @testable import Mudi
+
+/// Hosts the Hosts list directly so row rendering can be asserted without the
+/// RootView routing: while connected the picker replaces the list entirely.
+@MainActor
+final class Phase10HostListHarness {
+    let window: UIWindow
+    let controller: UIHostingController<HostListView>
+
+    init(_ view: HostListView) {
+        window = Phase7TerminalScreenHarness.makeWindow()
+        controller = UIHostingController(rootView: view)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.view.frame = window.bounds
+        controller.loadViewIfNeeded()
+        Phase7TerminalScreenHarness.kickAppearance(of: controller)
+    }
+
+    func close() {
+        controller.view.removeFromSuperview()
+        window.rootViewController = nil
+        window.isHidden = true
+    }
+
+    func view(with identifier: String) -> UIView? {
+        phase7View(with: identifier, in: controller.view)
+    }
+
+    func waitUntil(
+        _ condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        for _ in 0..<200 {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return condition()
+    }
+}
 
 /// A virtual clock for the cancel-affordance threshold. Tests release the
 /// parked wait explicitly, so the production 5-second contract never depends
@@ -96,16 +136,19 @@ actor Phase10GatedSSHClient: HostKeyAwareSSHClient {
     private let presentedFingerprint: String
     private let firstConnectionGate: Phase2ConnectionGate?
     private let closeRecorder: Phase10ChannelCloseRecorder
+    private let failsFirstAttempt: Bool
     private var attempts = 0
 
     init(
         presentedFingerprint: String = Phase10GatedSSHClient.fingerprint,
         firstConnectionGate: Phase2ConnectionGate? = nil,
-        closeRecorder: Phase10ChannelCloseRecorder = Phase10ChannelCloseRecorder()
+        closeRecorder: Phase10ChannelCloseRecorder = Phase10ChannelCloseRecorder(),
+        failsFirstAttempt: Bool = false
     ) {
         self.presentedFingerprint = presentedFingerprint
         self.firstConnectionGate = firstConnectionGate
         self.closeRecorder = closeRecorder
+        self.failsFirstAttempt = failsFirstAttempt
     }
 
     func connect(
@@ -122,6 +165,9 @@ actor Phase10GatedSSHClient: HostKeyAwareSSHClient {
         let decision = await hostKeyDecision(presentedFingerprint)
         guard decision == .accept else {
             throw ConnectionError.hostKeyRejected
+        }
+        if failsFirstAttempt, attempts == 1 {
+            throw ConnectionError.connectionFailed
         }
         if attempts == 1, let firstConnectionGate {
             await firstConnectionGate.markStarted()

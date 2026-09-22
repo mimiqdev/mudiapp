@@ -495,9 +495,21 @@ extension RootViewModel {
 /// when the attempt starts and converges on success, failure, or cancel; the
 /// cancel affordance appears only after the injectable threshold.
 extension RootViewModel {
+    /// The Host row that owns the coordinator's current connection state: the
+    /// connecting host while an attempt is live, otherwise the last host that
+    /// was connected to (its row carries failure/disconnection feedback).
+    var connectionStateHostID: Host.ID? {
+        connectingHostID ?? lastHostID
+    }
+
     /// The presentation state for one Host row.
     func rowConnectionState(for host: Host) -> HostRowConnectionState {
-        connectingHostID == host.id ? .connecting : .idle
+        HostRowConnectionState.resolve(
+            host: host,
+            connectingHostID: connectingHostID,
+            stateOwnerHostID: connectionStateHostID,
+            connectionState: connectionState
+        )
     }
 
     func rowConnectionPresentation(

@@ -52,6 +52,97 @@ final class Phase10ConnectingFeedbackTests: XCTestCase {  // pi-lens-ignore: typ
         )
     }
 
+    /// Every result state is presented by the row: connected, failed with a
+    /// retry path, and disconnected with a retry path.
+    func testHostRowPresentationCoversResultStates() {
+        let connected = HostRowConnectionPresentation.resolve(
+            state: .connected,
+            showsCancel: false
+        )
+        XCTAssertTrue(connected.showsConnected)
+        XCTAssertFalse(connected.showsProgress)
+        XCTAssertFalse(connected.showsFailure)
+        XCTAssertFalse(connected.showsDisconnected)
+        XCTAssertFalse(connected.showsRetry)
+        XCTAssertFalse(
+            connected.canConnect,
+            "A connected row must not start another attempt"
+        )
+
+        let failed = HostRowConnectionPresentation.resolve(
+            state: .failed,
+            showsCancel: false
+        )
+        XCTAssertTrue(failed.showsFailure)
+        XCTAssertTrue(
+            failed.showsRetry,
+            "A failed row must keep the retry affordance"
+        )
+        XCTAssertFalse(failed.showsProgress)
+        XCTAssertFalse(failed.showsConnected)
+        XCTAssertFalse(failed.showsDisconnected)
+        XCTAssertTrue(failed.canConnect)
+
+        let disconnected = HostRowConnectionPresentation.resolve(
+            state: .disconnected,
+            showsCancel: false
+        )
+        XCTAssertTrue(disconnected.showsDisconnected)
+        XCTAssertTrue(
+            disconnected.showsRetry,
+            "A disconnected row must keep the retry affordance"
+        )
+        XCTAssertFalse(disconnected.showsFailure)
+        XCTAssertTrue(disconnected.canConnect)
+    }
+
+    /// Only the owning row renders the coordinator's state; every other row
+    /// stays idle and connectable.
+    func testRowStateIsAttributedToTheOwningHostOnly() async throws {
+        let fixture = try Phase3HerdrFixtures.single()
+        let owner = phase4Host()
+        let other = phase4Host(hostname: "192.0.2.99")
+        let client = Phase10GatedSSHClient()
+        let application = makePhase10Application(
+            fixture: fixture,
+            client: client,
+            clock: Phase10CancelThresholdClock()
+        )
+        try await application.save(owner)
+        try await application.save(other)
+
+        application.model.connect(to: owner)
+        try await waitUntil { application.model.activeConnection != nil }
+        XCTAssertEqual(
+            application.model.rowConnectionState(for: owner),
+            .connected
+        )
+        XCTAssertEqual(
+            application.model.rowConnectionState(for: other),
+            .idle
+        )
+
+        application.model.returnToHosts()
+        try await waitUntil {
+            application.model.connectionState == .disconnected
+        }
+        XCTAssertEqual(
+            application.model.rowConnectionState(for: owner),
+            .disconnected
+        )
+        XCTAssertEqual(
+            application.model.rowConnectionState(for: other),
+            .idle
+        )
+        XCTAssertTrue(
+            application.model.rowConnectionPresentation(for: owner).showsRetry
+        )
+        XCTAssertFalse(
+            application.model.rowConnectionPresentation(for: other).showsRetry
+        )
+        try await waitUntil { !application.model.isTearingDown }
+    }
+
     // MARK: - State timing
 
     func testConnectPublishesRowConnectingStateBeforeAnyResult() async throws {
@@ -86,7 +177,8 @@ final class Phase10ConnectingFeedbackTests: XCTestCase {  // pi-lens-ignore: typ
         try await waitUntil { application.model.activeConnection != nil }
         XCTAssertEqual(
             application.model.rowConnectionState(for: host),
-            .idle
+            .connected,
+            "A settled successful attempt shows connected on the owning row"
         )
         XCTAssertFalse(
             application.model.rowConnectionPresentation(for: host)
@@ -161,7 +253,7 @@ final class Phase10ConnectingFeedbackTests: XCTestCase {  // pi-lens-ignore: typ
         XCTAssertFalse(application.model.showsConnectCancel)
         XCTAssertEqual(
             application.model.rowConnectionState(for: host),
-            .idle
+            .connected
         )
         // The threshold wait must be retired with the attempt, so the clock
         // cannot flip a settled row back into a cancellable state.
@@ -292,7 +384,7 @@ final class Phase10ConnectingFeedbackTests: XCTestCase {  // pi-lens-ignore: typ
         XCTAssertEqual(application.model.activeTransport, .mosh)
         XCTAssertEqual(
             application.model.rowConnectionState(for: moshHost),
-            .idle
+            .connected
         )
         let moshAttempts = await moshTransport.connectCount()
         XCTAssertEqual(
@@ -523,6 +615,181 @@ final class Phase10ConnectingFeedbackTests: XCTestCase {  // pi-lens-ignore: typ
         try await settle()
         XCTAssertNil(harness.view(with: "ssh-connection-error"))
         XCTAssertNil(application.model.activeConnection)
+    }
+
+    // MARK: - Hosts-list state consolidation (no global banner)
+
+    /// The former top banner must be gone, and every connection state must be
+    /// presented by the owning Host row: connecting, connected, disconnected.
+    func testHostListShowsNoGlobalBannerAndStateStaysOnTheRow()
+        async throws
+    {  // pi-lens-ignore: function_body_length
+        let fixture = try Phase3HerdrFixtures.single()
+        let host = phase4Host()
+        let gate = Phase2ConnectionGate()
+        let client = Phase10GatedSSHClient(firstConnectionGate: gate)
+        let application = makePhase10Application(
+            fixture: fixture,
+            client: client,
+            clock: Phase10CancelThresholdClock()
+        )
+        try await application.save(host)
+        let harness = Phase7RootViewHarness(
+            rootView: RootView(model: application.model)
+        )
+        defer {
+            harness.close()
+            Task { await gate.release() }
+        }
+
+        let hostShown = await harness.waitUntil {
+            harness.view(with: "host-connect-\(host.id.uuidString)") != nil
+        }
+        XCTAssertTrue(hostShown)
+        XCTAssertNil(
+            harness.view(with: "hosts-connection-banner"),
+            "The global connection banner must be removed"
+        )
+
+        XCTAssertTrue(
+            activate("host-connect-\(host.id.uuidString)", in: harness)
+        )
+        let connectingShown = await harness.waitUntil {
+            harness.view(with: "host-connecting-\(host.id.uuidString)") != nil
+        }
+        XCTAssertTrue(connectingShown)
+        XCTAssertNil(
+            harness.view(with: "hosts-connection-banner"),
+            "Connecting must not bring the banner back"
+        )
+
+        await gate.release()
+        try await waitUntil { application.model.activeConnection != nil }
+        // RootView swaps the list for the picker while connected, so the
+        // connected row contract is asserted on the model; no banner can be
+        // rendered because the list is not on screen.
+        XCTAssertEqual(
+            application.model.rowConnectionState(for: host),
+            .connected
+        )
+        XCTAssertTrue(
+            application.model.rowConnectionPresentation(for: host)
+                .showsConnected
+        )
+
+        application.model.returnToHosts()
+        let disconnectedShown = await harness.waitUntil {
+            harness.view(with: "host-disconnected-\(host.id.uuidString)") != nil
+        }
+        XCTAssertTrue(
+            disconnectedShown,
+            "A disconnected host must show its state on the row"
+        )
+        XCTAssertNotNil(
+            harness.view(with: "host-retry-\(host.id.uuidString)"),
+            "The disconnected row must keep a retry path"
+        )
+        XCTAssertNil(
+            harness.view(with: "hosts-connection-banner"),
+            "Disconnected must not bring the banner back"
+        )
+    }
+
+    /// Failure feedback and its retry path must live on the failed row, and the
+    /// bottom error message must still surface the reason.
+    func testFailedConnectShowsFailureAndRetryOnTheRow() async throws {
+        let fixture = try Phase3HerdrFixtures.single()
+        let host = phase4Host()
+        let client = Phase10GatedSSHClient(failsFirstAttempt: true)
+        let application = makePhase10Application(
+            fixture: fixture,
+            client: client,
+            clock: Phase10CancelThresholdClock()
+        )
+        try await application.save(host)
+        let harness = Phase7RootViewHarness(
+            rootView: RootView(model: application.model)
+        )
+        defer { harness.close() }
+
+        let hostShown = await harness.waitUntil {
+            harness.view(with: "host-connect-\(host.id.uuidString)") != nil
+        }
+        XCTAssertTrue(hostShown)
+        XCTAssertTrue(
+            activate("host-connect-\(host.id.uuidString)", in: harness)
+        )
+
+        let failedShown = await harness.waitUntil {
+            harness.view(with: "host-failed-\(host.id.uuidString)") != nil
+        }
+        XCTAssertTrue(
+            failedShown,
+            "A failed connect must surface on the owning row"
+        )
+        XCTAssertNil(
+            harness.view(with: "hosts-connection-banner"),
+            "Failure must not use the removed global banner"
+        )
+        XCTAssertNotNil(
+            harness.view(with: "host-retry-\(host.id.uuidString)"),
+            "The failed row must offer Retry"
+        )
+        XCTAssertNotNil(
+            application.model.errorMessage,
+            "Failure feedback must not be dropped"
+        )
+
+        XCTAssertTrue(
+            activate("host-retry-\(host.id.uuidString)", in: harness)
+        )
+        // Retry succeeds into the picker, which replaces the list; assert the
+        // recovered contract on the model and the client attempt count.
+        try await waitUntil { application.model.activeConnection != nil }
+        XCTAssertEqual(
+            application.model.rowConnectionState(for: host),
+            .connected,
+            "Retry must reconnect the host"
+        )
+        XCTAssertFalse(
+            application.model.rowConnectionPresentation(for: host).showsFailure
+        )
+        let attempts = await client.connectionAttempts()
+        XCTAssertEqual(attempts, 2)
+    }
+
+    /// The Host list itself renders the connected indicator on the owning row
+    /// (RootView replaces the list with the picker while connected).
+    func testHostListRowRendersConnectedIndicatorWhenOwned() async {
+        let host = phase4Host()
+        let harness = Phase10HostListHarness(
+            HostListView(
+                hosts: [host],
+                connectionState: .connected,
+                connectingHostID: nil,
+                stateOwnerHostID: host.id,
+                showsConnectCancel: false,
+                errorMessage: nil,
+                onConnect: { _ in },
+                onReconnect: {},
+                onAdd: {},
+                onEdit: { _ in },
+                onDelete: { _ in }
+            )
+        )
+        defer { harness.close() }
+
+        let connectedShown = await harness.waitUntil {
+            harness.view(with: "host-connected-\(host.id.uuidString)") != nil
+        }
+        XCTAssertTrue(
+            connectedShown,
+            "The connected row must show its state"
+        )
+        XCTAssertNil(
+            harness.view(with: "hosts-connection-banner"),
+            "The global banner must stay removed"
+        )
     }
 
     // MARK: - Helpers

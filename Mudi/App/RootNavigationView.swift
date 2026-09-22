@@ -119,6 +119,7 @@ struct RootView: View {
                     hosts: model.hosts,
                     connectionState: model.connectionState,
                     connectingHostID: model.connectingHostID,
+                    stateOwnerHostID: model.connectionStateHostID,
                     showsConnectCancel: model.showsConnectCancel,
                     errorMessage: model.errorMessage,
                     onConnect: model.connect,

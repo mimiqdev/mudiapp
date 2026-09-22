@@ -50,7 +50,11 @@ struct HostListActionPolicy: Equatable {
 struct HostListView: View {
     let hosts: [Host]
     let connectionState: ConnectionState
+    /// The host with a live model attempt; it keeps the row connecting for the
+    /// whole attempt, including the Herdr discovery phase.
     let connectingHostID: Host.ID?
+    /// The row that owns `connectionState`; every other row stays idle.
+    let stateOwnerHostID: Host.ID?
     let showsConnectCancel: Bool
     let errorMessage: String?
     let onConnect: (Host) -> Void
@@ -65,6 +69,7 @@ struct HostListView: View {
         hosts: [Host],
         connectionState: ConnectionState,
         connectingHostID: Host.ID? = nil,
+        stateOwnerHostID: Host.ID? = nil,
         showsConnectCancel: Bool = false,
         errorMessage: String?,
         onConnect: @escaping (Host) -> Void,
@@ -78,6 +83,7 @@ struct HostListView: View {
         self.hosts = hosts
         self.connectionState = connectionState
         self.connectingHostID = connectingHostID
+        self.stateOwnerHostID = stateOwnerHostID
         self.showsConnectCancel = showsConnectCancel
         self.errorMessage = errorMessage
         self.onConnect = onConnect
@@ -101,24 +107,14 @@ struct HostListView: View {
                 }
             } else {
                 List {
-                    if connectionState != .idle {
-                        Section {
-                            HStack {
-                                connectionStateLabel
-                                Spacer()
-                                if connectionState == .failed || connectionState == .disconnected {
-                                    Button("Reconnect", action: onReconnect)
-                                        .buttonStyle(.bordered)
-                                }
-                            }
-                        }
-                    }
-
                     ForEach(hosts) { host in
                         let presentation = HostRowConnectionPresentation.resolve(
-                            state: connectingHostID == host.id
-                                ? .connecting
-                                : .idle,
+                            state: HostRowConnectionState.resolve(
+                                host: host,
+                                connectingHostID: connectingHostID,
+                                stateOwnerHostID: stateOwnerHostID,
+                                connectionState: connectionState
+                            ),
                             showsCancel: showsConnectCancel
                         )
                         HStack(spacing: 10) {
@@ -127,7 +123,7 @@ struct HostListView: View {
                             } label: {
                                 HostRow(
                                     host: host,
-                                    isConnecting: presentation.isConnecting
+                                    showsChevron: presentation.state == .idle
                                 )
                             }
                             .buttonStyle(.plain)
@@ -180,6 +176,53 @@ struct HostListView: View {
                                     .frame(width: 1, height: 1)
                                 }
                             }
+
+                            // The result states replace the former global
+                            // banner: connected, failed, and disconnected all
+                            // render on the owning row.
+                            if presentation.showsConnected {
+                                stateIndicator(
+                                    systemImage: "checkmark.circle.fill",
+                                    tint: .green,
+                                    label: "Connected",
+                                    identifier: "host-connected-\(host.id.uuidString)"
+                                )
+                            }
+
+                            if presentation.showsFailure {
+                                stateIndicator(
+                                    systemImage: "exclamationmark.triangle.fill",
+                                    tint: .red,
+                                    label: "Connection failed",
+                                    identifier: "host-failed-\(host.id.uuidString)"
+                                )
+                            }
+
+                            if presentation.showsDisconnected {
+                                stateIndicator(
+                                    systemImage: "wifi.slash",
+                                    tint: .secondary,
+                                    label: "Disconnected",
+                                    identifier: "host-disconnected-\(host.id.uuidString)"
+                                )
+                            }
+
+                            // The old banner owned Reconnect; the row keeps
+                            // that retry path for failed/disconnected hosts.
+                            if presentation.showsRetry {
+                                Button("Retry", action: onReconnect)
+                                    .buttonStyle(.bordered)
+                                    .accessibilityIdentifier(
+                                        "host-retry-\(host.id.uuidString)"
+                                    )
+                                    .overlay(alignment: .topLeading) {
+                                        AccessibilityIdentifierBridge(
+                                            identifier: "host-retry-\(host.id.uuidString)",
+                                            action: onReconnect
+                                        )
+                                        .frame(width: 1, height: 1)
+                                    }
+                            }
                         }
                         .contextMenu {
                             Button("Edit", systemImage: "pencil") {
@@ -231,28 +274,26 @@ struct HostListView: View {
     }
 
     @ViewBuilder
-    private var connectionStateLabel: some View {
-        switch connectionState {
-        case .idle:
-            EmptyView()
-        case .connecting:
-            Label("Connecting…", systemImage: "arrow.triangle.2.circlepath")
-        case .connected:
-            Label("Connected", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        case .failed:
-            Label("Connection failed", systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
-        case .disconnected:
-            Label("Disconnected", systemImage: "wifi.slash")
-                .foregroundStyle(.secondary)
-        }
+    private func stateIndicator(
+        systemImage: String,
+        tint: Color,
+        label: String,
+        identifier: String
+    ) -> some View {
+        Image(systemName: systemImage)
+            .foregroundStyle(tint)
+            .accessibilityLabel(label)
+            .accessibilityIdentifier(identifier)
+            .overlay(alignment: .topLeading) {
+                AccessibilityIdentifierBridge(identifier: identifier)
+                    .frame(width: 1, height: 1)
+            }
     }
 }
 
 private struct HostRow: View {
     let host: Host
-    var isConnecting = false
+    var showsChevron = true
 
     var body: some View {
         HStack(spacing: 12) {
@@ -269,9 +310,9 @@ private struct HostRow: View {
             }
 
             Spacer()
-            // The connecting row swaps the chevron for the sibling progress
-            // indicator, so the trailing slot keeps a stable width.
-            if !isConnecting {
+            // The chevron yields its slot to the row's state accessory, so
+            // the trailing area keeps a stable width.
+            if showsChevron {
                 Image(systemName: "arrow.right")
                     .foregroundStyle(.secondary)
             }
