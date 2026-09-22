@@ -49,22 +49,10 @@ final class NIOSSHConnection: @unchecked Sendable {
 
         let bootstrap = ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
             .channelInitializer { channel in
-                let sshHandler = NIOSSHHandler(
-                    role: .client(configuredClient),
-                    allocator: channel.allocator,
-                    inboundChildChannelInitializer: { childChannel, _ in
-                        childChannel.eventLoop.makeSucceededVoidFuture()
-                    }
-                )
-                let handshakeHandler = MudiSSHHandshakeHandler(
-                    eventLoop: channel.eventLoop,
-                    loginTimeout: Self.hostKeyDecisionTimeout
-                )
-
                 do {
-                    try channel.pipeline.syncOperations.addHandlers(
-                        sshHandler,
-                        handshakeHandler
+                    try Self.addSSHHandlers(
+                        to: channel,
+                        configuration: configuredClient
                     )
                     return channel.eventLoop.makeSucceededVoidFuture()
                 } catch {
@@ -94,22 +82,78 @@ final class NIOSSHConnection: @unchecked Sendable {
             .get()
 
         do {
-            let handshakeHandler = try await channel.pipeline
-                .handler(type: MudiSSHHandshakeHandler.self)
-                .get()
-            try await handshakeHandler.authenticated.get()
-
-            let sshHandlerBox = try await channel.eventLoop.submit {
-                let sshHandler = try channel.pipeline.syncOperations.handler(
-                    type: NIOSSHHandler.self
-                )
-                return NIOLoopBoundBox(sshHandler, eventLoop: channel.eventLoop)
-            }.get()
-            return NIOSSHConnection(channel: channel, sshHandler: sshHandlerBox)
+            return try await finishConnection(on: channel)
         } catch {
             try? await channel.close()
             throw error
         }
+    }
+
+    /// Authenticates an already-established TCP channel. The caller owns the
+    /// channel until this method succeeds; no second DNS/TCP dial occurs.
+    static func connect(
+        channel: Channel,
+        host: Host,
+        authenticationMethod: Citadel.SSHAuthenticationMethod,
+        hostKeyValidator: Citadel.SSHHostKeyValidator
+    ) async throws -> NIOSSHConnection {
+        var clientConfiguration = SSHClientConfiguration(
+            userAuthDelegate: authenticationMethod,
+            serverAuthDelegate: hostKeyValidator
+        )
+        clientConfiguration.hostname = host.hostname
+        do {
+            return try await withTaskCancellationHandler {
+                try await channel.eventLoop.submit {
+                    try Self.addSSHHandlers(
+                        to: channel,
+                        configuration: clientConfiguration
+                    )
+                }.get()
+                return try await finishConnection(on: channel)
+            } onCancel: {
+                channel.close(promise: nil)
+            }
+        } catch {
+            try? await channel.close()
+            throw error
+        }
+    }
+
+    private static func addSSHHandlers(
+        to channel: Channel,
+        configuration: SSHClientConfiguration
+    ) throws {
+        let sshHandler = NIOSSHHandler(
+            role: .client(configuration),
+            allocator: channel.allocator,
+            inboundChildChannelInitializer: { childChannel, _ in
+                childChannel.eventLoop.makeSucceededVoidFuture()
+            }
+        )
+        let handshakeHandler = MudiSSHHandshakeHandler(
+            eventLoop: channel.eventLoop,
+            loginTimeout: Self.hostKeyDecisionTimeout
+        )
+        try channel.pipeline.syncOperations.addHandlers(
+            sshHandler,
+            handshakeHandler
+        )
+    }
+
+    private static func finishConnection(on channel: Channel) async throws -> NIOSSHConnection {
+        let handshakeHandler = try await channel.pipeline
+            .handler(type: MudiSSHHandshakeHandler.self)
+            .get()
+        try await handshakeHandler.authenticated.get()
+
+        let sshHandlerBox = try await channel.eventLoop.submit {
+            let sshHandler = try channel.pipeline.syncOperations.handler(
+                type: NIOSSHHandler.self
+            )
+            return NIOLoopBoundBox(sshHandler, eventLoop: channel.eventLoop)
+        }.get()
+        return NIOSSHConnection(channel: channel, sshHandler: sshHandlerBox)
     }
 
     /// Opens only TCP/DNS for a Host target. Authentication and host-key
@@ -259,16 +303,28 @@ private final class NIOChannelCancellation: @unchecked Sendable {
     }
 }
 
-private final class NIOHostAddressNetworkConnection: HostAddressNetworkConnection, @unchecked Sendable {
+final class NIOHostAddressNetworkConnection: HostAddressNetworkConnection, @unchecked Sendable {
     let target: HostAddress
-    private let channel: Channel
+    private let lock = NSLock()
+    private var channelValue: Channel?
 
     init(channel: Channel, target: HostAddress) {
-        self.channel = channel
+        channelValue = channel
         self.target = target
     }
 
+    /// Transfers the established TCP channel to the SSH pipeline. Once
+    /// transferred, close() becomes a no-op because NIOSSHConnection owns it.
+    func takeChannel() -> Channel? {
+        lock.lock()
+        defer { lock.unlock() }
+        let channel = channelValue
+        channelValue = nil
+        return channel
+    }
+
     func close() async {
+        guard let channel = takeChannel() else { return }
         _ = try? await channel.close()
     }
 }

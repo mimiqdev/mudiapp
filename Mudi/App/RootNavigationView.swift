@@ -120,6 +120,8 @@ struct RootView: View {
                     connectionState: model.connectionState,
                     connectingHostID: model.connectingHostID,
                     connectingAddress: model.connectingAddress,
+                    addressRaceProgress: model.addressRaceProgress,
+                    addressRaceFailure: model.addressRaceFailure,
                     failedHostID: model.failedHostID,
                     stateOwnerHostID: model.connectionStateHostID,
                     showsConnectCancel: model.showsConnectCancel,

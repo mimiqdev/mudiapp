@@ -11,7 +11,7 @@ import HerdrKit
 /// The Citadel client and its authentication method are retained only by the
 /// active PTY channel. Closing that channel closes the SSH client as well.
 struct CitadelSSHAdapter: HerdrKit.SSHClient, HerdrKit.HostKeyAwareSSHClient,
-    HostAddressNetworkConnecting {
+    HostAddressNetworkConnecting, HostAddressNetworkHandoff {
     static let transportKind = ActiveTransport.ssh
 
     /// The legacy shell boundary has no way to ask a caller about an unknown
@@ -54,22 +54,47 @@ struct CitadelSSHAdapter: HerdrKit.SSHClient, HerdrKit.HostKeyAwareSSHClient,
                 authenticationMethod: authenticationMethod,
                 hostKeyValidator: hostKeyValidator
             )
-        } catch is CitadelHostKeyRejected {
-            throw HerdrKit.ConnectionError.hostKeyRejected
-        } catch let error as Citadel.SSHClientError {
-            switch error {
-            case .allAuthenticationOptionsFailed,
-                 .unsupportedPasswordAuthentication,
-                 .unsupportedPrivateKeyAuthentication,
-                 .unsupportedHostBasedAuthentication:
-                throw HerdrKit.SSHClientError.authenticationFailed
-            case .channelCreationFailed:
-                throw error
-            }
-        } catch is Citadel.AuthenticationFailed {
-            throw HerdrKit.SSHClientError.authenticationFailed
+        } catch {
+            throw mapConnectionError(error)
+        }
+        return try await makePTYChannel(from: connection)
+    }
+
+    func connect(
+        to host: HerdrKit.Host,
+        credentials: HerdrKit.SSHCredentials,
+        hostKeyDecision: @escaping @Sendable (String) async -> HerdrKit.HostKeyDecision,
+        using networkConnection: any HostAddressNetworkConnection
+    ) async throws -> any PTYChannel {
+        let authenticationMethod = try makeAuthenticationMethod(
+            for: host,
+            credentials: credentials
+        )
+        let hostKeyValidator = Citadel.SSHHostKeyValidator.custom(
+            CitadelHostKeyValidator(decision: hostKeyDecision)
+        )
+        guard let networkConnection = networkConnection as? NIOHostAddressNetworkConnection,
+              let channel = networkConnection.takeChannel()
+        else {
+            throw CitadelNetworkHandoffError.invalidConnection
         }
 
+        do {
+            let connection = try await NIOSSHConnection.connect(
+                channel: channel,
+                host: host,
+                authenticationMethod: authenticationMethod,
+                hostKeyValidator: hostKeyValidator
+            )
+            return try await makePTYChannel(from: connection)
+        } catch {
+            throw mapConnectionError(error)
+        }
+    }
+
+    private func makePTYChannel(
+        from connection: NIOSSHConnection
+    ) async throws -> any PTYChannel {
         let channel = CitadelPTYChannel(connection: connection)
         do {
             try await channel.start()
@@ -78,6 +103,27 @@ struct CitadelSSHAdapter: HerdrKit.SSHClient, HerdrKit.HostKeyAwareSSHClient,
             await channel.close()
             throw error
         }
+    }
+
+    private func mapConnectionError(_ error: Error) -> Error {
+        if error is CitadelHostKeyRejected {
+            return HerdrKit.ConnectionError.hostKeyRejected
+        }
+        if let error = error as? Citadel.SSHClientError {
+            switch error {
+            case .allAuthenticationOptionsFailed,
+                 .unsupportedPasswordAuthentication,
+                 .unsupportedPrivateKeyAuthentication,
+                 .unsupportedHostBasedAuthentication:
+                return HerdrKit.SSHClientError.authenticationFailed
+            case .channelCreationFailed:
+                return error
+            }
+        }
+        if error is Citadel.AuthenticationFailed {
+            return HerdrKit.SSHClientError.authenticationFailed
+        }
+        return error
     }
 
     private func makeAuthenticationMethod(
@@ -115,6 +161,10 @@ struct CitadelSSHAdapter: HerdrKit.SSHClient, HerdrKit.HostKeyAwareSSHClient,
 
 private enum CitadelHostKeyRejected: Error {
     case rejected
+}
+
+private enum CitadelNetworkHandoffError: Error {
+    case invalidConnection
 }
 
 private final class CitadelHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {

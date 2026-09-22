@@ -45,6 +45,7 @@ final class RootViewModel: ObservableObject {
     /// This is transient UI state; the saved Host order is never changed.
     @Published internal(set) var connectingAddress: HostAddress?
     @Published internal(set) var addressRaceProgress: HostAddressRaceProgress?
+    @Published internal(set) var addressRaceFailure: [HostAddressAttemptResult]?
 
     /// Phase 10: how long a connect attempt may run before its Host row
     /// offers Cancel. The plan fixes the default at 5 seconds; tests inject a
@@ -530,6 +531,7 @@ extension RootViewModel {
     ) async {
         guard isCurrentConnection(generation) else { return }
         let coordinatorState = await coordinator.connectionState()
+        let addressRaceFailure = await coordinator.lastAddressRaceFailure()?.outcomes
         guard isCurrentConnection(generation) else { return }
         invalidatePanePickerPresentation()
         answerHostKeyPrompt(.reject)
@@ -543,6 +545,7 @@ extension RootViewModel {
         errorMessage = error.localizedDescription
         connectionState = coordinatorState
         finishConnectingFeedback(generation: generation)
+        self.addressRaceFailure = addressRaceFailure
         failedHostID = hostID
     }
 
@@ -620,6 +623,7 @@ extension RootViewModel {
         connectingHostID = hostID
         connectingAddress = nil
         addressRaceProgress = nil
+        addressRaceFailure = nil
         showsConnectCancel = false
         connectCancelThresholdTask?.cancel()
         let threshold = connectCancelThreshold
@@ -648,6 +652,7 @@ extension RootViewModel {
         connectingHostID = nil
         connectingAddress = nil
         addressRaceProgress = nil
+        addressRaceFailure = nil
         showsConnectCancel = false
         connectCancelThresholdTask?.cancel()
         connectCancelThresholdTask = nil
@@ -662,7 +667,7 @@ extension RootViewModel {
         else { return }
         addressRaceProgress = progress
         switch progress {
-        case let .preferred(address, _), let .attempting(address, _), let .selected(address, _):
+        case let .preferred(address, _), let .selected(address, _):
             connectingAddress = address
         case let .racing(addresses, _):
             connectingAddress = addresses.last
