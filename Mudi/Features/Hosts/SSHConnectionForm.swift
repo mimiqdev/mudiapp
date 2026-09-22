@@ -29,6 +29,7 @@ struct SSHConnectionForm: View {
         for draft in addressDrafts {
             let address = draft.address.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !address.isEmpty else { return nil }
+            let labelText = draft.label.trimmingCharacters(in: .whitespacesAndNewlines)
             let overrideText = draft.portOverride
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let portOverride: UInt16?
@@ -40,7 +41,13 @@ struct SSHConnectionForm: View {
                 }
                 portOverride = value
             }
-            result.append(HostAddress(address: address, portOverride: portOverride))
+            result.append(
+                HostAddress(
+                    address: address,
+                    portOverride: portOverride,
+                    label: labelText.isEmpty ? nil : labelText
+                )
+            )
         }
         guard Set(result.map(\.id)).count == result.count else { return nil }
         return result
@@ -71,6 +78,7 @@ struct SSHConnectionForm: View {
         _addressDrafts = State(
             initialValue: (host?.addresses ?? [HostAddress(address: "")]).map {
                 AddressDraft(
+                    label: $0.label ?? "",
                     address: $0.address,
                     portOverride: $0.portOverride.map(String.init) ?? ""
                 )
@@ -110,6 +118,10 @@ struct SSHConnectionForm: View {
             Section {
                 ForEach($addressDrafts) { $draft in
                     VStack(alignment: .leading, spacing: 8) {
+                        TextField("Address name (optional)", text: $draft.label)
+                            .textInputAutocapitalization(.words)
+                            .autocorrectionDisabled()
+
                         HStack {
                             TextField("Hostname or IP address", text: $draft.address)
                                 .textInputAutocapitalization(.never)
@@ -140,13 +152,15 @@ struct SSHConnectionForm: View {
                 }
 
                 Button("Add address", systemImage: "plus") {
-                    addressDrafts.append(AddressDraft(address: "", portOverride: ""))
+                    addressDrafts.append(
+                        AddressDraft(label: "", address: "", portOverride: "")
+                    )
                 }
                 .accessibilityIdentifier("add-host-address-button")
             } header: {
                 Text("Addresses")
             } footer: {
-                Text("Addresses are tried in this order. Leave a port override blank to use the shared Host port.")
+                Text("Addresses are tried in this order. Names are display-only. Leave a port override blank to use the shared Host port.")
             }
 
             Section {
@@ -256,8 +270,15 @@ struct SSHConnectionForm: View {
 
 private struct AddressDraft: Identifiable {
     let id = UUID()
+    var label: String
     var address: String
     var portOverride: String
+
+    init(label: String, address: String, portOverride: String) {
+        self.label = label
+        self.address = address
+        self.portOverride = portOverride
+    }
 }
 
 private extension TransportPreference {

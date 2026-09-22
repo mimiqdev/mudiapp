@@ -6,21 +6,76 @@ import Foundation
 public struct HostAddress: Identifiable, Codable, Hashable, Sendable {
     public var address: String
     public var portOverride: UInt16?
+    private var labelValue: String?
+
+    /// An optional display-only name such as "Home LAN" or "Tailscale".
+    /// It is deliberately excluded from endpoint identity and hashing.
+    public var label: String? {
+        get { labelValue }
+        set { labelValue = Self.normalizedLabel(newValue) }
+    }
 
     /// A stable value-derived identity keeps SwiftUI reordering/editing from
     /// requiring another persistence field. Duplicate endpoints are rejected
-    /// by the Host persistence boundary.
+    /// by the Host persistence boundary. The display label is not part of it.
     public var id: String {
         "\(address)\u{0}\(portOverride.map(String.init) ?? "")"
     }
 
-    public init(address: String, portOverride: UInt16? = nil) {
+    public init(
+        address: String,
+        portOverride: UInt16? = nil,
+        label: String? = nil
+    ) {
         self.address = address
         self.portOverride = portOverride
+        labelValue = Self.normalizedLabel(label)
     }
 
     public func effectivePort(defaultPort: UInt16) -> UInt16 {
         portOverride ?? defaultPort
+    }
+
+    private static func normalizedLabel(_ value: String?) -> String? {
+        guard let value,
+              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return nil
+        }
+        return value
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case address
+        case portOverride
+        case label
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        address = try container.decode(String.self, forKey: .address)
+        portOverride = try container.decodeIfPresent(UInt16.self, forKey: .portOverride)
+        labelValue = Self.normalizedLabel(
+            try container.decodeIfPresent(String.self, forKey: .label)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(address, forKey: .address)
+        try container.encodeIfPresent(portOverride, forKey: .portOverride)
+        try container.encodeIfPresent(label, forKey: .label)
+    }
+
+    /// Labels are presentation metadata. Endpoint equality remains stable if
+    /// a user renames an address after it was selected or remembered.
+    public static func == (lhs: HostAddress, rhs: HostAddress) -> Bool {
+        lhs.address == rhs.address && lhs.portOverride == rhs.portOverride
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(address)
+        hasher.combine(portOverride)
     }
 }
 
@@ -67,8 +122,12 @@ public struct Host: Identifiable, Codable, Hashable, Sendable {
     public var hostname: String {
         get { (selectedAddress ?? addresses.first)?.address ?? "" }
         set {
-            let override = selectedAddress?.portOverride ?? addresses.first?.portOverride
-            let replacement = HostAddress(address: newValue, portOverride: override)
+            let selected = selectedAddress ?? addresses.first
+            let replacement = HostAddress(
+                address: newValue,
+                portOverride: selected?.portOverride,
+                label: selected?.label
+            )
             if addresses.isEmpty {
                 addresses = [replacement]
             } else {

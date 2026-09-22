@@ -68,6 +68,109 @@ final class Phase10HostAddressTests: XCTestCase {  // pi-lens-ignore: type_body_
         )
     }
 
+    func testLegacyAddressEntryWithoutLabelDecodesAsUnnamed() throws {
+        let json = """
+        {
+            "id": "00000000-0000-0000-0000-000000000010",
+            "displayName": "Legacy labels",
+            "addresses": [{"address": "lan.example.test", "portOverride": 2200}],
+            "port": 22,
+            "username": "developer"
+        }
+        """.data(using: .utf8)!
+
+        let host = try JSONDecoder().decode(Host.self, from: json)
+
+        XCTAssertNil(host.addresses.first?.label)
+        XCTAssertEqual(host.addresses.first?.portOverride, 2200)
+    }
+
+    func testAddressLabelsPersistAndBlankLabelsDecodeAsUnnamed() throws {
+        let host = Host(
+            displayName: "Labeled Mac",
+            addresses: [
+                HostAddress(
+                    address: "lan.example.test",
+                    portOverride: 2200,
+                    label: "Home LAN"
+                ),
+                HostAddress(address: "tailnet.example.test", label: "  \t"),
+            ],
+            port: 22,
+            username: "developer"
+        )
+
+        let roundTrip = try JSONDecoder().decode(
+            Host.self,
+            from: JSONEncoder().encode(host)
+        )
+
+        XCTAssertEqual(
+            roundTrip.addresses.map(\.label),
+            ["Home LAN", nil]
+        )
+        XCTAssertEqual(roundTrip.addresses[0].effectivePort(defaultPort: host.port), 2200)
+    }
+
+    func testAddressProgressPrefersLabelAndRetainsActualEffectiveEndpoint() {
+        let named = HostAddress(
+            address: "192.0.2.10",
+            portOverride: 2200,
+            label: "Home LAN"
+        )
+        let unnamed = HostAddress(address: "tailnet.example.test")
+
+        XCTAssertEqual(
+            hostAddressProgressText(named, defaultPort: 22),
+            "Home LAN · 192.0.2.10:2200"
+        )
+        XCTAssertEqual(
+            hostAddressProgressText(unnamed, defaultPort: 2222),
+            "tailnet.example.test:2222"
+        )
+    }
+
+    func testAddressLabelDoesNotChangeConnectionIdentityOrKnownHostTarget() async throws {
+        let named = HostAddress(
+            address: "tailnet.example.test",
+            portOverride: 2200,
+            label: "Tailscale"
+        )
+        let unnamed = HostAddress(
+            address: named.address,
+            portOverride: named.portOverride
+        )
+        XCTAssertEqual(named.id, unnamed.id)
+        XCTAssertEqual(named, unnamed)
+
+        let host = Host(
+            displayName: "Stable identity",
+            addresses: [named],
+            port: 22,
+            username: "developer"
+        )
+        let renamedHost = Host(
+            id: host.id,
+            displayName: host.displayName,
+            addresses: [unnamed],
+            port: host.port,
+            username: host.username,
+            preferredTransport: host.preferredTransport
+        )
+        let targeted = host.targeting(named)
+        let renamedTarget = renamedHost.targeting(unnamed)
+        XCTAssertEqual(targeted.id, renamedTarget.id)
+        XCTAssertEqual(
+            NIOSSHConnection.tcpEndpoint(for: targeted),
+            NIOSSHConnection.tcpEndpoint(for: renamedTarget)
+        )
+
+        let knownHosts = Phase10MemoryKnownHostStore()
+        try await knownHosts.remember("SHA256:stable", for: targeted)
+        let fingerprint = try await knownHosts.fingerprint(for: renamedTarget)
+        XCTAssertEqual(fingerprint, "SHA256:stable")
+    }
+
     func testSSHConnectEndpointUsesSelectedAddressPortOverrideForTCPDial() {
         let host = Host(
             displayName: "Override Mac",

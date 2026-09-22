@@ -312,19 +312,30 @@ struct HostListView: View {
     }
 }
 
+func hostAddressProgressText(_ address: HostAddress, defaultPort: UInt16) -> String {
+    let endpoint = "\(address.address):\(address.effectivePort(defaultPort: defaultPort))"
+    guard let label = address.label else { return endpoint }
+    return "\(label) · \(endpoint)"
+}
+
 private extension HostAddressRaceProgress {
-    var detailText: String? {
+    func detailText(defaultPort: UInt16) -> String? {
         switch self {
         case let .preferred(address, elapsed):
-            return "Trying \(address.address) · \(elapsedText(elapsed))"
+            return "Trying \(hostAddressProgressText(address, defaultPort: defaultPort)) · \(elapsedText(elapsed))"
         case let .racing(addresses, elapsed):
-            let targets = addresses.map(\.address).joined(separator: ", ")
+            let targets = addresses
+                .map { hostAddressProgressText($0, defaultPort: defaultPort) }
+                .joined(separator: ", ")
             return "Trying \(targets) · \(elapsedText(elapsed))"
         case let .selected(address, elapsed):
-            return "Authenticating \(address.address) · \(elapsedText(elapsed))"
+            return "Authenticating \(hostAddressProgressText(address, defaultPort: defaultPort)) · \(elapsedText(elapsed))"
         case let .failed(outcomes):
             let failures = outcomes.compactMap { outcome -> String? in
-                let address = outcome.address.address
+                let address = hostAddressProgressText(
+                    outcome.address,
+                    defaultPort: defaultPort
+                )
                 switch outcome.outcome {
                 case let .failed(message):
                     return "\(address): \(message)"
@@ -388,7 +399,7 @@ private struct HostRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let raceProgress,
-                   let detail = raceProgress.detailText {
+                   let detail = raceProgress.detailText(defaultPort: host.port) {
                     Text(detail)
                         .font(.caption2)
                         .foregroundStyle(.tint)
@@ -396,7 +407,7 @@ private struct HostRow: View {
                 } else if let raceFailure,
                           let detail = HostAddressRaceProgress
                             .failed(outcomes: raceFailure)
-                            .detailText {
+                            .detailText(defaultPort: host.port) {
                     Text(detail)
                         .font(.caption2)
                         .foregroundStyle(.red)
