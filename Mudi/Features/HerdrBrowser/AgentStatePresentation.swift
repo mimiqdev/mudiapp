@@ -38,7 +38,14 @@ struct HerdrPaneRow: View {
     }
 
     var body: some View {
-        HStack {
+        HStack(spacing: 8) {
+            if isAttached {
+                Capsule()
+                    .fill(Color.accentColor)
+                    .frame(width: 3, height: 28)
+                    .accessibilityHidden(true)
+            }
+
             VStack(alignment: .leading, spacing: 3) {
                 Text(pane.agent?.name ?? pane.title)
                 Text(pane.title)
@@ -62,7 +69,7 @@ struct HerdrPaneRow: View {
                     }
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
-                        .accessibilityLabel("Current pane")
+                        .accessibilityHidden(true)
                 }
             } else if let agent = pane.agent {
                 Text(agent.state.label)

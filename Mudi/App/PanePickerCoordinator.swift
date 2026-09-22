@@ -49,6 +49,22 @@ struct PanePickerState: Equatable, Sendable {
     }
 }
 
+extension PanePickerState {
+    /// The real pane identity the picker marks as current: the attached
+    /// terminal's pane when the picker was opened from that terminal. Nil
+    /// when the picker was opened from Hosts, so no row is marked.
+    var currentPaneID: Pane.ID? {
+        attachedTerminal?.pane.id
+    }
+
+    func highlight(for paneID: Pane.ID) -> PanePickerRowHighlight {
+        PanePickerRowHighlight.resolve(
+            paneID: paneID,
+            currentPaneID: currentPaneID
+        )
+    }
+}
+
 enum PanePickerNavigationState: Equatable, Sendable {
     case hosts([Host])
     case legacyHerdrBrowser(HerdrBrowserState)

@@ -28,6 +28,27 @@ struct PanePickerPresentationRow: Identifiable, Equatable, Sendable {
     }
 }
 
+/// The current-pane highlight for one picker row.
+///
+/// ``isCurrent`` is a pure function of real pane identity: the ``Pane.ID``
+/// the official snapshot reports and the picker holds as its attached
+/// terminal. It never depends on the row's index or on the order discovery
+/// happened to return, so refresh, reorder, and reconnect hydration cannot
+/// move the mark.
+struct PanePickerRowHighlight: Equatable, Sendable {
+    let paneID: Pane.ID
+    let isCurrent: Bool
+
+    static func resolve(paneID: Pane.ID, currentPaneID: Pane.ID?) -> Self {
+        Self(paneID: paneID, isCurrent: paneID == currentPaneID)
+    }
+
+    /// VoiceOver hears this after the pane title and agent state.
+    var accessibilityValue: String? {
+        isCurrent ? "Current pane" : nil
+    }
+}
+
 /// A repository/worktree node in the picker. Tabs are intentionally absent
 /// from this projection: their panes are listed directly under the workspace
 /// node while the original tab IDs remain in ``HerdrSnapshot``.
