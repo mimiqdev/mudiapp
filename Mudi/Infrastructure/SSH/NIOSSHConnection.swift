@@ -104,6 +104,50 @@ final class NIOSSHConnection: @unchecked Sendable {
         }
     }
 
+    /// Opens only TCP/DNS for a Host target. Authentication and host-key
+    /// validation are deliberately absent so multiple Host addresses can be
+    /// raced without producing concurrent credential or TOFU prompts.
+    static func connectNetwork(to host: Host) async throws -> any HostAddressNetworkConnection {
+        guard let target = host.selectedTarget ?? host.addresses.first else {
+            throw HostAddressConnectionRaceError.invalidAddressList
+        }
+        let cancellation = NIOChannelCancellation()
+        let bootstrap = ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+            .channelInitializer { channel in
+                cancellation.register(channel)
+                return channel.eventLoop.makeSucceededVoidFuture()
+            }
+            .connectTimeout(Self.connectTimeout)
+            .channelOption(
+                ChannelOptions.connectTimeout,
+                value: Self.connectTimeout
+            )
+            .channelOption(
+                ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR),
+                value: 1
+            )
+            .channelOption(
+                ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), TCP_NODELAY),
+                value: 1
+            )
+        do {
+            let channel = try await withTaskCancellationHandler {
+                let channel = try await bootstrap
+                    .connect(host: host.hostname, port: Int(host.effectivePort))
+                    .get()
+                try Task.checkCancellation()
+                return channel
+            } onCancel: {
+                cancellation.cancel()
+            }
+            cancellation.finish(successful: channel)
+            return NIOHostAddressNetworkConnection(channel: channel, target: target)
+        } catch {
+            cancellation.cancel()
+            throw error
+        }
+    }
+
     /// Executes a command on a new SSH session channel. The caller's PTY
     /// channel is left untouched, including its output stream.
     func execute(_ command: String, maxOutputBytes: Int = 1_048_576) async throws -> [UInt8] {
@@ -159,6 +203,59 @@ final class NIOSSHConnection: @unchecked Sendable {
         )
         try await interactiveChannel.start()
         return interactiveChannel
+    }
+}
+
+private final class NIOChannelCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var channels: [ObjectIdentifier: Channel] = [:]
+    private var isCancelled = false
+    private var isFinished = false
+
+    func register(_ channel: Channel) {
+        let shouldClose: Bool
+        lock.lock()
+        shouldClose = isCancelled || isFinished
+        if !shouldClose {
+            channels[ObjectIdentifier(channel)] = channel
+        }
+        lock.unlock()
+        if shouldClose {
+            channel.close(promise: nil)
+        }
+    }
+
+    func cancel() {
+        lock.lock()
+        isCancelled = true
+        let channels = Array(self.channels.values)
+        self.channels.removeAll()
+        lock.unlock()
+        channels.forEach { $0.close(promise: nil) }
+    }
+
+    func finish(successful channel: Channel) {
+        lock.lock()
+        isFinished = true
+        self.channels[ObjectIdentifier(channel)] = nil
+        let losers = Array(self.channels.values)
+        self.channels.removeAll()
+        lock.unlock()
+        losers.forEach { $0.close(promise: nil) }
+    }
+}
+
+private final class NIOHostAddressNetworkConnection: HostAddressNetworkConnection, @unchecked Sendable {
+    let target: HostAddress
+    private let channel: Channel
+
+    init(channel: Channel, target: HostAddress) {
+        self.channel = channel
+        self.target = target
+    }
+
+    func close() async {
+        _ = try? await channel.close()
     }
 }
 

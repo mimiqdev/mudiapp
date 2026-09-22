@@ -53,6 +53,9 @@ struct HostListView: View {
     /// The host with a live model attempt; it keeps the row connecting for the
     /// whole attempt, including the Herdr discovery phase.
     let connectingHostID: Host.ID?
+    /// The endpoint currently being tried by the address race. It is transient
+    /// and never changes the saved Host order.
+    let connectingAddress: HostAddress?
     /// The host whose last attempt genuinely failed; it keeps the red warning
     /// and Retry even after the coordinator converges to `.disconnected`.
     let failedHostID: Host.ID?
@@ -72,6 +75,7 @@ struct HostListView: View {
         hosts: [Host],
         connectionState: ConnectionState,
         connectingHostID: Host.ID? = nil,
+        connectingAddress: HostAddress? = nil,
         failedHostID: Host.ID? = nil,
         stateOwnerHostID: Host.ID? = nil,
         showsConnectCancel: Bool = false,
@@ -87,6 +91,7 @@ struct HostListView: View {
         self.hosts = hosts
         self.connectionState = connectionState
         self.connectingHostID = connectingHostID
+        self.connectingAddress = connectingAddress
         self.failedHostID = failedHostID
         self.stateOwnerHostID = stateOwnerHostID
         self.showsConnectCancel = showsConnectCancel
@@ -129,6 +134,9 @@ struct HostListView: View {
                             } label: {
                                 HostRow(
                                     host: host,
+                                    displayedAddress: host.id == connectingHostID
+                                        ? connectingAddress
+                                        : nil,
                                     showsChevron: presentation.state == .idle
                                 )
                             }
@@ -291,7 +299,18 @@ struct HostListView: View {
 
 private struct HostRow: View {
     let host: Host
+    let displayedAddress: HostAddress?
     var showsChevron = true
+
+    init(
+        host: Host,
+        displayedAddress: HostAddress? = nil,
+        showsChevron: Bool = true
+    ) {
+        self.host = host
+        self.displayedAddress = displayedAddress
+        self.showsChevron = showsChevron
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -302,7 +321,9 @@ private struct HostRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(host.displayName)
                     .font(.headline)
-                Text("\(host.username)@\(host.hostname):\(host.port)")
+                let address = displayedAddress?.address ?? host.hostname
+                let port = displayedAddress?.effectivePort(defaultPort: host.port) ?? host.port
+                Text("\(host.username)@\(address):\(port)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

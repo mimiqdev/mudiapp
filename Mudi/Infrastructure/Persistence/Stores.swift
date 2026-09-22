@@ -2,6 +2,21 @@ import Foundation
 import HerdrKit
 import Security
 
+enum HostPersistenceError: Error, Equatable, LocalizedError, Sendable {
+    case invalidHost(HostAddressValidationError)
+
+    init(_ error: HostAddressValidationError) {
+        self = .invalidHost(error)
+    }
+
+    var errorDescription: String? {
+        switch self {
+        case let .invalidHost(error):
+            error.errorDescription
+        }
+    }
+}
+
 /// Stores only the Codable, non-secret host configuration in the app support
 /// directory. Credentials and host keys use the Keychain stores below.
 actor JSONHostStore: HostStore {
@@ -17,7 +32,15 @@ actor JSONHostStore: HostStore {
         }
 
         let data = try Data(contentsOf: fileURL)
-        return try JSONDecoder().decode([Host].self, from: data)
+        let hosts = try JSONDecoder().decode([Host].self, from: data)
+        // Host's decoder accepts the legacy hostname/port shape. Rewrite the
+        // normalized representation immediately so a later process sees the
+        // ordered endpoint list without needing a save gesture.
+        let normalizedData = try JSONEncoder().encode(hosts)
+        if normalizedData != data {
+            try normalizedData.write(to: fileURL, options: .atomic)
+        }
+        return hosts
     }
 
     func save(_ host: Host) throws {
@@ -36,6 +59,11 @@ actor JSONHostStore: HostStore {
     }
 
     private func write(_ hosts: [Host]) throws {
+        do {
+            try hosts.forEach { try $0.validate() }
+        } catch let error as HostAddressValidationError {
+            throw HostPersistenceError(error)
+        }
         let data = try JSONEncoder().encode(hosts)
         let directoryURL = fileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(

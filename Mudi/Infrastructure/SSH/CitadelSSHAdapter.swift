@@ -10,7 +10,8 @@ import HerdrKit
 ///
 /// The Citadel client and its authentication method are retained only by the
 /// active PTY channel. Closing that channel closes the SSH client as well.
-struct CitadelSSHAdapter: HerdrKit.SSHClient, HerdrKit.HostKeyAwareSSHClient {
+struct CitadelSSHAdapter: HerdrKit.SSHClient, HerdrKit.HostKeyAwareSSHClient,
+    HostAddressNetworkConnecting {
     static let transportKind = ActiveTransport.ssh
 
     /// The legacy shell boundary has no way to ask a caller about an unknown
@@ -25,6 +26,12 @@ struct CitadelSSHAdapter: HerdrKit.SSHClient, HerdrKit.HostKeyAwareSSHClient {
             credentials: credentials,
             hostKeyDecision: { _ in .reject }
         )
+    }
+
+    func connectNetwork(
+        to host: HerdrKit.Host
+    ) async throws -> any HostAddressNetworkConnection {
+        try await NIOSSHConnection.connectNetwork(to: host)
     }
 
     func connect(

@@ -41,6 +41,10 @@ final class RootViewModel: ObservableObject {
     @Published internal(set) var failedHostID: Host.ID?
     /// Phase 10: true once the connecting row outlived the cancel threshold.
     @Published internal(set) var showsConnectCancel = false
+    /// The most recently started/selected address for the in-flight race.
+    /// This is transient UI state; the saved Host order is never changed.
+    @Published internal(set) var connectingAddress: HostAddress?
+    @Published internal(set) var addressRaceProgress: HostAddressRaceProgress?
 
     /// Phase 10: how long a connect attempt may run before its Host row
     /// offers Cancel. The plan fixes the default at 5 seconds; tests inject a
@@ -311,6 +315,13 @@ extension RootViewModel {
                             for: fingerprint,
                             generation: generation
                         )
+                    },
+                    progress: { [weak self] progress in
+                        guard let self else { return }
+                        await self.publishAddressRaceProgress(
+                            progress,
+                            generation: generation
+                        )
                     }
                 )
                 guard let self,
@@ -328,19 +339,20 @@ extension RootViewModel {
                 else {
                     throw ConnectionError.connectionFailed
                 }
+                let actualHost = await coordinator.activeHost() ?? host
                 let terminalSession = await coordinator.activeTerminalSession() ?? bootstrapSession
                 let selectedTransport = await coordinator.activeTransport() ?? .ssh
                 let workflow = await self.makeWorkflow(
                     for: bootstrapSession,
                     hostID: host.id,
-                    host: host
+                    host: actualHost
                 )
-                self.showLoadingPanePicker(for: host)
+                self.showLoadingPanePicker(for: actualHost)
                 let pickerCoordinator = self.makePanePickerCoordinator(
                     for: workflow,
                     transport: selectedTransport
                 )
-                let pickerState = try await pickerCoordinator.connect(to: host)
+                let pickerState = try await pickerCoordinator.connect(to: actualHost)
                 guard self.isCurrentConnection(generation), !Task.isCancelled else {
                     // Stop this task's own discovery, but leave the coordinator
                     // alone for the same ownership reason.
@@ -356,7 +368,7 @@ extension RootViewModel {
                 self.baseTerminalSession = terminalSession
                 self.activeTransport = selectedTransport
                 self.activeConnection = ActiveSSHConnection(
-                    host: host,
+                    host: actualHost,
                     session: terminalSession,
                     transport: selectedTransport
                 )
@@ -421,6 +433,13 @@ extension RootViewModel {
                             for: fingerprint,
                             generation: generation
                         )
+                    },
+                    progress: { [weak self] progress in
+                        guard let self else { return }
+                        await self.publishAddressRaceProgress(
+                            progress,
+                            generation: generation
+                        )
                     }
                 )
                 // Ownership first: a superseded task must not touch the
@@ -434,19 +453,20 @@ extension RootViewModel {
                 else {
                     throw ConnectionError.connectionFailed
                 }
+                let actualHost = await coordinator.activeHost() ?? host
                 let terminalSession = await coordinator.activeTerminalSession() ?? bootstrapSession
                 let selectedTransport = await coordinator.activeTransport() ?? .ssh
                 let workflow = await self.makeWorkflow(
                     for: bootstrapSession,
                     hostID: host.id,
-                    host: host
+                    host: actualHost
                 )
-                self.showLoadingPanePicker(for: host)
+                self.showLoadingPanePicker(for: actualHost)
                 let pickerCoordinator = self.makePanePickerCoordinator(
                     for: workflow,
                     transport: selectedTransport
                 )
-                let pickerState = try await pickerCoordinator.connect(to: host)
+                let pickerState = try await pickerCoordinator.connect(to: actualHost)
                 guard self.isCurrentConnection(generation), !Task.isCancelled else {
                     // Stop this task's own discovery, but leave the coordinator
                     // alone for the same ownership reason.
@@ -462,7 +482,7 @@ extension RootViewModel {
                 self.baseTerminalSession = terminalSession
                 self.activeTransport = selectedTransport
                 self.activeConnection = ActiveSSHConnection(
-                    host: host,
+                    host: actualHost,
                     session: terminalSession,
                     transport: selectedTransport
                 )
@@ -586,6 +606,8 @@ extension RootViewModel {
         generation: UUID
     ) {
         connectingHostID = hostID
+        connectingAddress = nil
+        addressRaceProgress = nil
         showsConnectCancel = false
         connectCancelThresholdTask?.cancel()
         let threshold = connectCancelThreshold
@@ -612,9 +634,29 @@ extension RootViewModel {
 
     private func clearConnectingFeedback() {
         connectingHostID = nil
+        connectingAddress = nil
+        addressRaceProgress = nil
         showsConnectCancel = false
         connectCancelThresholdTask?.cancel()
         connectCancelThresholdTask = nil
+    }
+
+    func publishAddressRaceProgress(
+        _ progress: HostAddressRaceProgress,
+        generation: UUID
+    ) {
+        guard connectionGeneration == generation,
+              connectingHostID != nil
+        else { return }
+        addressRaceProgress = progress
+        switch progress {
+        case let .preferred(address, _), let .selected(address, _):
+            connectingAddress = address
+        case let .racing(addresses, _):
+            connectingAddress = addresses.last
+        case .failed:
+            connectingAddress = nil
+        }
     }
 
     /// Runs behind `cancelConnect()`: retire the attempt and bounded-close

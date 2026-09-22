@@ -120,19 +120,22 @@ final class Phase10HostAddressTests: XCTestCase {
 
         await connector.waitUntilStarted(addresses[0])
         await clock.advance(by: .seconds(1.9))
-        XCTAssertEqual(await connector.startedAddresses(), [addresses[0]])
+        let startsBeforeFailure = await connector.startedAddresses()
+        XCTAssertEqual(startsBeforeFailure, [addresses[0]])
 
         await connector.fail(addresses[0], message: "unreachable")
         await connector.waitUntilStarted(addresses[1])
+        let startsAfterFailure = await connector.startedAddresses()
         XCTAssertEqual(
-            await connector.startedAddresses(),
+            startsAfterFailure,
             [addresses[0], addresses[1]]
         )
 
         await connector.succeed(addresses[1])
         let result = try await task.value
         XCTAssertEqual(result.target, addresses[1])
-        await connector.assertCancelled(addresses[2])
+        let didStartThird = await connector.didStart(addresses[2])
+        XCTAssertFalse(didStartThird)
     }
 
     func testPreferredRemainsEligibleWhileBackupsStartEvery500Milliseconds() async throws {
@@ -157,8 +160,9 @@ final class Phase10HostAddressTests: XCTestCase {
         await connector.waitUntilStarted(addresses[1])
         await clock.advance(by: .milliseconds(500))
         await connector.waitUntilStarted(addresses[2])
+        let startsAfterWindow = await connector.startedAddresses()
         XCTAssertEqual(
-            await connector.startedAddresses(),
+            startsAfterWindow,
             [addresses[0], addresses[1], addresses[2]]
         )
 
@@ -202,11 +206,83 @@ final class Phase10HostAddressTests: XCTestCase {
             }
             XCTAssertTrue(outcomes.allSatisfy { $0.outcome == .timedOut })
         }
+        let startsAtDeadline = await connector.startedAddresses()
         XCTAssertEqual(
-            await connector.startedAddresses(),
+            startsAtDeadline,
             addresses,
             "The deadline is shared; it must not reset when a backup starts"
         )
+    }
+
+    func testNetworkWinnerClosesLosersAndReportsCancelledLosers() async throws {
+        let clock = Phase10TestClock()
+        let connector = Phase10RaceConnector(clock: clock)
+        let addresses = [
+            HostAddress(address: "preferred.example.test"),
+            HostAddress(address: "backup.example.test"),
+        ]
+        let task = Task {
+            try await HostAddressConnectionRace.connect(
+                addresses: addresses,
+                policy: .default,
+                clock: clock,
+                using: connector.connect
+            )
+        }
+
+        await connector.waitUntilStarted(addresses[0])
+        await clock.advance(by: .seconds(2))
+        await connector.waitUntilStarted(addresses[1])
+        await connector.succeed(addresses[1])
+        let result = try await task.value
+
+        XCTAssertEqual(result.target, addresses[1])
+        XCTAssertEqual(result.outcomes[0].outcome, .cancelled)
+        XCTAssertEqual(result.outcomes[1].outcome, .succeeded)
+        await connector.assertCancelled(addresses[0])
+    }
+
+    func testRaceReportsPreferredRacingAndSelectedProgress() async throws {
+        let clock = Phase10TestClock()
+        let connector = Phase10RaceConnector(clock: clock)
+        let progress = Phase10ProgressRecorder()
+        let addresses = [
+            HostAddress(address: "preferred.example.test"),
+            HostAddress(address: "backup.example.test"),
+        ]
+        let task = Task {
+            try await HostAddressConnectionRace.connect(
+                addresses: addresses,
+                policy: .default,
+                clock: clock,
+                using: connector.connect,
+                onProgress: { value in
+                    await progress.record(value)
+                }
+            )
+        }
+
+        await connector.waitUntilStarted(addresses[0])
+        await clock.advance(by: .seconds(2))
+        await connector.waitUntilStarted(addresses[1])
+        await connector.succeed(addresses[1])
+        _ = try await task.value
+
+        let events = await progress.values()
+        XCTAssertTrue(events.contains {
+            if case let .preferred(address, _) = $0 { return address == addresses[0] }
+            return false
+        })
+        XCTAssertTrue(events.contains {
+            if case let .racing(racingAddresses, _) = $0 {
+                return racingAddresses == addresses
+            }
+            return false
+        })
+        XCTAssertTrue(events.contains {
+            if case let .selected(address, _) = $0 { return address == addresses[1] }
+            return false
+        })
     }
 
     func testNetworkWinnerClosesLosersAndOnlyWinnerCanProceed() async throws {
@@ -232,8 +308,180 @@ final class Phase10HostAddressTests: XCTestCase {
         let result = try await task.value
 
         XCTAssertEqual(result.target, addresses[1])
-        XCTAssertEqual(await connector.successfulConnectionCount(), 1)
+        let successfulConnections = await connector.successfulConnectionCount()
+        XCTAssertEqual(successfulConnections, 1)
         await connector.assertCancelled(addresses[0])
+    }
+
+    func testCoordinatorAuthenticatesOnlyWinningAddressAndPassesOverrideToSSH() async throws {
+        let host = Host(
+            displayName: "Multi-path Mac",
+            addresses: [
+                HostAddress(address: "preferred.example.test"),
+                HostAddress(address: "tailnet.example.test", portOverride: 2200),
+            ],
+            port: 22,
+            username: "developer",
+            preferredTransport: .ssh
+        )
+        let network = Phase10CoordinatorNetworkConnector(
+            successfulAddresses: [host.addresses[1]]
+        )
+        let client = Phase10RecordingSSHClient()
+        let application = ApplicationCoordinator(
+            hostStore: Phase10MemoryHostStore(),
+            credentialStore: Phase10MemoryCredentialStore(),
+            knownHostKeyStore: Phase10MemoryKnownHostStore(),
+            client: client,
+            moshTransport: Phase10NoopMoshTransport(),
+            networkConnector: network
+        )
+
+        _ = try await application.connect(
+            to: host,
+            credentials: SSHCredentials(password: "password"),
+            hostKeyDecision: { _ in .accept }
+        )
+
+        let networkTargets = await network.targets()
+        XCTAssertEqual(networkTargets, [host.addresses[0], host.addresses[1]])
+        let authenticatedHosts = await client.hosts()
+        XCTAssertEqual(authenticatedHosts.count, 1)
+        XCTAssertEqual(authenticatedHosts[0].id, host.id)
+        XCTAssertEqual(authenticatedHosts[0].hostname, host.addresses[1].address)
+        XCTAssertEqual(authenticatedHosts[0].effectivePort, 2200)
+        let closeCount = await network.closeCount()
+        XCTAssertEqual(closeCount, 1)
+    }
+
+    func testAuthenticationFailureDoesNotFallBackToAnotherAddress() async throws {
+        let host = Host(
+            displayName: "Changed-key Mac",
+            addresses: [
+                HostAddress(address: "lan.example.test"),
+                HostAddress(address: "tailnet.example.test"),
+            ],
+            port: 22,
+            username: "developer",
+            preferredTransport: .ssh
+        )
+        let network = Phase10CoordinatorNetworkConnector(
+            successfulAddresses: [host.addresses[0], host.addresses[1]]
+        )
+        let client = Phase10RecordingSSHClient(
+            authenticationError: .hostKeyMismatch(
+                expected: "SHA256:trusted",
+                actual: "SHA256:changed"
+            )
+        )
+        let application = ApplicationCoordinator(
+            hostStore: Phase10MemoryHostStore(),
+            credentialStore: Phase10MemoryCredentialStore(),
+            knownHostKeyStore: Phase10MemoryKnownHostStore(),
+            client: client,
+            moshTransport: Phase10NoopMoshTransport(),
+            networkConnector: network
+        )
+
+        do {
+            _ = try await application.connect(
+                to: host,
+                credentials: SSHCredentials(password: "password"),
+                hostKeyDecision: { _ in .accept }
+            )
+            XCTFail("A host-key mismatch must fail the selected target")
+        } catch let error as ConnectionError {
+            XCTAssertEqual(
+                error,
+                .hostKeyMismatch(expected: "SHA256:trusted", actual: "SHA256:changed")
+            )
+        }
+
+        let authenticatedHosts = await client.hosts()
+        let networkTargets = await network.targets()
+        XCTAssertEqual(authenticatedHosts.count, 1)
+        XCTAssertEqual(networkTargets, [host.addresses[0]])
+    }
+
+    func testReconnectRetainsTheActualWinningAddressInsteadOfUsingListHead() async throws {
+        let host = Host(
+            displayName: "Reconnect Mac",
+            addresses: [
+                HostAddress(address: "preferred.example.test"),
+                HostAddress(address: "tailnet.example.test"),
+            ],
+            port: 22,
+            username: "developer",
+            preferredTransport: .ssh
+        )
+        let network = Phase10CoordinatorNetworkConnector(
+            successfulAddresses: [host.addresses[1]]
+        )
+        let client = Phase10RecordingSSHClient()
+        let hostStore = Phase10MemoryHostStore()
+        let credentialStore = Phase10MemoryCredentialStore()
+        let application = ApplicationCoordinator(
+            hostStore: hostStore,
+            credentialStore: credentialStore,
+            knownHostKeyStore: Phase10MemoryKnownHostStore(),
+            client: client,
+            moshTransport: Phase10NoopMoshTransport(),
+            networkConnector: network
+        )
+        try await hostStore.save(host)
+        try await credentialStore.save(
+            SSHCredentials(password: "password"),
+            for: host
+        )
+
+        _ = try await application.connect(
+            to: host,
+            credentials: SSHCredentials(password: "password"),
+            hostKeyDecision: { _ in .accept }
+        )
+        await application.disconnectAndWait()
+        _ = try await application.reconnect(hostKeyDecision: { _ in .accept })
+
+        let targets = await network.targets()
+        XCTAssertEqual(targets, [host.addresses[0], host.addresses[1], host.addresses[1]])
+        let authenticatedHosts = await client.hosts()
+        XCTAssertEqual(authenticatedHosts.last?.hostname, host.addresses[1].address)
+    }
+
+    func testMoshReceivesTheSameSelectedAddressAsSSHBootstrap() async throws {
+        let host = Host(
+            displayName: "Mosh Mac",
+            addresses: [HostAddress(address: "tailnet.example.test", portOverride: 2222)],
+            port: 22,
+            username: "developer",
+            preferredTransport: .mosh
+        )
+        let network = Phase10CoordinatorNetworkConnector(
+            successfulAddresses: [host.addresses[0]]
+        )
+        let client = Phase10RecordingSSHClient()
+        let mosh = Phase10RecordingMoshTransport()
+        let application = ApplicationCoordinator(
+            hostStore: Phase10MemoryHostStore(),
+            credentialStore: Phase10MemoryCredentialStore(),
+            knownHostKeyStore: Phase10MemoryKnownHostStore(),
+            client: client,
+            moshTransport: mosh,
+            networkConnector: network
+        )
+
+        _ = try await application.connect(
+            to: host,
+            credentials: SSHCredentials(password: "password"),
+            hostKeyDecision: { _ in .accept }
+        )
+
+        let moshHosts = await mosh.hosts()
+        XCTAssertEqual(moshHosts.count, 1)
+        XCTAssertEqual(moshHosts[0].hostname, host.addresses[0].address)
+        XCTAssertEqual(moshHosts[0].effectivePort, 2222)
+        let activeHost = await application.activeHost()
+        XCTAssertEqual(activeHost?.hostname, host.addresses[0].address)
     }
 
     func testCancellingRaceRetiresAllCandidatesAndDoesNotPoisonRetry() async throws {
@@ -395,6 +643,10 @@ private actor Phase10RaceConnector {
         XCTAssertGreaterThan(cancellations[address] ?? 0, 0, "Expected \(address) to be cancelled")
     }
 
+    func didStart(_ address: HostAddress) -> Bool {
+        starts.contains { $0.address == address }
+    }
+
     func successfulConnectionCount() -> Int {
         successes
     }
@@ -419,6 +671,158 @@ private struct Phase10RaceHandle: HostAddressNetworkConnection {
     let target: HostAddress
 
     func close() async {}
+}
+
+private actor Phase10ProgressRecorder {
+    private var recorded: [HostAddressRaceProgress] = []
+
+    func record(_ progress: HostAddressRaceProgress) {
+        recorded.append(progress)
+    }
+
+    func values() -> [HostAddressRaceProgress] { recorded }
+}
+
+private actor Phase10MemoryHostStore: HostStore {
+    private var values: [Host] = []
+
+    func loadHosts() async throws -> [Host] { values }
+    func save(_ host: Host) async throws {
+        if let index = values.firstIndex(where: { $0.id == host.id }) {
+            values[index] = host
+        } else {
+            values.append(host)
+        }
+    }
+    func delete(_ host: Host) async throws {
+        values.removeAll { $0.id == host.id }
+    }
+}
+
+private actor Phase10MemoryCredentialStore: CredentialStore {
+    private var values: [Host.ID: SSHCredentials] = [:]
+
+    func save(_ credentials: SSHCredentials, for host: Host) async throws {
+        values[host.id] = credentials
+    }
+    func credentials(for host: Host) async throws -> SSHCredentials? {
+        values[host.id]
+    }
+    func delete(for host: Host) async throws {
+        values[host.id] = nil
+    }
+}
+
+private actor Phase10MemoryKnownHostStore: KnownHostKeyStore {
+    private var values: [Host.ID: String] = [:]
+
+    func remember(_ fingerprint: String, for host: Host) async throws {
+        values[host.id] = fingerprint
+    }
+    func fingerprint(for host: Host) async throws -> String? {
+        values[host.id]
+    }
+    func delete(for host: Host) async throws {
+        values[host.id] = nil
+    }
+}
+
+private actor Phase10CoordinatorNetworkConnector: HostAddressNetworkConnecting {
+    private let successfulAddresses: Set<HostAddress>
+    private var targetValues: [HostAddress] = []
+    private var closeCountValue = 0
+
+    init(successfulAddresses: [HostAddress]) {
+        self.successfulAddresses = Set(successfulAddresses)
+    }
+
+    func connectNetwork(to host: Host) async throws -> any HostAddressNetworkConnection {
+        let target = host.selectedTarget ?? host.addresses.first!
+        targetValues.append(target)
+        guard successfulAddresses.contains(target) else {
+            throw Phase10NetworkFailure(message: "network unavailable")
+        }
+        return Phase10CoordinatorNetworkHandle(
+            target: target,
+            onClose: { [weak self] in
+                await self?.recordClose()
+            }
+        )
+    }
+
+    func targets() -> [HostAddress] { targetValues }
+    func closeCount() -> Int { closeCountValue }
+
+    private func recordClose() {
+        closeCountValue += 1
+    }
+}
+
+private struct Phase10CoordinatorNetworkHandle: HostAddressNetworkConnection {
+    let target: HostAddress
+    let onClose: @Sendable () async -> Void
+
+    func close() async {
+        await onClose()
+    }
+}
+
+private actor Phase10RecordingSSHClient: HostKeyAwareSSHClient {
+    private let authenticationError: ConnectionError?
+    private var hostValues: [Host] = []
+
+    init(authenticationError: ConnectionError? = nil) {
+        self.authenticationError = authenticationError
+    }
+
+    func connect(
+        to host: Host,
+        credentials _: SSHCredentials,
+        hostKeyDecision: @escaping @Sendable (String) async -> HostKeyDecision
+    ) async throws -> any PTYChannel {
+        hostValues.append(host)
+        if let authenticationError {
+            throw authenticationError
+        }
+        guard await hostKeyDecision("SHA256:phase10") == .accept else {
+            throw ConnectionError.hostKeyRejected
+        }
+        return Phase10CoordinatorPTY()
+    }
+
+    func hosts() -> [Host] { hostValues }
+}
+
+private struct Phase10CoordinatorPTY: PTYChannel {
+    func send(_: [UInt8]) async throws {}
+    func resize(columns _: Int, rows _: Int) async throws {}
+    func close() async {}
+}
+
+private struct Phase10NoopMoshTransport: MoshTransportBootstrapping {
+    func connect(
+        to _: Host,
+        credentials _: SSHCredentials,
+        using _: SSHShellSession
+    ) async throws -> SSHShellSession {
+        SSHShellSession(connectedChannel: Phase10CoordinatorPTY())
+    }
+    func disconnect() async {}
+}
+
+private actor Phase10RecordingMoshTransport: MoshTransportBootstrapping {
+    private var hostValues: [Host] = []
+
+    func connect(
+        to host: Host,
+        credentials _: SSHCredentials,
+        using _: SSHShellSession
+    ) async throws -> SSHShellSession {
+        hostValues.append(host)
+        return SSHShellSession(connectedChannel: Phase10CoordinatorPTY())
+    }
+    func disconnect() async {}
+    func hosts() -> [Host] { hostValues }
 }
 
 private struct Phase10NetworkFailure: Error, LocalizedError, Sendable {
