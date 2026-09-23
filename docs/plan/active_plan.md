@@ -13,6 +13,7 @@
 ## 不在本步
 
 - Herdr wire protocol 变更及无关产品功能。
+- 改变 Herdr discovery、refresh 或 pane attach 错误语义：当前这类操作错误由 Picker 显示并可重试，不等同 Host transport 断开；不得改成 Host fatal disconnect，除非另经用户确认。
 - 尚未确认的 idle 自动断开策略与默认值、同时保留会话的资源上限/达到上限时的行为、强制退出/系统杀进程后的会话恢复策略、跨 Host 凭据/信任共享及并发提示/Hosts UI 设计。不得从当前单会话 UI 或实现自行推导这些产品决策；相关实现前须向用户确认。
 - 当前终端渲染器随视图卸载会停止输出消费；“恢复 terminal”合同保证恢复 Host/transport/session 身份与 terminal/Picker/pane 导航上下文，但**本地 VT 画面、未消费输出及 scrollback 是否也必须逐字恢复，仍待用户确认**，确认前不把它当作已保证行为。
 
@@ -24,7 +25,8 @@
 
 - `testHostsOwnIndependentLiveSessionsAndOnlyOneTerminalIsPresented`：A/B 同时连接，SSH/Mosh transport、bootstrap、terminal、workflow 和 navigation state 各属其 Host；进入另一 Host 只切换可见 terminal，不关闭前一 Host；返回并重进复用同一 session identity，不重新连接。
 - `testConcurrentConnectCancelAndLateCompletionAreHostIsolated`：两 Host 连接并行时取消/重试其中一条；只清理该 Host 的尝试及迟到 SSH/Mosh 资源，另一条状态和 session 不变；旧回调不能覆盖新尝试或当前选择。
-- `testFailureAtNetworkSSHTrustHerdrOrMoshStageCleansOnlyOwner`：分别覆盖网络竞速全败、SSH/认证或主机密钥拒绝、Herdr discovery/attach 失败、Mosh bootstrap/first-contact 失败；释放失败 Host 已建立的 socket/channel、Mosh 与 Picker refresh，不留半开会话，仍存活的 Host 不受影响；Auto fallback 只保留实际选中的 transport。
+- `testFatalHostTransportFailureCleansOnlyOwner`：覆盖网络竞速全败、SSH/认证或主机密钥拒绝、必须使用 Mosh 时 bootstrap/first-contact 失败，以及已建立 terminal 在现有恢复失败后的致命 SSH/Mosh 关闭；只清理该 Host 的 socket/channel、transport、workflow 与 Picker refresh，不留半开会话，仍存活的 Host 不受影响。Auto Mosh fallback 成功不是 fatal failure。
+- `testRecoverableHerdrErrorsKeepHostConnectedAndPickerRetryable`：初次 discovery 失败时保留 Host-Origin Picker、显示局部错误并允许 refresh 重试；refresh 失败保留最近成功的 snapshot/当前 pane 和 Host transport，显示错误，后续手动或定时 refresh 成功可恢复。pane attach/select 操作失败依现有 Picker 错误态显示并可重试，保留 Host transport；若原 pane 恢复成功则仍标为当前 pane。上述错误均不置 Host failure/disconnected、不执行 Host teardown，且不影响其它 Host。
 - `testBackAndPickerDismissalPreserveSessionAndReentryRestoresContext`：从 Host Picker、普通 terminal、attached terminal 及 terminal-origin Picker 回 Hosts；不触发 SSH/Mosh disconnect 或 pane Leave；重进恢复该 Host 原有导航状态、selected session/current pane 身份。
 - `testExplicitDisconnectClosesOnlyNamedHostAndReconnectUsesFreshIdentity`：显式断开 A 关闭 A 的资源并清理 attached pane daemon（若有），B 仍可输入/输出；再次连接 A 创建新 session identity，不复用已关闭资源。断开操作必须显式携带 Host 身份。
 - `testPaneLeaveReleasesPaneButKeepsItsHostAndSiblingHostsConnected`：Pane Leave/切换只结束该 pane 控制/数据面；Host SSH bootstrap 及其它 Host 不断开。保留 `Phase9MoshLeaveTests` 对 captured daemon PID 先 TERM、再关闭本地 PTY 的断言。
