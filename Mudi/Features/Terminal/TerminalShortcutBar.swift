@@ -10,9 +10,9 @@ final class MudiTerminalShortcutBar: UIView {
     let onJumpTo: () -> Void
     private let materialView = UIView()
     let stackView = UIStackView()
-    let scrollView = UIScrollView()
+    let scrollView = MudiKeyScrollView()
     let pinnedStackView = UIStackView()
-    let dismissKeyboardButton = UIButton(type: .custom)
+    let dismissKeyboardButton = MudiKeyButton(type: .custom)
     let compositionLabel = UILabel()
     private var buttons: [UIButton] = []
     var shortcutButtons: [UIButton] = []
@@ -35,8 +35,18 @@ final class MudiTerminalShortcutBar: UIView {
     var activePopup: MudiShortcutPopup = .none
     var dpadLeadingConstraint: NSLayoutConstraint?
     var dpadBottomConstraint: NSLayoutConstraint?
-    private let fade = CAGradientLayer()
+    var dpadRelativePosition: CGPoint?
+    weak var dpadAnchorView: UIView?
+    var lastDPadSafeBounds = CGRect.zero
+    var composer: MudiComposerCard?
+    var composeRestoresTerminalFocus = false
+    var composeTargetLabel = "Terminal"
+    var preferredHeight: CGFloat { composer?.isHidden == false ? (composer?.preferredHeight ?? 80) + 16 : 48 }
+    let dividerView = UIView()
     private let topRule = UIView()
+    func updateBackdropForComposer(_ visible: Bool) {
+        materialView.isHidden = visible; topRule.isHidden = visible
+    }
 
     init(terminalView: ShellTerminalView, onJumpTo: @escaping () -> Void) {
         self.terminalView = terminalView
@@ -44,6 +54,9 @@ final class MudiTerminalShortcutBar: UIView {
         super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 48))
         accessibilityIdentifier = "terminal-shortcut-bar"
         setupView()
+        if let position = UserDefaults.standard.array(forKey: "dev.mudi.mobile.dpad-relative-position") as? [Double], position.count == 2 {
+            dpadRelativePosition = CGPoint(x: min(max(position[0], 0), 1), y: min(max(position[1], 0), 1))
+        }
         updateAppearance(background: .systemBackground, foreground: .label)
         updateModifierState()
         for name in [Notification.Name.terminalViewControlModifierReset, .terminalViewMetaModifierReset] {
@@ -58,10 +71,16 @@ final class MudiTerminalShortcutBar: UIView {
     deinit { NotificationCenter.default.removeObserver(self) }
     static let barSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 15, weight: .medium, scale: .medium)
     static func makeMaterialView() -> UIVisualEffectView {
-        if #available(iOS 26.0, *) { return UIVisualEffectView(effect: UIGlassEffect()) }
-        return UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
+        if #available(iOS 26.0, *) {
+            let effect = UIGlassEffect()
+            effect.tintColor = MudiPalette.glassTintUI
+            return UIVisualEffectView(effect: effect)
+        }
+        let view = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
+        view.backgroundColor = MudiPalette.glassTintUI
+        return view
     }
-    override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: 48) }
+    override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: preferredHeight) }
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         if super.point(inside: point, with: event) { return true }
         return [comboPopup, dpadOverlay].contains { !$0.isHidden && $0.frame.contains(point) }
@@ -74,9 +93,9 @@ final class MudiTerminalShortcutBar: UIView {
         materialView.layer.cornerRadius = radius
         materialView.clipsToBounds = true
         topRule.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 1)
-        fade.frame = CGRect(x: scrollView.frame.maxX - 18, y: 4, width: 18, height: bounds.height - 8)
         refreshCapsuleModeForBoundsChange()
         reclampDPadAfterBoundsChange()
+        composer?.updateAvailableHeight()
     }
     override func traitCollectionDidChange(_ previous: UITraitCollection?) {
         super.traitCollectionDidChange(previous)
@@ -91,8 +110,6 @@ final class MudiTerminalShortcutBar: UIView {
         compositionLabel.textColor = foregroundColor
         compositionLabel.backgroundColor = normalBackgroundColor
         topRule.backgroundColor = MudiPalette.hairlineUI
-        fade.colors = [MudiPalette.sheetUI.withAlphaComponent(0).resolvedColor(with: traitCollection).cgColor,
-                       MudiPalette.sheetUI.resolvedColor(with: traitCollection).cgColor]
         buttons.forEach { style($0) }
     }
     private func setupView() {
@@ -121,8 +138,8 @@ final class MudiTerminalShortcutBar: UIView {
         addSubview(pinnedStackView)
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            scrollView.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            scrollView.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
             scrollView.trailingAnchor.constraint(equalTo: pinnedStackView.leadingAnchor, constant: -12),
             stackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
             stackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
@@ -140,14 +157,14 @@ final class MudiTerminalShortcutBar: UIView {
         hint.isUserInteractionEnabled = false; tab.addSubview(hint)
         controlButton = addButton(title: "Ctrl", identifier: "control", label: "Control modifier", action: #selector(toggleControl))
         dpadButton = addButton(icon: .move, identifier: "dpad", label: "Direction pad", action: #selector(toggleDPad))
+        addButton(icon: .compose, identifier: "compose", label: "Compose", action: #selector(openCompose))
         addButton(icon: .paste, identifier: "paste", label: "Paste", action: #selector(pasteClipboard))
         addButton(icon: .history, identifier: "history", label: "上一条历史", action: #selector(recallHistory))
-        addButton(icon: .compose, identifier: "compose", label: "Compose", action: #selector(openCompose))
         addButton(icon: .layers, identifier: "jump-to", label: "Jump To", action: #selector(jumpToPanes), pinned: true)
         configure(dismissKeyboardButton, icon: .keyboardHide, title: nil, identifier: "dismiss-keyboard", label: "Keyboard", action: #selector(toggleKeyboard))
         pinnedStackView.addArrangedSubview(dismissKeyboardButton)
         buttons.append(dismissKeyboardButton)
-        let divider = UIView()
+        let divider = dividerView
         divider.backgroundColor = MudiPalette.borderUI
         divider.translatesAutoresizingMaskIntoConstraints = false
         addSubview(divider)
@@ -155,13 +172,11 @@ final class MudiTerminalShortcutBar: UIView {
             divider.widthAnchor.constraint(equalToConstant: 1), divider.heightAnchor.constraint(equalToConstant: 20),
             divider.centerYAnchor.constraint(equalTo: centerYAnchor), divider.trailingAnchor.constraint(equalTo: pinnedStackView.leadingAnchor, constant: -6)
         ])
-        fade.startPoint = CGPoint(x: 0, y: 0.5); fade.endPoint = CGPoint(x: 1, y: 0.5)
-        layer.addSublayer(fade)
         addCompositionLabel()
         addOverlays()
     }
     @discardableResult private func addButton(icon: MudiIcon? = nil, title: String? = nil, identifier: String, label: String, action: Selector, pinned: Bool = false) -> UIButton {
-        let button = UIButton(type: .custom)
+        let button = MudiKeyButton(type: .custom)
         configure(button, icon: icon, title: title, identifier: identifier, label: label, action: action)
         (pinned ? pinnedStackView : stackView).addArrangedSubview(button)
         buttons.append(button); shortcutButtons.append(button)
@@ -171,13 +186,12 @@ final class MudiTerminalShortcutBar: UIView {
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setImage(icon?.uiImage, for: .normal)
         button.setTitle(title, for: .normal)
-        button.titleLabel?.font = MudiTypography.uiFont(14, weight: .medium)
+        button.titleLabel?.font = MudiTypography.uiFont(14, weight: .medium, compatibleWith: traitCollection)
         button.accessibilityIdentifier = "terminal-shortcut-" + identifier
         button.accessibilityLabel = label
         button.addTarget(self, action: action, for: .touchUpInside)
-        let width = button.widthAnchor.constraint(equalToConstant: title == nil ? 36 : 40)
-        width.priority = .defaultHigh
-        NSLayoutConstraint.activate([width, button.heightAnchor.constraint(equalToConstant: 34)])
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
+        button.heightAnchor.constraint(equalToConstant: 44).isActive = true
         style(button)
     }
     private func addOverlays() {
@@ -191,7 +205,7 @@ final class MudiTerminalShortcutBar: UIView {
             comboPopup.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             comboPopup.bottomAnchor.constraint(equalTo: topAnchor, constant: -8),
             comboPopup.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
-            leading, bottom, dpadOverlay.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8)
+            leading, bottom
         ])
         dpadOverlay.dragHandle.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(handleDPadDrag(_:))))
     }

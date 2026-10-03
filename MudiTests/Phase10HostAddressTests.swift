@@ -403,6 +403,8 @@ final class Phase10HostAddressTests: XCTestCase {  // pi-lens-ignore: type_body_
         }
 
         await connector.waitUntilStarted(addresses[0])
+        await clock.waitUntilSleepScheduled(at: .seconds(2))
+        await clock.waitUntilSleepScheduled(at: .seconds(30))
         await clock.advance(by: .seconds(1.9))
         let startsBeforeFailure = await connector.startedAddresses()
         XCTAssertEqual(startsBeforeFailure, [addresses[0]])
@@ -437,8 +439,11 @@ final class Phase10HostAddressTests: XCTestCase {  // pi-lens-ignore: type_body_
         }
 
         await connector.waitUntilStarted(addresses[0])
+        await clock.waitUntilSleepScheduled(at: .seconds(2))
+        await clock.waitUntilSleepScheduled(at: .seconds(30))
         await clock.advance(by: .seconds(2))
         await connector.waitUntilStarted(addresses[1])
+        await clock.waitUntilSleepScheduled(at: .milliseconds(2500))
         await clock.advance(by: .milliseconds(500))
         await connector.waitUntilStarted(addresses[2])
         let startsAfterWindow = await connector.startedAddresses()
@@ -511,6 +516,8 @@ final class Phase10HostAddressTests: XCTestCase {  // pi-lens-ignore: type_body_
         }
 
         await connector.waitUntilStarted(addresses[0])
+        await clock.waitUntilSleepScheduled(at: .seconds(2))
+        await clock.waitUntilSleepScheduled(at: .seconds(30))
         await clock.advance(by: .seconds(2))
         await connector.waitUntilStarted(addresses[1])
         await clock.advance(by: .seconds(28))
@@ -546,6 +553,8 @@ final class Phase10HostAddressTests: XCTestCase {  // pi-lens-ignore: type_body_
         }
 
         await connector.waitUntilStarted(addresses[0])
+        await clock.waitUntilSleepScheduled(at: .seconds(2))
+        await clock.waitUntilSleepScheduled(at: .seconds(30))
         await clock.advance(by: .seconds(2))
         await connector.waitUntilStarted(addresses[1])
         await clock.advance(by: .seconds(28))
@@ -579,6 +588,8 @@ final class Phase10HostAddressTests: XCTestCase {  // pi-lens-ignore: type_body_
         }
 
         await connector.waitUntilStarted(addresses[0])
+        await clock.waitUntilSleepScheduled(at: .seconds(2))
+        await clock.waitUntilSleepScheduled(at: .seconds(30))
         await clock.advance(by: .seconds(2))
         await connector.waitUntilStarted(addresses[1])
         await connector.succeed(addresses[1])
@@ -611,6 +622,8 @@ final class Phase10HostAddressTests: XCTestCase {  // pi-lens-ignore: type_body_
         }
 
         await connector.waitUntilStarted(addresses[0])
+        await clock.waitUntilSleepScheduled(at: .seconds(2))
+        await clock.waitUntilSleepScheduled(at: .seconds(30))
         await clock.advance(by: .seconds(2))
         await connector.waitUntilStarted(addresses[1])
         await connector.succeed(addresses[1])
@@ -650,6 +663,8 @@ final class Phase10HostAddressTests: XCTestCase {  // pi-lens-ignore: type_body_
         }
 
         await connector.waitUntilStarted(addresses[0])
+        await clock.waitUntilSleepScheduled(at: .seconds(2))
+        await clock.waitUntilSleepScheduled(at: .seconds(30))
         await clock.advance(by: .seconds(2))
         await connector.waitUntilStarted(addresses[1])
         await connector.succeed(addresses[1])

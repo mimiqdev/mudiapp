@@ -115,3 +115,18 @@
 **用户反馈修正（2026-10-03）：** D-Pad 删除/清除角键采用与方向键相同的单层轮廓，取消额外虚线；拇指快捷弧全部保持等大，选中仅通过颜色和标签反馈。先跑红选中前后目标几何稳定测试，再移除放大；角键自定义与终端输入合同沿用现有覆盖。
 
 - 修正验证：Pro Max 相关 UI/交互/明暗渲染 20 项通过，Core 13 项通过；选中前后所有目标的可见位置与尺寸保持一致。结果 `/tmp/mudi-build/UIPolish-Uniform-Green.xcresult`，新截图 `/tmp/mudi-build/ui-preview-uniform/`。
+
+**Figma 原则 review 修复（2026-10-03）：** 用户确认修复 review 中的 7 项差距。以 Implementation Notes `172:2976` 与新版 Composer 明暗画面为准；Agent 工具继续暂缓。
+
+- Compose 改为键盘上方的实色 inline 卡片，取代快捷栏；原生 UITextView 自动增高至 6 行后内部滚动，保留中文输入及系统键盘能力。工具栏从左侧起始并可滚动，清空置末尾，听写入口与发送固定；超过 20 行先显示行数并要求第二次确认，修改正文后重新确认；原生长按菜单提供回车、括号粘贴和本地草稿选项。
+- D-Pad 以安全区域定位、保存相对位置，重新打开、旋转和窄窗口变化后重算边界；短窗口内方向键可以滚动。视觉轮廓沿用用户已确认的单层样式，拖动/锁定及快捷弧选中均不放大目标。
+- 快捷栏顺序为 Esc、Tab、Ctrl、D-Pad、Compose、Paste、History；普通快捷栏与 Composer 在可用宽度内滚动，Picker/键盘或听写/发送保持固定。按钮提供独立的至少 44pt 点击区域；可见图标沿用 Figma 原始尺寸。
+- UI 字体使用 Dynamic Type，主机地址、连接错误和 Pane 上下文允许换行；临时浮层沿用原生 Liquid Glass/旧系统 blur，并应用对应明暗模式的 tint、描边和阴影。
+- 新增红测覆盖 inline Compose 与长文确认、候选栏高度/网格预留、44pt 区域、快捷栏顺序、D-Pad 位置保存与短窗口边界、字体缩放、浅色浮层选中/取消后的轮廓，以及 Compose 在输入被阻止或 terminal 停止后释放键盘焦点。地址竞速旧测试补齐 fake clock 的计时器注册同步；D-Pad 拖动旧测试隔离已保存的位置，底部留白断言按设备布局策略计算。
+
+**本轮验证：**
+- `make test-core`：13 项通过；`/tmp/mudi-build/principles-core.log`。
+- iPhone 17 Pro Max / iOS 27 全量 XCTest：361 项通过、0 失败、0 跳过；`/tmp/mudi-build/UIPolish-Principles-Complete.xcresult`。
+- iPad Pro 11-inch (M5) / iOS 27 相关 UI、浮层、键盘空间、尺寸变化及交互回归：55 项通过、0 失败、0 跳过；`/tmp/mudi-build/UIPolish-Principles-iPadComplete.xcresult`。
+- 51 个原始 Figma SVG 编译尺寸检查通过；核对 19 张明暗/大字号渲染，另抓取 4 张包含真实系统键盘的 Pro Max Compose 屏幕。预览位于 `/tmp/mudi-build/ui-preview-principles/`。
+- 中文候选栏高度及短窗口边界通过注入几何验证；真实 Host、真机输入、系统听写与硬件键盘手工出口仍待验收。此记录不代表 Phase 10 手工出口完成。

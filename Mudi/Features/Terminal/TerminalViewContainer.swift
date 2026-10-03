@@ -96,6 +96,7 @@ struct TerminalViewContainer: UIViewRepresentable {
     let onInputFocusChange: ((Bool) -> Void)?
     let thumbArcPreferences: ThumbArcPreferences
     let onOpenPanePicker: (() -> Void)?
+    let composeTargetLabel: String
     let onError: (String) -> Void
     let onClosed: () -> Void
 
@@ -110,6 +111,7 @@ struct TerminalViewContainer: UIViewRepresentable {
         onInputFocusChange: ((Bool) -> Void)? = nil,
         thumbArcPreferences: ThumbArcPreferences = ThumbArcPreferences(),
         onOpenPanePicker: (() -> Void)? = nil,
+        composeTargetLabel: String = "Terminal",
         onClosed: @escaping () -> Void = {},
         onError: @escaping (String) -> Void
     ) {
@@ -123,6 +125,7 @@ struct TerminalViewContainer: UIViewRepresentable {
         self.onInputFocusChange = onInputFocusChange
         self.thumbArcPreferences = thumbArcPreferences
         self.onOpenPanePicker = onOpenPanePicker
+        self.composeTargetLabel = composeTargetLabel
         self.onError = onError
         self.onClosed = onClosed
     }
@@ -142,6 +145,7 @@ struct TerminalViewContainer: UIViewRepresentable {
         terminalView.shouldRestoreInputFocus = shouldRestoreInputFocus
         terminalView.onInputFocusChange = onInputFocusChange
         terminalView.onOpenPanePicker = onOpenPanePicker
+        terminalView.shortcutBar?.composeTargetLabel = composeTargetLabel
         terminalView.thumbArcPreferences = thumbArcPreferences
         let chromeView = TerminalChromeView(terminalView: terminalView)
         terminalView.start(
@@ -167,6 +171,7 @@ struct TerminalViewContainer: UIViewRepresentable {
         terminalView.shouldRestoreInputFocus = shouldRestoreInputFocus
         terminalView.onInputFocusChange = onInputFocusChange
         terminalView.onOpenPanePicker = onOpenPanePicker
+        terminalView.shortcutBar?.composeTargetLabel = composeTargetLabel
         terminalView.thumbArcPreferences = thumbArcPreferences
         terminalView.updateInputFocus(isAllowed: isInputFocusAllowed)
         terminalView.updateSession(
@@ -214,6 +219,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     /// Bottom pin for the persistent shortcut bar; managed by the
     /// TerminalPersistentShortcutBar extension.
     var shortcutBarBottomConstraint: NSLayoutConstraint?
+    var shortcutBarHeightConstraint: NSLayoutConstraint?
     /// Most recent keyboard frame from the keyboard notifications.
     var lastKeyboardFrameEnd: CGRect?
     private var outputTask: Task<Void, Never>?
@@ -323,9 +329,9 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     }
 
     func updateInputFocus(isAllowed: Bool) {
-        let wasAllowed = isInputFocusAllowed
         isInputFocusAllowed = isAllowed
-        guard !isAllowed, wasAllowed || isFirstResponder else { return }
+        guard !isAllowed else { return }
+        shortcutBar?.composer?.input.resignFirstResponder()
         _ = resignFirstResponder()
     }
 
@@ -611,6 +617,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         // implicit resign is teardown, not a user keyboard dismissal, so it
         // must not clear the remembered focus used for restoration.
         suppressFocusCallbacks = true
+        shortcutBar?.composer?.input.resignFirstResponder()
         outputTask?.cancel()
         outputTask = nil
         remoteScrollCapabilityTask?.cancel()

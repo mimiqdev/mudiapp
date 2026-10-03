@@ -75,6 +75,14 @@ final class UIPolishRenderTests: XCTestCase {
                 onDismiss: {}, onRefresh: {}, onCreateWorkspace: {}, isCreatingWorkspace: false,
                 onSelectPane: { _ in }, onSelectOrdinaryTerminal: {}, onAppear: {}
             ), style: style)
+            if style == .dark {
+                let longHost = Host(displayName: "研发与发布环境 · 长名称主机",
+                    hostname: "production-build-host.internal.example.com", username: "developer")
+                await capture("Hosts-LargeType", view: NavigationStack {
+                    HostListView(hosts: [longHost], connectionState: .idle, errorMessage: nil,
+                        onConnect: { _ in }, onReconnect: {}, onAdd: {}, onEdit: { _ in }, onDelete: { _ in })
+                }.environment(\.dynamicTypeSize, .accessibility3), style: style)
+            }
             await capture("ArcSettings-" + suffix, view: NavigationStack {
                 ThumbArcSettingsView(model: RootViewModel())
             }, style: style)
@@ -103,6 +111,18 @@ final class UIPolishRenderTests: XCTestCase {
             await harness.settle()
             attach("ThumbArc-" + suffix, image: harness.screenshot())
             overlay.cancel()
+            terminal.shortcutBar?.openCompose()
+            let card = try XCTUnwrap(terminal.shortcutBar?.composer)
+            card.setText("帮我检查终端布局：\n1. 中文输入与候选栏\n2. 多行内容保留\n3. 发送前可继续编辑")
+            await harness.settle()
+            attach("Composer-" + suffix, image: harness.screenshot())
+            await allowSimulatorCapture("Composer-" + suffix)
+            card.setText((1...42).map { "第 \($0) 行内容" }.joined(separator: "\n"))
+            card.sendButton.sendActions(for: .touchUpInside)
+            await harness.settle()
+            attach("ComposerConfirm-" + suffix, image: harness.screenshot())
+            await allowSimulatorCapture("ComposerConfirm-" + suffix)
+            terminal.shortcutBar?.closeCompose()
             harness.close()
         }
     }
@@ -118,6 +138,11 @@ final class UIPolishRenderTests: XCTestCase {
         attachment.name = "UIPolish-" + name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+    private func allowSimulatorCapture(_ name: String) async {
+        print("MUDI_SIM_CAPTURE: " + name)
+        fflush(stdout)
+        try? await Task.sleep(for: .seconds(2))
     }
 }
 

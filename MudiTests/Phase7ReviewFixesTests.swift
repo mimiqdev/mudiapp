@@ -48,8 +48,8 @@ final class Phase7ReviewFixesTests: XCTestCase {
         // The bar strip is reserved by shrinking the terminal view's frame:
         // the terminal must END exactly where the bar begins (never under
         // it), so SwiftTerm lays out rows only in the visible region.
-        let expectedReservation = ShellTerminalView.shortcutBarHeight
-            + MudiShortcutBarCapsulePolicy.phone.bottomMargin
+        let expectedReservation = bar.preferredHeight
+            + MudiShortcutBarCapsulePolicy.resolved(for: bar.traitCollection).bottomMargin
         XCTAssertEqual(
             terminalView.frame.maxY,
             chrome.bounds.height - expectedReservation,
@@ -78,7 +78,7 @@ final class Phase7ReviewFixesTests: XCTestCase {
             bar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             bar.topAnchor.constraint(equalTo: container.topAnchor),
-            bar.heightAnchor.constraint(equalToConstant: 44)
+            bar.heightAnchor.constraint(equalToConstant: 48)
         ])
         container.setNeedsLayout()
         container.layoutIfNeeded()
@@ -129,14 +129,17 @@ final class Phase7ReviewFixesTests: XCTestCase {
             "The combo popup must never cross the container's trailing edge"
         )
         XCTAssertGreaterThanOrEqual(popup.frame.minX, 0)
+        let scroll = try XCTUnwrap(phase7Descendants(of: popup).compactMap { $0 as? UIScrollView }.first)
         for button in phase7Buttons(in: popup) {
+            scroll.scrollRectToVisible(button.convert(button.bounds, to: scroll), animated: false)
+            popup.layoutIfNeeded()
             XCTAssertGreaterThan(
                 button.bounds.width,
                 0,
                 "\(button.accessibilityLabel ?? "combo") must stay visible"
             )
             XCTAssertLessThanOrEqual(
-                button.frame.maxX,
+                button.convert(button.bounds, to: popup).maxX,
                 popup.bounds.width + 0.5
             )
         }

@@ -249,8 +249,8 @@ final class Phase7DeviceFeedbackRound3Tests: XCTestCase {
         )
         XCTAssertLessThanOrEqual(
             overlay.frame.height,
-            190,
-            "The Figma D-pad includes three 46pt rows and its drag handle"
+            206,
+            "Three 46pt key rows and an independent 44pt handle target remain compact"
         )
     }
 }

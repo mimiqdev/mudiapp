@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 @MainActor
@@ -8,55 +7,48 @@ extension MudiTerminalShortcutBar {
         send([0x1b, 0x5b, 0x5a])
     }
     @objc func recallHistory() { handle(.cursorUp) }
-    func sendComposedText(_ text: String) {
+    func sendComposedText(_ text: String, bracketedPaste: Bool = true, appendReturn: Bool = false) {
         guard !text.isEmpty else { return }
-        let payload = terminalView?.getTerminal().bracketedPasteMode == true
-            ? "\u{1b}[200~\(text)\u{1b}[201~" : text
+        let bracket = bracketedPaste && terminalView?.getTerminal().bracketedPasteMode == true
+        let payload = (bracket ? "\u{1b}[200~\(text)\u{1b}[201~" : text) + (appendReturn ? "\r" : "")
         send(Array(payload.utf8))
     }
     @objc func openCompose() {
-        guard let terminalView, terminalView.isInputFocusAllowed,
-              var presenter = window?.rootViewController else { return }
-        while let presented = presenter.presentedViewController { presenter = presented }
-        let restoreFocus = terminalView.isFirstResponder
-        _ = terminalView.resignFirstResponder()
-        let controller = UIHostingController(rootView: MudiComposeView(onSend: { [weak self] text in
-            self?.sendComposedText(text)
-        }, onDismiss: { [weak terminalView] in
-            guard restoreFocus, let terminalView, terminalView.isInputFocusAllowed else { return }
-            _ = terminalView.becomeFirstResponder()
-        }))
-        if let sheet = controller.sheetPresentationController {
-            sheet.detents = [.medium(), .large()]
-            sheet.prefersGrabberVisible = true
+        guard let terminalView, terminalView.isInputFocusAllowed else { return }
+        if composer?.isHidden == false { composer?.input.becomeFirstResponder(); return }
+        composeRestoresTerminalFocus = terminalView.isFirstResponder
+        if composer == nil {
+            let card = MudiComposerCard(bar: self)
+            card.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(card)
+            NSLayoutConstraint.activate([
+                card.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+                card.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+                card.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+                card.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8)
+            ])
+            composer = card
         }
-        presenter.present(controller, animated: true)
+        activePopup = .none; clearModifiers()
+        composer?.isHidden = false
+        composer?.prepareForOpening(target: composeTargetLabel)
+        setComposerChromeVisible(true)
+        composer?.input.becomeFirstResponder()
     }
-}
-
-struct MudiComposeView: View {
-    let onSend: (String) -> Void
-    var onDismiss: () -> Void = {}
-    @Environment(\.dismiss) private var dismiss
-    @State private var text = ""
-    @FocusState private var focused: Bool
-    var body: some View {
-        NavigationStack {
-            TextEditor(text: $text)
-                .font(MudiTypography.body()).foregroundStyle(MudiPalette.ink)
-                .scrollContentBackground(.hidden)
-                .padding(16).background(MudiPalette.canvas)
-                .focused($focused).accessibilityIdentifier("terminal-compose-input")
-                .navigationTitle("Compose").navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("发送") { onSend(text); dismiss() }
-                            .buttonStyle(MudiPillStyle(filled: true)).disabled(text.isEmpty)
-                            .accessibilityIdentifier("terminal-compose-send")
-                    }
-                }
-                .onAppear { focused = true }
-        }.tint(MudiPalette.ink).onDisappear(perform: onDismiss)
+    func closeCompose() {
+        composer?.input.resignFirstResponder()
+        composer?.isHidden = true
+        setComposerChromeVisible(false)
+        if composeRestoresTerminalFocus, terminalView?.isInputFocusAllowed == true {
+            terminalView?.becomeFirstResponder()
+        }
+    }
+    private func setComposerChromeVisible(_ visible: Bool) {
+        scrollView.isHidden = visible; pinnedStackView.isHidden = visible
+        dividerView.isHidden = visible; compositionLabel.isHidden = true
+        updateBackdropForComposer(visible)
+        invalidateIntrinsicContentSize()
+        terminalView?.updateShortcutBarOffset()
+        setNeedsLayout()
     }
 }

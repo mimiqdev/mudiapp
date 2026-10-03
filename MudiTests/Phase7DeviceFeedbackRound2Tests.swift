@@ -11,6 +11,10 @@ import XCTest
 @MainActor
 final class Phase7DeviceFeedbackRound2Tests: XCTestCase {
     func testDPadOverlayPopsAboveBarNearDirectionButton() throws {
+        let key = "dev.mudi.mobile.dpad-relative-position"
+        let saved = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { if let saved { UserDefaults.standard.set(saved, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) } }
         let fixture = try makeBarFixture(width: 390)
         defer { fixture.teardown() }
 
@@ -32,13 +36,17 @@ final class Phase7DeviceFeedbackRound2Tests: XCTestCase {
             "The D-pad card must float above the shortcut bar"
         )
         XCTAssertLessThanOrEqual(
-            abs(overlay.frame.minX - dpadButton.frame.minX),
+            abs(overlay.frame.minX - dpadButton.convert(dpadButton.bounds, to: fixture.bar).minX),
             24,
             "The D-pad card must pop up near the direction button"
         )
     }
 
     func testDPadDragTracksFingerDirection() throws {
+        let key = "dev.mudi.mobile.dpad-relative-position"
+        let saved = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { if let saved { UserDefaults.standard.set(saved, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) } }
         let fixture = try makeBarFixture(width: 390)
         defer { fixture.teardown() }
 
@@ -91,7 +99,7 @@ final class Phase7DeviceFeedbackRound2Tests: XCTestCase {
         controlButton.sendActions(for: .touchUpInside)
         XCTAssertTrue(controlButton.isSelected)
         XCTAssertEqual(
-            controlButton.backgroundColor?.resolvedColor(with: bar.traitCollection),
+            (controlButton as? MudiKeyButton)?.cap.backgroundColor?.resolvedColor(with: bar.traitCollection),
             MudiPalette.inkUI.resolvedColor(with: bar.traitCollection),
             "Latched Ctrl uses the Figma filled keycap"
         )
@@ -107,7 +115,7 @@ final class Phase7DeviceFeedbackRound2Tests: XCTestCase {
 
         dpadButton.sendActions(for: .touchUpInside)
         XCTAssertTrue(dpadButton.isSelected)
-        XCTAssertEqual(dpadButton.backgroundColor?.resolvedColor(with: bar.traitCollection), MudiPalette.inkUI.resolvedColor(with: bar.traitCollection))
+        XCTAssertEqual((dpadButton as? MudiKeyButton)?.cap.backgroundColor?.resolvedColor(with: bar.traitCollection), MudiPalette.inkUI.resolvedColor(with: bar.traitCollection))
         XCTAssertEqual(dpadButton.tintColor.resolvedColor(with: bar.traitCollection), MudiPalette.canvasUI.resolvedColor(with: bar.traitCollection))
 
         dpadButton.sendActions(for: .touchUpInside)
@@ -138,9 +146,12 @@ final class Phase7DeviceFeedbackRound2Tests: XCTestCase {
         let heights = Set(buttons.map { $0.bounds.height })
         XCTAssertEqual(
             heights,
-            [34],
-            "All bar buttons must share one uniform frame height"
+            [44],
+            "All independent button targets must share a 44pt frame height"
         )
+        for button in buttons {
+            XCTAssertEqual(try XCTUnwrap(button as? MudiKeyButton).cap.bounds.height, 34, accuracy: 0.1)
+        }
     }
 
     @MainActor

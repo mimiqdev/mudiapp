@@ -218,6 +218,7 @@ struct HostListView: View {
                     MudiIcon.ellipsis.image
                         .frame(width: 30, height: 30)
                         .background(MudiPalette.raised, in: Circle())
+                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
                 }
                 .accessibilityLabel("主机操作")
             } else if state == .idle {
@@ -328,11 +329,11 @@ private struct HostRow: View {
             let port = target?.effectivePort(defaultPort: host.port) ?? host.port
             Text("\(address)\(port == 22 ? "" : ":\(port)")\(host.addresses.count > 1 && !isConnecting ? " +\(host.addresses.count - 1)" : "") · \(transportTitle)")
                 .font(MudiTypography.mono()).foregroundStyle(isFailed ? MudiPalette.red : MudiPalette.mute)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
             if let raceProgress, let detail = raceProgress.detailText(defaultPort: host.port) {
-                Text(detail).font(MudiTypography.mono(11)).foregroundStyle(MudiPalette.mute).lineLimit(2)
+                Text(detail).font(MudiTypography.mono(11)).foregroundStyle(MudiPalette.mute).fixedSize(horizontal: false, vertical: true)
             } else if let raceFailure, let detail = HostAddressRaceProgress.failed(outcomes: raceFailure).detailText(defaultPort: host.port) {
-                Text(detail).font(MudiTypography.body(11)).foregroundStyle(MudiPalette.red).lineLimit(3)
+                Text(detail).font(MudiTypography.body(11)).foregroundStyle(MudiPalette.red).fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

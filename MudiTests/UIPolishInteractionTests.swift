@@ -6,6 +6,164 @@ import XCTest
 
 @MainActor
 final class UIPolishInteractionTests: XCTestCase {
+    func testComposerReplacesBarAndRequiresConfirmationForChangedLongText() throws {
+        let defaults = UserDefaults.standard, key = "dev.mudi.mobile.composer-records"
+        let saved = defaults.object(forKey: key)
+        defer { if let saved { defaults.set(saved, forKey: key) } else { defaults.removeObject(forKey: key) } }
+        let terminal = ShellTerminalView(frame: .zero)
+        defer { terminal.stop() }
+        let recorder = Phase7TerminalInputRecorder()
+        terminal.terminalDelegate = recorder
+        terminal.feed(text: "\u{1b}[?2004h")
+        let bar = try XCTUnwrap(terminal.shortcutBar)
+        bar.frame = CGRect(x: 0, y: 0, width: 390, height: 48)
+        bar.openCompose()
+        let input = try XCTUnwrap(phase7View(with: "terminal-compose-input", in: bar) as? UITextView,
+                                 "Composer must be inline in the shortcut bar")
+        let send = try XCTUnwrap(phase7View(with: "terminal-compose-send", in: bar) as? UIButton)
+        let text = (1...21).map { "line \($0)" }.joined(separator: "\n")
+        input.text = text
+        input.delegate?.textViewDidChange?(input)
+        send.sendActions(for: .touchUpInside)
+        XCTAssertTrue(recorder.sentBytes.isEmpty)
+        XCTAssertTrue(send.title(for: .normal)?.contains("21") == true)
+        input.text = text + " edited"
+        input.delegate?.textViewDidChange?(input)
+        send.sendActions(for: .touchUpInside)
+        XCTAssertTrue(recorder.sentBytes.isEmpty, "Editing must invalidate the previous confirmation")
+        send.sendActions(for: .touchUpInside)
+        XCTAssertEqual(recorder.sentBytes, [Array("\u{1b}[200~\(text) edited\u{1b}[201~\r".utf8)])
+    }
+
+    func testInlineComposerRidesCandidateHeightAndRestoresScrollableBar() async throws {
+        let terminal = ShellTerminalView(frame: .zero)
+        let chrome = TerminalChromeView(terminalView: terminal)
+        let harness = Phase7TerminalViewHarness(terminalView: terminal, chromeView: chrome)
+        defer { terminal.stop(); harness.close() }
+        let bar = try XCTUnwrap(terminal.shortcutBar)
+        harness.window.layoutIfNeeded()
+        bar.openCompose()
+        let card = try XCTUnwrap(bar.composer)
+        card.setText((1...30).map { "第 \($0) 行：中文输入与自动增高" }.joined(separator: "\n"))
+        for height in [300.0, 348.0] {
+            let end = CGRect(x: 0, y: harness.window.bounds.maxY - height, width: harness.window.bounds.width, height: height)
+            terminal.updateShortcutBarOffset(keyboardFrameEnd: end)
+            harness.window.layoutIfNeeded()
+            XCTAssertEqual(bar.frame.maxY, chrome.convert(end, from: nil).minY, accuracy: 0.5)
+            XCTAssertLessThanOrEqual(card.input.bounds.height, (card.input.font?.lineHeight ?? 22) * 6 + 8.5)
+            XCTAssertTrue(card.input.isScrollEnabled)
+            XCTAssertEqual(chrome.reservedBottom, chrome.bounds.maxY - bar.frame.minY, accuracy: 0.5)
+        }
+        card.toolbarScroll.setContentOffset(CGPoint(x: 80, y: 0), animated: false)
+        bar.closeCompose()
+        bar.openCompose()
+        XCTAssertEqual(card.toolbarScroll.contentOffset.x, 0, accuracy: 0.1)
+        XCTAssertEqual(try XCTUnwrap(card.toolbarScroll.subviews.compactMap { $0 as? UIStackView }.first)
+            .arrangedSubviews.last?.accessibilityIdentifier, "terminal-compose-clear")
+        bar.closeCompose()
+        terminal.updateShortcutBarOffset(keyboardFrameEnd: CGRect(x: 0, y: harness.window.bounds.maxY, width: 390, height: 0))
+        harness.window.layoutIfNeeded()
+        XCTAssertEqual(bar.bounds.height, 48, accuracy: 0.5)
+        XCTAssertFalse(bar.scrollView.isHidden)
+    }
+
+    func testInlineComposerYieldsFocusWhenTerminalInputIsBlocked() throws {
+        let terminal = ShellTerminalView(frame: .zero)
+        let chrome = TerminalChromeView(terminalView: terminal)
+        let harness = Phase7TerminalViewHarness(terminalView: terminal, chromeView: chrome)
+        defer { terminal.stop(); harness.close() }
+        let bar = try XCTUnwrap(terminal.shortcutBar)
+        harness.window.layoutIfNeeded()
+        bar.openCompose()
+        let input = try XCTUnwrap(bar.composer?.input)
+        XCTAssertTrue(input.isFirstResponder)
+        terminal.updateInputFocus(isAllowed: false)
+        XCTAssertFalse(input.isFirstResponder, "Hidden or blocked terminal must release Composer keyboard focus")
+        terminal.updateInputFocus(isAllowed: true)
+        bar.openCompose()
+        XCTAssertTrue(input.isFirstResponder)
+        terminal.stop()
+        XCTAssertFalse(input.isFirstResponder, "Terminal teardown must release Composer input")
+    }
+
+    func testShortcutOrderAndControlsHaveIndependent44PointTargets() throws {
+        let terminal = ShellTerminalView(frame: .zero)
+        defer { terminal.stop() }
+        let bar = try XCTUnwrap(terminal.shortcutBar)
+        bar.frame = CGRect(x: 0, y: 0, width: 320, height: 48)
+        bar.layoutIfNeeded()
+        XCTAssertEqual(bar.stackView.arrangedSubviews.compactMap(\.accessibilityIdentifier).filter { $0.hasPrefix("terminal-shortcut-") },
+                       ["escape", "tab", "control", "dpad", "compose", "paste", "history"].map { "terminal-shortcut-" + $0 })
+        for button in bar.shortcutButtons + [bar.dismissKeyboardButton] {
+            XCTAssertGreaterThanOrEqual(button.bounds.width, 44)
+            XCTAssertGreaterThanOrEqual(button.bounds.height, 44)
+        }
+        bar.toggleControl()
+        for button in phase7Descendants(of: bar.comboPopup).compactMap({ $0 as? UIButton }) {
+            XCTAssertGreaterThanOrEqual(button.bounds.width, 44)
+            XCTAssertGreaterThanOrEqual(button.bounds.height, 44)
+        }
+        bar.toggleDPad()
+        let lock = try XCTUnwrap(phase7View(with: "terminal-dpad-lock", in: bar))
+        XCTAssertGreaterThanOrEqual(lock.bounds.width, 44)
+        XCTAssertGreaterThanOrEqual(lock.bounds.height, 44)
+    }
+
+    func testDPadRetainsMovedPositionAndStaysInsideShortContainer() throws {
+        let defaults = UserDefaults.standard
+        let key = "dev.mudi.mobile.dpad-relative-position"
+        let saved = defaults.object(forKey: key)
+        defaults.removeObject(forKey: key)
+        defer { if let saved { defaults.set(saved, forKey: key) } else { defaults.removeObject(forKey: key) } }
+        let terminal = ShellTerminalView(frame: .zero)
+        defer { terminal.stop() }
+        let bar = try XCTUnwrap(terminal.shortcutBar)
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 440, height: 650))
+        container.addSubview(bar)
+        bar.frame = CGRect(x: 0, y: 602, width: 440, height: 48)
+        bar.toggleDPad()
+        bar.moveDPadOverlay(translation: CGPoint(x: 40, y: -100))
+        bar.layoutIfNeeded()
+        let moved = bar.dpadOverlay.frame
+        bar.toggleDPad()
+        bar.toggleDPad()
+        bar.layoutIfNeeded()
+        XCTAssertEqual(bar.dpadOverlay.frame, moved, "Reopening must preserve the dragged position")
+        container.bounds.size = CGSize(width: 650, height: 240)
+        bar.frame = CGRect(x: 0, y: 192, width: 650, height: 48)
+        bar.setNeedsLayout(); bar.layoutIfNeeded()
+        let frame = bar.dpadOverlay.convert(bar.dpadOverlay.bounds, to: container)
+        XCTAssertTrue(container.bounds.contains(frame), "Rotation must bring the whole D-Pad into the safe container")
+        XCTAssertLessThanOrEqual(frame.maxY, bar.frame.minY)
+    }
+
+    func testTypographyScalesWithAccessibilityContentSize() {
+        var normal: CGFloat = 0, enlarged: CGFloat = 0
+        UITraitCollection(preferredContentSizeCategory: .large).performAsCurrent {
+            normal = MudiTypography.uiFont(16).pointSize
+        }
+        UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge).performAsCurrent {
+            enlarged = MudiTypography.uiFont(16).pointSize
+        }
+        XCTAssertGreaterThan(enlarged, normal * 1.5)
+    }
+
+    func testLightFloatingArcUsesLightOutlineAndShadowWithoutResizing() throws {
+        let overlay = MudiThumbArcOverlay()
+        overlay.overrideUserInterfaceStyle = .light
+        overlay.frame = CGRect(x: 0, y: 0, width: 440, height: 650)
+        overlay.begin(origin: CGPoint(x: 330, y: 420), preferences: ThumbArcPreferences())
+        defer { overlay.cancel() }
+        let key = try XCTUnwrap(overlay.subviews.first { $0.accessibilityLabel?.contains(" · ") == true })
+        XCTAssertEqual(try XCTUnwrap(key.layer.borderColor).alpha, 0.10, accuracy: 0.001)
+        XCTAssertEqual(key.layer.shadowOpacity, 0.14, accuracy: 0.001)
+        XCTAssertEqual(key.bounds.size, CGSize(width: 42, height: 42))
+        overlay.select(at: CGPoint(x: key.frame.midX, y: key.frame.midY))
+        overlay.select(at: CGPoint(x: 330, y: 420))
+        XCTAssertEqual(try XCTUnwrap(key.layer.borderColor).alpha, 0.10, accuracy: 0.001,
+                       "Returning to origin must restore the light outline token")
+    }
+
     func testSearchMatchesRealHierarchyAndFilteringRetainsPaneIdentity() {
         let catalog = PanePickerCatalog(host: PreviewData.hosts[0], snapshot: PreviewData.snapshot)
         XCTAssertEqual(Set(catalog.matching(query: "QING", filter: .all).map(\.pane.id)), ["pane-agent", "pane-reviewer"])

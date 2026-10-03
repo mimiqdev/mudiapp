@@ -39,8 +39,8 @@ final class MudiThumbArcOverlay: UIView {
             let key = UIView(frame: CGRect(x: center.x - 21, y: center.y - 21, width: 42, height: 42))
             key.layer.cornerRadius = 21
             key.layer.borderWidth = 1
-            key.layer.borderColor = MudiPalette.inkUI.withAlphaComponent(0.22).resolvedColor(with: traitCollection).cgColor
-            key.layer.shadowColor = UIColor.black.cgColor; key.layer.shadowOpacity = 0.25; key.layer.shadowRadius = 8
+            key.layer.borderColor = MudiPalette.glassLineUI.resolvedColor(with: traitCollection).cgColor
+            key.layer.shadowColor = UIColor.black.cgColor; key.layer.shadowOpacity = MudiPalette.glassShadowOpacity(in: traitCollection); key.layer.shadowRadius = 8
             let glass = MudiTerminalShortcutBar.makeMaterialView()
             glass.frame = key.bounds; glass.layer.cornerRadius = 21; glass.clipsToBounds = true
             key.addSubview(glass)
@@ -70,7 +70,7 @@ final class MudiThumbArcOverlay: UIView {
             let selected = index == newIndex
             (key.subviews.first as? UIVisualEffectView)?.effect = selected ? nil : MudiTerminalShortcutBar.makeMaterialView().effect
             key.subviews.first?.backgroundColor = selected ? MudiPalette.sunsetUI : .clear
-            key.layer.borderColor = (selected ? MudiPalette.sunsetUI : MudiPalette.inkUI.withAlphaComponent(0.22)).resolvedColor(with: traitCollection).cgColor
+            key.layer.borderColor = (selected ? MudiPalette.sunsetUI : MudiPalette.glassLineUI).resolvedColor(with: traitCollection).cgColor
             for view in key.subviews.dropFirst() {
                 (view as? UILabel)?.textColor = selected ? MudiPalette.canvasUI : MudiPalette.inkUI
                 (view as? UIImageView)?.tintColor = selected ? MudiPalette.canvasUI : MudiPalette.inkUI

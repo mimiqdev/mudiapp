@@ -28,6 +28,13 @@ enum MudiPalette {
     static var hairlineUI: UIColor { adaptive(0x212327, 0xE6E6E1) }
     static var borderUI: UIColor { adaptive(0x2E3136, 0xD6D6D0) }
     static var sunsetUI: UIColor { adaptive(0xFF7A17, 0xC24A00) }
+    static var glassLineUI: UIColor {
+        UIColor { $0.userInterfaceStyle == .dark ? UIColor.white.withAlphaComponent(0.22) : UIColor(white: 0.04, alpha: 0.10) }
+    }
+    static var glassTintUI: UIColor {
+        UIColor { $0.userInterfaceStyle == .dark ? adaptive(0x26282C, 0xFFFFFF).resolvedColor(with: $0).withAlphaComponent(0.20) : UIColor.white.withAlphaComponent(0.10) }
+    }
+    static func glassShadowOpacity(in traits: UITraitCollection) -> Float { traits.userInterfaceStyle == .dark ? 0.45 : 0.14 }
 
     nonisolated static func adaptive(_ dark: UInt32, _ light: UInt32) -> UIColor {
         UIColor { traits in
@@ -62,7 +69,10 @@ enum MudiTypography {
         UISegmentedControl.appearance().selectedSegmentTintColor = MudiPalette.raisedUI
     }
 
-    static func uiFont(_ size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
+    static func uiFont(_ size: CGFloat, weight: UIFont.Weight = .regular, compatibleWith traits: UITraitCollection = .current) -> UIFont {
+        UIFontMetrics(forTextStyle: .body).scaledFont(for: baseFont(size, weight: weight), compatibleWith: traits)
+    }
+    static func baseFont(_ size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
         registerFonts()
         let traits = [UIFontDescriptor.TraitKey.weight: weight.rawValue]
         let fallback = UIFontDescriptor(fontAttributes: [.family: "Noto Sans SC", .traits: traits])
@@ -72,10 +82,12 @@ enum MudiTypography {
         return UIFont(descriptor: descriptor, size: size)
     }
     static func body(_ size: CGFloat = 16, weight: UIFont.Weight = .regular) -> Font {
-        Font(uiFont(size, weight: weight))
+        Font.custom(baseFont(size, weight: weight).fontName, size: size, relativeTo: .body)
+            .weight(weight >= .bold ? .bold : weight >= .semibold ? .semibold : weight >= .medium ? .medium : .regular)
     }
     static func mono(_ size: CGFloat = 13) -> Font {
-        Font(TerminalFontRegistry.font(familyName: TerminalFontRegistry.defaultFamilyName, pointSize: Double(size)) ?? UIFont.monospacedSystemFont(ofSize: size, weight: .regular))
+        let font = TerminalFontRegistry.font(familyName: TerminalFontRegistry.defaultFamilyName, pointSize: Double(size)) ?? UIFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        return Font.custom(font.fontName, size: size, relativeTo: .caption)
     }
 }
 
@@ -94,6 +106,9 @@ enum MudiIcon: String, CaseIterable {
     case unlock = "Unlock", backspace = "Backspace", clear = "Clear", enter = "Enter"
     case statusWaiting = "StatusWaiting", statusWorking = "StatusWorking", statusDone = "StatusDone"
     case statusIdle = "StatusIdle", statusFailed = "StatusFailed"
+    case composeClose = "ComposeClose", composeMove = "ComposeMove", composeHistory = "ComposeHistory"
+    case composeLayers = "ComposeLayers", composePlus = "ComposePlus", composeStar = "ComposeStar"
+    case composeTarget = "ComposeTarget", composeClear = "ComposeClear", composeMic = "ComposeMic", composeSend = "ComposeSend"
     var assetName: String { "Mudi" + rawValue }
     @MainActor var uiImage: UIImage? { UIImage(named: assetName)?.withRenderingMode(.alwaysTemplate) }
     @MainActor var image: Image { Image(assetName).renderingMode(.template) }
@@ -110,6 +125,7 @@ struct MudiRoundButton: View {
                 .frame(width: 36, height: 36)
                 .background(MudiPalette.surface, in: Circle())
                 .overlay(Circle().stroke(MudiPalette.border, lineWidth: 1))
+                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
@@ -127,6 +143,7 @@ struct MudiPillStyle: ButtonStyle {
             .frame(minHeight: 28)
             .background(filled ? MudiPalette.ink : .clear, in: Capsule())
             .overlay(Capsule().stroke(MudiPalette.ink, lineWidth: filled ? 0 : 1))
+            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
             .opacity(configuration.isPressed ? 0.65 : 1)
     }
 }

@@ -172,11 +172,13 @@ struct PanePickerView: View {
                         AccessibilityIdentifierBridge(identifier: "pane-picker-search").frame(width: 1, height: 1)
                     }
                 if !query.isEmpty {
-                    Button { query = "" } label: { MudiIcon.close.image }
-                        .accessibilityLabel("清除搜索").buttonStyle(.plain)
+                    Button { query = "" } label: {
+                        MudiIcon.close.image.frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("清除搜索").buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 12).frame(height: 38)
+            .padding(.horizontal, 12).frame(minHeight: 44)
             .background(MudiPalette.surface, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(MudiPalette.hairline, lineWidth: 1))
             ScrollView(.horizontal, showsIndicators: false) {
@@ -189,9 +191,10 @@ struct PanePickerView: View {
                                 Text("\(catalog.matching(query: query, filter: value).count)").font(MudiTypography.mono(12)).opacity(0.65)
                             }
                             .foregroundStyle(filter == value ? MudiPalette.canvas : MudiPalette.body)
-                            .padding(.horizontal, 10).frame(height: 30)
+                            .padding(.horizontal, 10).frame(minHeight: 30)
                             .background(filter == value ? MudiPalette.ink : .clear, in: Capsule())
                             .overlay(Capsule().stroke(filter == value ? .clear : MudiPalette.border, lineWidth: 1))
+                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("pane-picker-filter-\(value.rawValue)")
@@ -268,12 +271,12 @@ private struct MudiPaneRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(entry.pane.agent?.name ?? entry.pane.title).font(MudiTypography.body(16, weight: .semibold))
-                        .foregroundStyle(MudiPalette.ink).lineLimit(1)
+                        .foregroundStyle(MudiPalette.ink).fixedSize(horizontal: false, vertical: true)
                     if entry.pane.agent != nil {
-                        Text(entry.pane.title).font(MudiTypography.body(15)).foregroundStyle(MudiPalette.body).lineLimit(1)
+                        Text(entry.pane.title).font(MudiTypography.body(15)).foregroundStyle(MudiPalette.body).fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                Text(entry.context).font(MudiTypography.mono(12)).foregroundStyle(MudiPalette.mute).lineLimit(1)
+                Text(entry.context).font(MudiTypography.mono(12)).foregroundStyle(MudiPalette.mute).fixedSize(horizontal: false, vertical: true)
             }.frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 6) {
                 if isFavorite { MudiIcon.star.image.foregroundStyle(MudiPalette.mute) }

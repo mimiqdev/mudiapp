@@ -214,6 +214,7 @@ struct TerminalScreen: View {
                 onInputFocusChange: onInputFocusChange,
                 thumbArcPreferences: settingsModel.preferences.thumbArc,
                 onOpenPanePicker: onOpenPanePicker,
+                composeTargetLabel: subtitle ?? title,
                 onClosed: {
                     guard !isLeaving else { return }
                     terminalErrorState.clear()
@@ -293,7 +294,7 @@ struct TerminalScreen: View {
                             .foregroundStyle(MudiPalette.ink)
                         Text(subtitle ?? (host.displayName + " · " + (host.selectedTarget?.address ?? host.hostname)))
                             .font(MudiTypography.mono(11)).foregroundStyle(MudiPalette.mute).lineLimit(1)
-                    }.frame(width: 180, alignment: .leading)
+                    }.frame(maxWidth: 180, alignment: .leading)
                 }.fixedSize(horizontal: true, vertical: false)
             }.mudiToolbarBackground()
             ToolbarItem(placement: .topBarTrailing) {

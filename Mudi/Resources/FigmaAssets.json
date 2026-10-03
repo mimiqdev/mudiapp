@@ -326,5 +326,85 @@
     "name": "Keyboard",
     "width": "18",
     "height": "18"
+  },
+  {
+    "name": "ComposeClose",
+    "file": "12a3f.svg",
+    "variable": "imgIconComposeClose",
+    "source": "composer_multiline",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "name": "ComposeMove",
+    "file": "9efcb.svg",
+    "variable": "imgIconComposeMove",
+    "source": "composer_multiline",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "name": "ComposeHistory",
+    "file": "c8a34.svg",
+    "variable": "imgIconComposeHistory",
+    "source": "composer_multiline",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "name": "ComposeLayers",
+    "file": "bdc3e.svg",
+    "variable": "imgIconComposeLayers",
+    "source": "composer_multiline",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "name": "ComposePlus",
+    "file": "b6722.svg",
+    "variable": "imgIconComposePlus",
+    "source": "composer_multiline",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "name": "ComposeStar",
+    "file": "33c57.svg",
+    "variable": "imgIconComposeStar",
+    "source": "composer_multiline",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "name": "ComposeTarget",
+    "file": "9b068.svg",
+    "variable": "imgIconComposeTarget",
+    "source": "composer_multiline",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "name": "ComposeClear",
+    "file": "e1d0e.svg",
+    "variable": "imgIconComposeClear",
+    "source": "composer_multiline",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "name": "ComposeMic",
+    "file": "2b045.svg",
+    "variable": "imgIconComposeMic",
+    "source": "composer_multiline",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "name": "ComposeSend",
+    "file": "73ebc.svg",
+    "variable": "imgIconComposeSend",
+    "source": "composer_multiline",
+    "width": "17",
+    "height": "17"
   }
 ]

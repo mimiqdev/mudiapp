@@ -18,6 +18,7 @@ final class MudiControlComboPopup: UIView {
     var onCombo: ((UInt8) -> Void)?
     private var comboButtons: [UIButton] = []
     private let stackView = UIStackView()
+    private let scrollView = MudiKeyScrollView()
 
     init() {
         super.init(frame: .zero)
@@ -26,7 +27,7 @@ final class MudiControlComboPopup: UIView {
         backgroundColor = .clear
         layer.cornerRadius = 14
         layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.2
+        layer.shadowOpacity = MudiPalette.glassShadowOpacity(in: traitCollection)
         layer.shadowRadius = 6
         layer.shadowOffset = CGSize(width: 0, height: 2)
 
@@ -40,7 +41,9 @@ final class MudiControlComboPopup: UIView {
         stackView.axis = .horizontal
         stackView.alignment = .center
         stackView.spacing = 6
-        addSubview(stackView)
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scrollView)
+        scrollView.addSubview(stackView)
 
         for combo in Self.combos {
             stackView.addArrangedSubview(comboButton(for: combo))
@@ -51,20 +54,25 @@ final class MudiControlComboPopup: UIView {
             backdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
             backdrop.topAnchor.constraint(equalTo: topAnchor),
             backdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
-            stackView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            scrollView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            scrollView.heightAnchor.constraint(equalToConstant: 44),
+            stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             stackView.bottomAnchor.constraint(
-                equalTo: bottomAnchor,
-                constant: -8
+                equalTo: scrollView.contentLayoutGuide.bottomAnchor
             ),
             stackView.leadingAnchor.constraint(
-                equalTo: leadingAnchor,
-                constant: 8
+                equalTo: scrollView.contentLayoutGuide.leadingAnchor
             ),
             stackView.trailingAnchor.constraint(
-                equalTo: trailingAnchor,
-                constant: -8
+                equalTo: scrollView.contentLayoutGuide.trailingAnchor
             )
         ])
+        let width = widthAnchor.constraint(equalToConstant: 460)
+        width.priority = .defaultLow
+        width.isActive = true
     }
 
     required init?(coder: NSCoder) {
@@ -74,8 +82,9 @@ final class MudiControlComboPopup: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         for button in comboButtons {
-            button.layer.borderColor = MudiPalette.borderUI.resolvedColor(with: traitCollection).cgColor
+            (button as? MudiKeyButton)?.cap.layer.borderColor = MudiPalette.borderUI.resolvedColor(with: traitCollection).cgColor
         }
+        layer.shadowOpacity = MudiPalette.glassShadowOpacity(in: traitCollection)
         layer.shadowPath = UIBezierPath(
             roundedRect: bounds,
             cornerRadius: layer.cornerRadius
@@ -83,32 +92,27 @@ final class MudiControlComboPopup: UIView {
     }
 
     private func comboButton(for combo: (label: String, byte: UInt8)) -> UIButton {
-        let button = UIButton(type: .system)
+        let button = MudiKeyButton(type: .custom)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle(combo.label, for: .normal)
-        button.titleLabel?.font = UIFont.monospacedSystemFont(
-            ofSize: 15,
-            weight: .semibold
-        )
+        button.titleLabel?.font = MudiTypography.uiFont(15, weight: .semibold)
         button.accessibilityLabel = combo.label
-        button.backgroundColor = MudiPalette.keyUI
+        button.cap.backgroundColor = MudiPalette.keyUI
         button.tintColor = MudiPalette.inkUI
-        button.layer.borderWidth = 1
-        button.layer.borderColor = MudiPalette.borderUI.cgColor
-        button.layer.cornerRadius = 6
+        button.cap.layer.borderWidth = 1
+        button.cap.layer.borderColor = MudiPalette.borderUI.cgColor
+        button.cap.layer.cornerRadius = 6
         button.addTarget(
             self,
             action: #selector(comboTapped(_:)),
             for: .touchUpInside
         )
-        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 24).isActive = true
-        let preferredWidth = button.widthAnchor.constraint(equalToConstant: 32)
-        // Preferred 32pt cap but compressible: on narrow layouts the popup
-        // is capped at the bar's trailing edge, so the caps shrink evenly
-        // instead of pushing the rightmost one past the container.
+        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        let preferredWidth = button.widthAnchor.constraint(equalToConstant: 44)
+        // Keep every target 44pt; the popup scrolls within the bar's width.
         preferredWidth.priority = .defaultHigh
         preferredWidth.isActive = true
-        button.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 44).isActive = true
         comboButtons.append(button)
         return button
     }
@@ -148,6 +152,13 @@ final class MudiTerminalDPadOverlay: UIView {
     var isDragging = false { didSet { updateHandle() } }
     private var cornerCommands: [Command]
     private var cornerButtons: [UIButton] = []
+    private var maximumHeight: NSLayoutConstraint!
+    private weak var handleGlass: UIVisualEffectView?
+    @discardableResult func setMaximumHeight(_ height: CGFloat) -> Bool {
+        guard abs(maximumHeight.constant - height) > 0.5 else { return false }
+        maximumHeight.constant = height
+        return true
+    }
 
     init() {
         cornerCommands = ["left", "right"].enumerated().map { index, side in
@@ -166,6 +177,25 @@ final class MudiTerminalDPadOverlay: UIView {
         addSubview(content)
         setupHandle()
         content.addArrangedSubview(dragHandle)
+        let keyScroll = UIScrollView()
+        keyScroll.translatesAutoresizingMaskIntoConstraints = false
+        keyScroll.showsVerticalScrollIndicator = false
+        let grid = UIStackView()
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        grid.axis = .vertical; grid.spacing = 8
+        keyScroll.addSubview(grid)
+        content.addArrangedSubview(keyScroll)
+        let preferredHeight = keyScroll.heightAnchor.constraint(equalToConstant: 154)
+        preferredHeight.priority = .defaultHigh
+        maximumHeight = heightAnchor.constraint(lessThanOrEqualToConstant: 206)
+        NSLayoutConstraint.activate([
+            maximumHeight, preferredHeight, keyScroll.widthAnchor.constraint(equalToConstant: 150),
+            grid.leadingAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.leadingAnchor),
+            grid.trailingAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.trailingAnchor),
+            grid.topAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.topAnchor),
+            grid.bottomAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.bottomAnchor),
+            grid.widthAnchor.constraint(equalTo: keyScroll.frameLayoutGuide.widthAnchor)
+        ])
         let rows: [[Command?]] = [[cornerCommands[0], .cursorUp, cornerCommands[1]], [.cursorLeft, .enter, .cursorRight], [nil, .cursorDown, nil]]
         for (rowIndex, row) in rows.enumerated() {
             let stack = UIStackView()
@@ -187,7 +217,7 @@ final class MudiTerminalDPadOverlay: UIView {
                     stack.addArrangedSubview(spacer)
                 }
             }
-            content.addArrangedSubview(stack)
+            grid.addArrangedSubview(stack)
         }
         NSLayoutConstraint.activate([
             content.topAnchor.constraint(equalTo: topAnchor), content.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -199,7 +229,7 @@ final class MudiTerminalDPadOverlay: UIView {
         super.layoutSubviews()
         updateHandle()
         for button in subviews.flatMap({ view in allButtons(in: view) }) {
-            button.layer.borderColor = MudiPalette.inkUI.withAlphaComponent(0.22).resolvedColor(with: traitCollection).cgColor
+            button.layer.borderColor = MudiPalette.glassLineUI.resolvedColor(with: traitCollection).cgColor
         }
     }
     private func allButtons(in view: UIView) -> [UIButton] {
@@ -208,12 +238,13 @@ final class MudiTerminalDPadOverlay: UIView {
     private func setupHandle() {
         dragHandle.translatesAutoresizingMaskIntoConstraints = false
         let glass = MudiTerminalShortcutBar.makeMaterialView()
+        handleGlass = glass
         glass.translatesAutoresizingMaskIntoConstraints = false
         glass.isUserInteractionEnabled = false
         glass.layer.cornerRadius = 12; glass.clipsToBounds = true
         dragHandle.addSubview(glass)
         dragHandle.layer.cornerRadius = 12
-        dragHandle.layer.borderWidth = 1
+        glass.layer.borderWidth = 1
         let grip = UIView()
         grip.backgroundColor = MudiPalette.muteUI; grip.layer.cornerRadius = 1.5
         grip.translatesAutoresizingMaskIntoConstraints = false
@@ -225,14 +256,14 @@ final class MudiTerminalDPadOverlay: UIView {
         lockButton.addTarget(self, action: #selector(toggleLock), for: .touchUpInside)
         dragHandle.addSubview(lockButton)
         NSLayoutConstraint.activate([
-            dragHandle.widthAnchor.constraint(equalToConstant: 64), dragHandle.heightAnchor.constraint(equalToConstant: 24),
-            glass.leadingAnchor.constraint(equalTo: dragHandle.leadingAnchor), glass.trailingAnchor.constraint(equalTo: dragHandle.trailingAnchor),
-            glass.topAnchor.constraint(equalTo: dragHandle.topAnchor), glass.bottomAnchor.constraint(equalTo: dragHandle.bottomAnchor),
+            dragHandle.widthAnchor.constraint(equalToConstant: 84), dragHandle.heightAnchor.constraint(equalToConstant: 44),
+            glass.leadingAnchor.constraint(equalTo: dragHandle.leadingAnchor, constant: 10), glass.trailingAnchor.constraint(equalTo: dragHandle.trailingAnchor, constant: -10),
+            glass.centerYAnchor.constraint(equalTo: dragHandle.centerYAnchor), glass.heightAnchor.constraint(equalToConstant: 24),
             grip.leadingAnchor.constraint(equalTo: dragHandle.leadingAnchor, constant: 12), grip.centerYAnchor.constraint(equalTo: dragHandle.centerYAnchor),
             grip.widthAnchor.constraint(equalToConstant: 18), grip.heightAnchor.constraint(equalToConstant: 3),
             lockButton.trailingAnchor.constraint(equalTo: dragHandle.trailingAnchor, constant: -4),
             lockButton.topAnchor.constraint(equalTo: dragHandle.topAnchor), lockButton.bottomAnchor.constraint(equalTo: dragHandle.bottomAnchor),
-            lockButton.widthAnchor.constraint(equalToConstant: 28)
+            lockButton.widthAnchor.constraint(equalToConstant: 44)
         ])
         updateHandle()
     }
@@ -245,7 +276,7 @@ final class MudiTerminalDPadOverlay: UIView {
     }
     private func updateHandle() {
         lockButton.tintColor = isLocked ? MudiPalette.sunsetUI : MudiPalette.muteUI
-        dragHandle.layer.borderColor = (isDragging && !isLocked ? MudiPalette.sunsetUI : MudiPalette.inkUI.withAlphaComponent(0.22)).resolvedColor(with: traitCollection).cgColor
+        handleGlass?.layer.borderColor = (isDragging && !isLocked ? MudiPalette.sunsetUI : MudiPalette.glassLineUI).resolvedColor(with: traitCollection).cgColor
     }
     private func makeButton(_ command: Command, corner: Bool) -> UIButton {
         let button = UIButton(type: .custom)
@@ -258,7 +289,7 @@ final class MudiTerminalDPadOverlay: UIView {
         if command == .enter { glass.effect = nil; glass.backgroundColor = MudiPalette.inkUI }
         button.tintColor = command == .enter ? MudiPalette.canvasUI : MudiPalette.inkUI
         button.layer.borderWidth = 1
-        button.layer.borderColor = MudiPalette.inkUI.withAlphaComponent(0.22).cgColor
+        button.layer.borderColor = MudiPalette.glassLineUI.cgColor
         let identifier: String
         switch command {
         case .cursorUp: identifier = "up"
