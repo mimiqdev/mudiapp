@@ -200,9 +200,6 @@ final class MudiTerminalDPadOverlay: UIView {
         updateHandle()
         for button in subviews.flatMap({ view in allButtons(in: view) }) {
             button.layer.borderColor = MudiPalette.inkUI.withAlphaComponent(0.22).resolvedColor(with: traitCollection).cgColor
-            for shape in (button.layer.sublayers ?? []).compactMap({ $0 as? CAShapeLayer }) where shape.name == "corner-border" {
-                shape.strokeColor = MudiPalette.inkUI.withAlphaComponent(0.35).resolvedColor(with: traitCollection).cgColor
-            }
         }
     }
     private func allButtons(in view: UIView) -> [UIButton] {
@@ -286,14 +283,6 @@ final class MudiTerminalDPadOverlay: UIView {
             glass.leadingAnchor.constraint(equalTo: button.leadingAnchor), glass.trailingAnchor.constraint(equalTo: button.trailingAnchor),
             glass.topAnchor.constraint(equalTo: button.topAnchor), glass.bottomAnchor.constraint(equalTo: button.bottomAnchor)
         ])
-        if corner {
-            let border = CAShapeLayer()
-            border.name = "corner-border"; border.fillColor = UIColor.clear.cgColor
-            border.strokeColor = MudiPalette.inkUI.withAlphaComponent(0.35).cgColor
-            border.lineDashPattern = [3, 3]; border.lineWidth = 1
-            border.path = UIBezierPath(roundedRect: CGRect(x: 0.5, y: 0.5, width: 45, height: 45), cornerRadius: 15).cgPath
-            button.layer.addSublayer(border)
-        }
         return button
     }
     private func configureGlyph(_ button: UIButton, command: Command) {

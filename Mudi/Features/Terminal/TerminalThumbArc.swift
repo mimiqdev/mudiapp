@@ -75,7 +75,6 @@ final class MudiThumbArcOverlay: UIView {
                 (view as? UILabel)?.textColor = selected ? MudiPalette.canvasUI : MudiPalette.inkUI
                 (view as? UIImageView)?.tintColor = selected ? MudiPalette.canvasUI : MudiPalette.inkUI
             }
-            key.transform = selected && !UIAccessibility.isReduceMotionEnabled ? CGAffineTransform(scaleX: 1.16, y: 1.16) : .identity
         }
         guard let index = newIndex, let key = keys[safe: index] else { floatingLabel.isHidden = true; return }
         let action = preferences.actions[index]

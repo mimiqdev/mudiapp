@@ -61,6 +61,23 @@ final class UIPolishInteractionTests: XCTestCase {
         }
     }
 
+    func testArcSelectionKeepsTargetGeometryStable() {
+        let overlay = MudiThumbArcOverlay()
+        overlay.frame = CGRect(x: 0, y: 0, width: 440, height: 956)
+        let preferences = ThumbArcPreferences()
+        overlay.begin(origin: CGPoint(x: 330, y: 590), preferences: preferences)
+        defer { overlay.cancel() }
+        let keys = overlay.subviews.filter { $0.accessibilityLabel?.contains(" · ") == true }
+        XCTAssertEqual(keys.count, preferences.actions.count)
+        let frames = keys.map(\.frame)
+        for index in keys.indices {
+            overlay.select(at: CGPoint(x: frames[index].midX, y: frames[index].midY))
+            XCTAssertEqual(overlay.selectedIndex, index)
+            XCTAssertEqual(keys.map(\.frame), frames, "Selection must not enlarge or move any target")
+        }
+        XCTAssertEqual(overlay.finish(), preferences.actions.last)
+    }
+
     func testArcPreferenceSanitizationCapsSlotsAndKeepsUniqueActions() throws {
         let json = #"{"actions":["escape","escape","futureUnknownAction","controlC","shiftTab","cursorUp","paste","jumpTo","tab"]}"#
         let value = try JSONDecoder().decode(ThumbArcPreferences.self, from: Data(json.utf8))
