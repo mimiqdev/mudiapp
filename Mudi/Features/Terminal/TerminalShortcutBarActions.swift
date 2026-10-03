@@ -11,15 +11,15 @@ extension MudiTerminalShortcutBar {
         updateModifierState()
     }
 
-    /// Keyboard Shift-key behavior: the background stays untouched; the
-    /// glyph alone carries the accent tint while latched/active.
     func style(_ button: UIButton?) {
         guard let button else { return }
-        button.backgroundColor = .clear
-        button.tintColor = button.isSelected ? .systemBlue : foregroundColor
-        button.accessibilityTraits = button.isSelected
-            ? [.button, .selected]
-            : [.button]
+        button.backgroundColor = button.isSelected ? MudiPalette.inkUI : normalBackgroundColor
+        button.tintColor = button.isSelected ? MudiPalette.canvasUI : foregroundColor
+        button.setTitleColor(button.tintColor, for: .normal)
+        button.layer.cornerRadius = 9
+        button.layer.borderWidth = button.isSelected ? 0 : 1
+        button.layer.borderColor = MudiPalette.borderUI.resolvedColor(with: traitCollection).cgColor
+        button.accessibilityTraits = button.isSelected ? [.button, .selected] : [.button]
     }
 
     func updateModifierState() {
@@ -92,6 +92,14 @@ extension MudiTerminalShortcutBar {
             send(EscapeSequences.cmdPageUp)
         case .pageDown:
             send(EscapeSequences.cmdPageDown)
+        case .backspace:
+            send([0x7f])
+        case .clearScreen:
+            send([0x0c])
+        case .home:
+            send([0x1b, 0x5b, 0x48])
+        case .end:
+            send([0x1b, 0x5b, 0x46])
         }
     }
 
@@ -183,14 +191,7 @@ extension MudiTerminalShortcutBar {
     }
 
     func refreshKeyboardGlyph() {
-        let symbolName = isKeyboardVisible
-            ? "keyboard.chevron.compact.down"
-            : "keyboard"
-        dismissKeyboardButton.setImage(
-            UIImage(systemName: symbolName)?
-                .applyingSymbolConfiguration(Self.barSymbolConfiguration),
-            for: .normal
-        )
+        dismissKeyboardButton.setImage((isKeyboardVisible ? MudiIcon.keyboardHide : .keyboard).uiImage, for: .normal)
         dismissKeyboardButton.accessibilityLabel = isKeyboardVisible
             ? "Hide keyboard"
             : "Show keyboard"

@@ -94,6 +94,7 @@ struct TerminalViewContainer: UIViewRepresentable {
     let isInputFocusAllowed: Bool
     let shouldRestoreInputFocus: Bool
     let onInputFocusChange: ((Bool) -> Void)?
+    let thumbArcPreferences: ThumbArcPreferences
     let onOpenPanePicker: (() -> Void)?
     let onError: (String) -> Void
     let onClosed: () -> Void
@@ -107,6 +108,7 @@ struct TerminalViewContainer: UIViewRepresentable {
         isInputFocusAllowed: Bool = true,
         shouldRestoreInputFocus: Bool = false,
         onInputFocusChange: ((Bool) -> Void)? = nil,
+        thumbArcPreferences: ThumbArcPreferences = ThumbArcPreferences(),
         onOpenPanePicker: (() -> Void)? = nil,
         onClosed: @escaping () -> Void = {},
         onError: @escaping (String) -> Void
@@ -119,6 +121,7 @@ struct TerminalViewContainer: UIViewRepresentable {
         self.isInputFocusAllowed = isInputFocusAllowed
         self.shouldRestoreInputFocus = shouldRestoreInputFocus
         self.onInputFocusChange = onInputFocusChange
+        self.thumbArcPreferences = thumbArcPreferences
         self.onOpenPanePicker = onOpenPanePicker
         self.onError = onError
         self.onClosed = onClosed
@@ -139,6 +142,7 @@ struct TerminalViewContainer: UIViewRepresentable {
         terminalView.shouldRestoreInputFocus = shouldRestoreInputFocus
         terminalView.onInputFocusChange = onInputFocusChange
         terminalView.onOpenPanePicker = onOpenPanePicker
+        terminalView.thumbArcPreferences = thumbArcPreferences
         let chromeView = TerminalChromeView(terminalView: terminalView)
         terminalView.start(
             session: session,
@@ -163,6 +167,7 @@ struct TerminalViewContainer: UIViewRepresentable {
         terminalView.shouldRestoreInputFocus = shouldRestoreInputFocus
         terminalView.onInputFocusChange = onInputFocusChange
         terminalView.onOpenPanePicker = onOpenPanePicker
+        terminalView.thumbArcPreferences = thumbArcPreferences
         terminalView.updateInputFocus(isAllowed: isInputFocusAllowed)
         terminalView.updateSession(
             session: session,
@@ -193,6 +198,9 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     }()
     /// Invoked by the shortcut bar's Jump To button; wired to the pane
     /// picker callback owned by the hosting screen.
+    var thumbArcPreferences = ThumbArcPreferences()
+    let thumbArcOverlay = MudiThumbArcOverlay()
+    var thumbArcRecognizer: UILongPressGestureRecognizer?
     var onOpenPanePicker: (() -> Void)?
     private(set) var isInputFocusAllowed = true
     /// Mirrors UIKit's own state restoration: when the terminal had keyboard
@@ -250,6 +258,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
         // accessory must not come back when the keyboard appears.
         inputAccessoryView = nil
         installKeyboardFrameObserver()
+        installThumbArcGesture()
     }
 
     required init?(coder: NSCoder) {
@@ -597,6 +606,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     }
 
     func stop() {
+        thumbArcOverlay.cancel()
         // UIKit resigns first responder when the view leaves the window. That
         // implicit resign is teardown, not a user keyboard dismissal, so it
         // must not clear the remembered focus used for restoration.

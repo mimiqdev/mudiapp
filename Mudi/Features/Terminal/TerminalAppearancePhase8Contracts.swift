@@ -101,16 +101,16 @@ enum TerminalThemeRegistry {
             family: "Mudi Default",
             variant: .light,
             palette: ThemePalette(values: [
-                "#000000", "#c23621", "#25bc24", "#adad27",
+                "#0a0a0a", "#c4281c", "#17803b", "#c24a00",
                 "#492ee1", "#d338d3", "#33bbc8", "#cbcccd",
                 "#818383", "#fc391f", "#31e722", "#eaec23",
                 "#5833ff", "#f935f8", "#14f0f0", "#e9ebeb",
-                "#000000", "#ffffff", "#000000", "#000000", "#00a6b2",
+                "#0a0a0a", "#fafaf7", "#0a0a0a", "#0a0a0a", "#e6e6e1",
             ]),
             source: TerminalThemeSource(
                 repositoryURL: "https://github.com/migueldeicaza/SwiftTerm",
                 license: "MIT",
-                attribution: "Mudi's default light surfaces plus SwiftTerm's official terminalAppColors palette."
+                attribution: "Mudi Figma light UI palette with SwiftTerm terminalAppColors for the remaining ANSI anchors."
             )
         ),
         makeTheme(
@@ -118,16 +118,16 @@ enum TerminalThemeRegistry {
             family: "Mudi Default",
             variant: .dark,
             palette: ThemePalette(values: [
-                "#000000", "#c23621", "#25bc24", "#adad27",
+                "#0a0a0a", "#f0524f", "#3fb950", "#ff7a17",
                 "#492ee1", "#d338d3", "#33bbc8", "#cbcccd",
                 "#818383", "#fc391f", "#31e722", "#eaec23",
                 "#5833ff", "#f935f8", "#14f0f0", "#e9ebeb",
-                "#e9ebeb", "#000000", "#e9ebeb", "#e9ebeb", "#00a6b2",
+                "#ffffff", "#0a0a0a", "#ffffff", "#ffffff", "#26282c",
             ]),
             source: TerminalThemeSource(
                 repositoryURL: "https://github.com/migueldeicaza/SwiftTerm",
                 license: "MIT",
-                attribution: "Mudi's default dark surfaces plus SwiftTerm's official terminalAppColors palette."
+                attribution: "Mudi Figma dark UI palette with SwiftTerm terminalAppColors for the remaining ANSI anchors."
             )
         ),
         makeTheme(

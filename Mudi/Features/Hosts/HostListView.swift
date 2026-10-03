@@ -115,200 +115,147 @@ struct HostListView: View {
     }
 
     var body: some View {
-        Group {
+        List {
             if hosts.isEmpty {
                 ContentUnavailableView {
-                    Label("No Saved Hosts", systemImage: "externaldrive")
+                    Label("添加第一台主机", systemImage: "server.rack")
                 } description: {
-                    Text("Save an SSH host to connect without filling in the form again.")
+                    Text("保存 SSH 地址，随时进入你的终端。")
                 } actions: {
-                    Button("Add Host", systemImage: "plus", action: onAdd)
+                    Button("添加主机", action: onAdd).buttonStyle(MudiPillStyle(filled: true))
                 }
+                .listRowBackground(Color.clear)
             } else {
-                List {
+                Section {
                     ForEach(hosts) { host in
-                        let presentation = HostRowConnectionPresentation.resolve(
-                            state: HostRowConnectionState.resolve(
-                                host: host,
-                                connectingHostID: connectingHostID,
-                                failedHostID: failedHostID,
-                                stateOwnerHostID: stateOwnerHostID,
-                                connectionState: connectionState
-                            ),
-                            showsCancel: showsConnectCancel
-                        )
-                        HStack(spacing: 10) {
-                            Button {
-                                onConnect(host)
-                            } label: {
-                                HostRow(
-                                    host: host,
-                                    displayedAddress: host.id == connectingHostID
-                                        ? connectingAddress
-                                        : nil,
-                                    raceProgress: host.id == connectingHostID
-                                        ? addressRaceProgress
-                                        : nil,
-                                    raceFailure: host.id == failedHostID
-                                        ? addressRaceFailure
-                                        : nil,
-                                    showsChevron: presentation.state == .idle
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(!presentation.canConnect)
-                            .accessibilityIdentifier(
-                                "host-connect-\(host.id.uuidString)"
-                            )
-                            .overlay(alignment: .topLeading) {
-                                AccessibilityIdentifierBridge(
-                                    identifier: "host-connect-\(host.id.uuidString)",
-                                    action: { onConnect(host) }
-                                )
-                                .frame(width: 1, height: 1)
-                            }
-
-                            // The indeterminate progress view is the row's
-                            // visible connecting animation; it is present
-                            // exactly while the attempt is published.
-                            if presentation.showsProgress {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .accessibilityIdentifier(
-                                        "host-connecting-\(host.id.uuidString)"
-                                    )
-                                    .overlay(alignment: .topLeading) {
-                                        AccessibilityIdentifierBridge(
-                                            identifier: "host-connecting-\(host.id.uuidString)"
-                                        )
-                                        .frame(width: 1, height: 1)
-                                    }
-                            }
-
-                            // The cancel affordance is revealed only after
-                            // the attempt outlives the threshold.
-                            if presentation.showsCancel {
-                                Button(
-                                    "Cancel",
-                                    role: .cancel,
-                                    action: onCancelConnect
-                                )
-                                .buttonStyle(.bordered)
-                                .accessibilityIdentifier(
-                                    "host-cancel-\(host.id.uuidString)"
-                                )
-                                .overlay(alignment: .topLeading) {
-                                    AccessibilityIdentifierBridge(
-                                        identifier: "host-cancel-\(host.id.uuidString)",
-                                        action: onCancelConnect
-                                    )
-                                    .frame(width: 1, height: 1)
-                                }
-                            }
-
-                            // The result states replace the former global
-                            // banner: connected and a genuine failure both
-                            // render on the owning row; a deliberate leave
-                            // presents idle.
-                            if presentation.showsConnected {
-                                stateIndicator(
-                                    systemImage: "checkmark.circle.fill",
-                                    tint: .green,
-                                    label: "Connected",
-                                    identifier: "host-connected-\(host.id.uuidString)"
-                                )
-                            }
-
-                            if presentation.showsFailure {
-                                stateIndicator(
-                                    systemImage: "exclamationmark.triangle.fill",
-                                    tint: .red,
-                                    label: "Connection failed",
-                                    identifier: "host-failed-\(host.id.uuidString)"
-                                )
-                            }
-
-                            // The old banner owned Reconnect; the row keeps
-                            // that retry path for a genuine failure.
-                            if presentation.showsRetry {
-                                Button("Retry", action: onReconnect)
-                                    .buttonStyle(.bordered)
-                                    .accessibilityIdentifier(
-                                        "host-retry-\(host.id.uuidString)"
-                                    )
-                                    .overlay(alignment: .topLeading) {
-                                        AccessibilityIdentifierBridge(
-                                            identifier: "host-retry-\(host.id.uuidString)",
-                                            action: onReconnect
-                                        )
-                                        .frame(width: 1, height: 1)
-                                    }
-                            }
-                        }
-                        .contextMenu {
-                            Button("Edit", systemImage: "pencil") {
-                                onEdit(host)
-                            }
-                            Button("Delete", systemImage: "trash", role: .destructive) {
-                                onDelete(host)
-                            }
-                        }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            let actions = HostListActionPolicy.current
-                                .swipeActionDescriptors(
-                                    for: host,
-                                    onEdit: onEdit,
-                                    onDelete: onDelete
-                                )
-                            ForEach(actions, id: \.action) { action in
-                                Button(
-                                    action.title,
-                                    systemImage: action.systemImage,
-                                    role: action.role,
-                                    action: action.perform
-                                )
-                            }
-                        }
+                        hostRow(host)
+                            .mudiRow()
+                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 14))
                     }
+                } header: {
+                    MudiSectionHeader(title: "已保存", count: hosts.count)
                 }
             }
         }
-        .navigationTitle("Hosts")
+        .mudiGroupedList()
+        .navigationTitle("主机")
+        .navigationBarTitleDisplayMode(.large)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button("Settings", systemImage: "gearshape", action: onSettings)
-                Button("Add Host", systemImage: "plus", action: onAdd)
-            }
+            ToolbarItem(placement: .topBarTrailing) {
+                HStack(spacing: 8) {
+                    MudiRoundButton(icon: .plus, label: "添加主机", action: onAdd)
+                    MudiRoundButton(icon: .settings, label: "设置", action: onSettings)
+                }.fixedSize()
+            }.mudiToolbarBackground()
         }
         .safeAreaInset(edge: .bottom) {
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote)
-                    .foregroundStyle(.red)
+                    .font(MudiTypography.body(12))
+                    .foregroundStyle(MudiPalette.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-                    .background(.thinMaterial)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(MudiPalette.canvas)
                     .accessibilityIdentifier("ssh-connection-error")
             }
         }
     }
 
-    @ViewBuilder
-    private func stateIndicator(
-        systemImage: String,
-        tint: Color,
-        label: String,
-        identifier: String
-    ) -> some View {
-        Image(systemName: systemImage)
-            .foregroundStyle(tint)
-            .accessibilityLabel(label)
-            .accessibilityIdentifier(identifier)
+    private func hostRow(_ host: Host) -> some View {
+        let state = HostRowConnectionState.resolve(
+            host: host, connectingHostID: connectingHostID,
+            failedHostID: failedHostID, stateOwnerHostID: stateOwnerHostID,
+            connectionState: connectionState
+        )
+        let presentation = HostRowConnectionPresentation.resolve(state: state, showsCancel: showsConnectCancel)
+        return HStack(spacing: 12) {
+            status(presentation, host: host)
+                .frame(width: 16, height: 16)
+            Button { if presentation.canConnect { onConnect(host) } } label: {
+                HostRow(
+                    host: host,
+                    displayedAddress: host.id == stateOwnerHostID || host.id == connectingHostID ? connectingAddress : nil,
+                    raceProgress: host.id == connectingHostID ? addressRaceProgress : nil,
+                    raceFailure: host.id == failedHostID ? addressRaceFailure : nil,
+                    isConnecting: presentation.isConnecting,
+                    isFailed: presentation.showsFailure
+                )
+            }
+            .buttonStyle(.plain)
+            .allowsHitTesting(presentation.canConnect)
+            .accessibilityIdentifier("host-connect-\(host.id.uuidString)")
             .overlay(alignment: .topLeading) {
-                AccessibilityIdentifierBridge(identifier: identifier)
+                AccessibilityIdentifierBridge(identifier: "host-connect-\(host.id.uuidString)", action: { if presentation.canConnect { onConnect(host) } })
                     .frame(width: 1, height: 1)
             }
+            if presentation.showsCancel {
+                Button("取消", role: .cancel, action: onCancelConnect)
+                    .buttonStyle(MudiPillStyle())
+                    .accessibilityIdentifier("host-cancel-\(host.id.uuidString)")
+                    .overlay(alignment: .topLeading) {
+                        AccessibilityIdentifierBridge(identifier: "host-cancel-\(host.id.uuidString)", action: onCancelConnect)
+                            .frame(width: 1, height: 1)
+                    }
+            } else if presentation.showsRetry {
+                Button(action: onReconnect) {
+                    HStack(spacing: 5) { MudiIcon.retry.image; Text("重试") }
+                }
+                .buttonStyle(MudiPillStyle())
+                .accessibilityIdentifier("host-retry-\(host.id.uuidString)")
+                .overlay(alignment: .topLeading) {
+                    AccessibilityIdentifierBridge(identifier: "host-retry-\(host.id.uuidString)", action: onReconnect)
+                        .frame(width: 1, height: 1)
+                }
+            } else if presentation.showsConnected {
+                Text("已连接").font(MudiTypography.body(13)).foregroundStyle(MudiPalette.green)
+                Menu {
+                    Button("进入会话") { onConnect(host) }
+                    Button("编辑主机", systemImage: "pencil") { onEdit(host) }
+                    Button("删除主机", systemImage: "trash", role: .destructive) { onDelete(host) }
+                } label: {
+                    MudiIcon.ellipsis.image
+                        .frame(width: 30, height: 30)
+                        .background(MudiPalette.raised, in: Circle())
+                }
+                .accessibilityLabel("主机操作")
+            } else if state == .idle {
+                MudiIcon.chevronRight.image.foregroundStyle(MudiPalette.dim)
+            }
+        }
+        .frame(minHeight: 62)
+        .contextMenu {
+            Button("编辑主机", systemImage: "pencil") { onEdit(host) }
+            Button("删除主机", systemImage: "trash", role: .destructive) { onDelete(host) }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            ForEach(HostListActionPolicy.current.swipeActionDescriptors(for: host, onEdit: onEdit, onDelete: onDelete), id: \.action) { action in
+                Button(action.title, systemImage: action.systemImage, role: action.role, action: action.perform)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func status(_ presentation: HostRowConnectionPresentation, host: Host) -> some View {
+        if presentation.showsProgress {
+            ProgressView().controlSize(.small).tint(MudiPalette.ink)
+                .accessibilityIdentifier("host-connecting-\(host.id.uuidString)")
+                .overlay {
+                    AccessibilityIdentifierBridge(identifier: "host-connecting-\(host.id.uuidString)").frame(width: 1, height: 1)
+                }
+        } else {
+            let icon: MudiIcon = presentation.showsConnected ? .statusWorking : presentation.showsFailure ? .statusFailed : .statusIdle
+            icon.image
+                .foregroundStyle(presentation.showsConnected ? MudiPalette.green : presentation.showsFailure ? MudiPalette.red : MudiPalette.mute)
+                .accessibilityLabel(presentation.showsConnected ? "Connected" : presentation.showsFailure ? "Connection failed" : "Not connected")
+                .overlay {
+                    if presentation.showsConnected || presentation.showsFailure {
+                        AccessibilityIdentifierBridge(identifier: "host-\(presentation.showsConnected ? "connected" : "failed")-\(host.id.uuidString)")
+                            .frame(width: 1, height: 1)
+                    }
+                }
+        }
     }
 }
 
@@ -364,65 +311,40 @@ private struct HostRow: View {
     let displayedAddress: HostAddress?
     let raceProgress: HostAddressRaceProgress?
     let raceFailure: [HostAddressAttemptResult]?
-    var showsChevron = true
-
-    init(
-        host: Host,
-        displayedAddress: HostAddress? = nil,
-        raceProgress: HostAddressRaceProgress? = nil,
-        raceFailure: [HostAddressAttemptResult]? = nil,
-        showsChevron: Bool = true
-    ) {
-        self.host = host
-        self.displayedAddress = displayedAddress
-        self.raceProgress = raceProgress
-        self.raceFailure = raceFailure
-        self.showsChevron = showsChevron
-    }
+    let isConnecting: Bool
+    let isFailed: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "server.rack")
-                .foregroundStyle(.tint)
-                .imageScale(.large)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(host.displayName)
-                    .font(.headline)
-                let targetAddress = displayedAddress
-                    ?? host.selectedTarget
-                    ?? host.addresses.first
-                let address = targetAddress?.address ?? host.hostname
-                let port = targetAddress?.effectivePort(defaultPort: host.port)
-                    ?? host.port
-                Text("\(host.username)@\(address):\(port)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if let raceProgress,
-                   let detail = raceProgress.detailText(defaultPort: host.port) {
-                    Text(detail)
-                        .font(.caption2)
-                        .foregroundStyle(.tint)
-                        .lineLimit(2)
-                } else if let raceFailure,
-                          let detail = HostAddressRaceProgress
-                            .failed(outcomes: raceFailure)
-                            .detailText(defaultPort: host.port) {
-                    Text(detail)
-                        .font(.caption2)
-                        .foregroundStyle(.red)
-                        .lineLimit(3)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(host.displayName).font(MudiTypography.body(17, weight: .semibold))
+                if isConnecting {
+                    Text("连接中…").font(MudiTypography.body(13)).foregroundStyle(MudiPalette.mute)
                 }
             }
-
-            Spacer()
-            // The chevron yields its slot to the row's state accessory, so
-            // the trailing area keeps a stable width.
-            if showsChevron {
-                Image(systemName: "arrow.right")
-                    .foregroundStyle(.secondary)
+            .foregroundStyle(MudiPalette.ink)
+            let target = displayedAddress ?? host.selectedTarget ?? host.addresses.first
+            let address = target?.address ?? host.hostname
+            let port = target?.effectivePort(defaultPort: host.port) ?? host.port
+            Text("\(address)\(port == 22 ? "" : ":\(port)")\(host.addresses.count > 1 && !isConnecting ? " +\(host.addresses.count - 1)" : "") · \(transportTitle)")
+                .font(MudiTypography.mono()).foregroundStyle(isFailed ? MudiPalette.red : MudiPalette.mute)
+                .lineLimit(1)
+            if let raceProgress, let detail = raceProgress.detailText(defaultPort: host.port) {
+                Text(detail).font(MudiTypography.mono(11)).foregroundStyle(MudiPalette.mute).lineLimit(2)
+            } else if let raceFailure, let detail = HostAddressRaceProgress.failed(outcomes: raceFailure).detailText(defaultPort: host.port) {
+                Text(detail).font(MudiTypography.body(11)).foregroundStyle(MudiPalette.red).lineLimit(3)
             }
         }
-        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 11)
+        .opacity(isFailed ? 0.7 : 1)
+        .contentShape(Rectangle())
+    }
+    private var transportTitle: String {
+        switch host.preferredTransport {
+        case .automatic: "Auto"
+        case .mosh: "Mosh"
+        case .ssh: "SSH"
+        }
     }
 }

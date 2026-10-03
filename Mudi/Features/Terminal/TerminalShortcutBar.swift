@@ -1,365 +1,198 @@
 import UIKit
 @preconcurrency import SwiftTerm
 
-/// Which floating popup the shortcut bar currently shows. At most one is
-/// visible at a time: opening any popup replaces the previous one, and
-/// closing it returns the state to `.none`. Adding a future popup-style
-/// key only requires a new case - there is no pairwise exclusion logic.
-enum MudiShortcutPopup: Equatable {
-    case none
-    case ctrlCombo
-    case dPad
-}
+enum MudiShortcutPopup: Equatable { case none, ctrlCombo, dPad }
 
-/// Persistent, single-row, single-page terminal shortcut bar.
-///
-/// The bar is a plain view pinned above the bottom edge of the terminal's
-/// container (ShellTerminalView installs it and rides it above the keyboard
-/// frame); it is deliberately NOT a UIInputView any more — the system input
-/// material misbehaved with the floating overlays (ghost frames). The
-/// backdrop is Liquid Glass on iOS 26+ with an ultra-thin material fallback.
-/// The fixed seven-item model is Esc, Tab, Ctrl (latch), direction (D-pad),
-/// paste, Jump To, keyboard toggle.
+/// Scrollable terminal actions on the left; navigation and keyboard stay pinned.
 @MainActor
 final class MudiTerminalShortcutBar: UIView {
     weak var terminalView: ShellTerminalView?
     let onJumpTo: () -> Void
-    private let materialView: UIVisualEffectView
+    private let materialView = UIView()
     let stackView = UIStackView()
-    let dismissKeyboardButton = UIButton(type: .system)
+    let scrollView = UIScrollView()
+    let pinnedStackView = UIStackView()
+    let dismissKeyboardButton = UIButton(type: .custom)
     let compositionLabel = UILabel()
     private var buttons: [UIButton] = []
     var shortcutButtons: [UIButton] = []
     var isShowingComposition = false
-    static let rowSpacing: CGFloat = 6
+    static let rowSpacing: CGFloat = 5
     weak var controlButton: UIButton?
     weak var dpadButton: UIButton?
     let comboPopup = MudiControlComboPopup()
     let dpadOverlay = MudiTerminalDPadOverlay()
-    var foregroundColor = UIColor.label
-    var normalBackgroundColor = UIColor.secondarySystemFill
-    /// Last known keyboard visibility; drives the toggle glyph.
+    var foregroundColor = MudiPalette.inkUI
+    var normalBackgroundColor = MudiPalette.keyUI
     var isKeyboardVisible = false
-    /// iPad skips the IME composition strip entirely; iPhone keeps it.
-    /// Settable so the behavior stays testable on any device.
     var isCompositionStripSuppressed = UIDevice.current.userInterfaceIdiom == .pad
-    /// Resolved capsule geometry policy for the floating bar.
-    internal(set) var capsulePolicy: MudiShortcutBarCapsulePolicy?
+    var capsulePolicy: MudiShortcutBarCapsulePolicy?
     var capsuleLeadingConstraint: NSLayoutConstraint?
     var capsuleTrailingConstraint: NSLayoutConstraint?
     var capsuleCenterXConstraint: NSLayoutConstraint?
     var capsuleWidthConstraint: NSLayoutConstraint?
-    /// Whether the last applied capsule layout was the centered capped
-    /// mode; bounds changes re-evaluate it (mode-stickiness fix).
     var lastAppliedCapsuleCentered = false
-    /// Single source of truth for which popup is visible; applied to the
-    /// views by applyPopupState().
     var activePopup: MudiShortcutPopup = .none
     var dpadLeadingConstraint: NSLayoutConstraint?
     var dpadBottomConstraint: NSLayoutConstraint?
+    private let fade = CAGradientLayer()
+    private let topRule = UIView()
 
-    init(
-        terminalView: ShellTerminalView,
-        onJumpTo: @escaping () -> Void
-    ) {
+    init(terminalView: ShellTerminalView, onJumpTo: @escaping () -> Void) {
         self.terminalView = terminalView
         self.onJumpTo = onJumpTo
-        materialView = Self.makeMaterialView()
-        super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 44))
+        super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 48))
         accessibilityIdentifier = "terminal-shortcut-bar"
         setupView()
         updateAppearance(background: .systemBackground, foreground: .label)
         updateModifierState()
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(modifierDidReset(_:)),
-            name: .terminalViewControlModifierReset,
-            object: terminalView
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(modifierDidReset(_:)),
-            name: .terminalViewMetaModifierReset,
-            object: terminalView
-        )
+        for name in [Notification.Name.terminalViewControlModifierReset, .terminalViewMetaModifierReset] {
+            NotificationCenter.default.addObserver(self, selector: #selector(modifierDidReset(_:)), name: name, object: terminalView)
+        }
         installKeyboardGlyphObserver()
         refreshKeyboardGlyph()
-        comboPopup.onCombo = { [weak self] byte in
-            self?.send([byte])
-        }
-        dpadOverlay.onCommand = { [weak self] command in
-            self?.handle(command)
-        }
+        comboPopup.onCombo = { [weak self] in self?.send([$0]) }
+        dpadOverlay.onCommand = { [weak self] in self?.handle($0) }
     }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    /// One symbol configuration for every bar icon so all glyphs render
-    /// at the same size and weight.
-    static let barSymbolConfiguration = UIImage.SymbolConfiguration(
-        pointSize: 15,
-        weight: .semibold,
-        scale: .medium
-    )
-
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    deinit { NotificationCenter.default.removeObserver(self) }
+    static let barSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 15, weight: .medium, scale: .medium)
     static func makeMaterialView() -> UIVisualEffectView {
-        if #available(iOS 26.0, *) {
-            return UIVisualEffectView(effect: UIGlassEffect())
-        }
-        return UIVisualEffectView(
-            effect: UIBlurEffect(style: .systemUltraThinMaterial)
-        )
+        if #available(iOS 26.0, *) { return UIVisualEffectView(effect: UIGlassEffect()) }
+        return UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
     }
-
-    override var intrinsicContentSize: CGSize {
-        CGSize(width: UIView.noIntrinsicMetric, height: 44)
-    }
-
-    /// The floating popups live above the bar's own bounds, so the bar must
-    /// claim touches inside any visible overlay or UIKit's hit test stops
-    /// at the bounds check and the buttons never receive taps.
+    override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: 48) }
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         if super.point(inside: point, with: event) { return true }
-        for overlay in [comboPopup, dpadOverlay] where !overlay.isHidden {
-            if overlay.frame.contains(point) { return true }
-        }
-        return false
+        return [comboPopup, dpadOverlay].contains { !$0.isHidden && $0.frame.contains(point) }
     }
-
     override func layoutSubviews() {
         super.layoutSubviews()
-        // Fully rounded capsule ends; the shadow path follows the capsule.
-        let radius = bounds.height / 2
+        let radius = (capsulePolicy ?? MudiShortcutBarCapsulePolicy.resolved(for: traitCollection))
+            .capsuleLayout(containerWidth: superview?.bounds.width ?? bounds.width, barHeight: bounds.height).cornerRadius
         layer.cornerRadius = radius
         materialView.layer.cornerRadius = radius
         materialView.clipsToBounds = true
-        layer.shadowPath = UIBezierPath(
-            roundedRect: bounds,
-            cornerRadius: radius
-        ).cgPath
+        topRule.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 1)
+        fade.frame = CGRect(x: scrollView.frame.maxX - 18, y: 4, width: 18, height: bounds.height - 8)
         refreshCapsuleModeForBoundsChange()
         reclampDPadAfterBoundsChange()
     }
-
-    override func traitCollectionDidChange(
-        _ previousTraitCollection: UITraitCollection?
-    ) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        if traitCollection.horizontalSizeClass
-            != previousTraitCollection?.horizontalSizeClass {
-            applyCapsuleLayoutIfPossible()
-        }
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        if traitCollection.horizontalSizeClass != previous?.horizontalSizeClass { applyCapsuleLayoutIfPossible() }
+        updateAppearance(background: .systemBackground, foreground: .label)
     }
-}
-
-extension MudiTerminalShortcutBar {
     func updateAppearance(background: UIColor, foreground: UIColor) {
-        // The backdrop is Liquid Glass / material; it adapts to the content
-        // behind it, so the terminal palette only drives the accents.
         backgroundColor = .clear
-        foregroundColor = foreground
-        normalBackgroundColor = foreground.withAlphaComponent(0.14)
+        materialView.backgroundColor = MudiPalette.sheetUI
+        foregroundColor = MudiPalette.inkUI
+        normalBackgroundColor = MudiPalette.keyUI
         compositionLabel.textColor = foregroundColor
         compositionLabel.backgroundColor = normalBackgroundColor
-        for button in buttons {
-            button.tintColor = foregroundColor
-            style(button)
-        }
+        topRule.backgroundColor = MudiPalette.hairlineUI
+        fade.colors = [MudiPalette.sheetUI.withAlphaComponent(0).resolvedColor(with: traitCollection).cgColor,
+                       MudiPalette.sheetUI.resolvedColor(with: traitCollection).cgColor]
+        buttons.forEach { style($0) }
     }
-
     private func setupView() {
-        setupMaterial()
-        setupStack()
-        addShortcutButtons()
-        addCompositionLabel()
-        addDismissKeyboardButton()
-        addOverlays()
-    }
-
-    private func setupMaterial() {
+        materialView.accessibilityIdentifier = "terminal-shortcut-backdrop"
         materialView.translatesAutoresizingMaskIntoConstraints = false
-        layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.15
-        layer.shadowRadius = 8
-        layer.shadowOffset = CGSize(width: 0, height: 4)
         addSubview(materialView)
         NSLayoutConstraint.activate([
-            materialView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            materialView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            materialView.topAnchor.constraint(equalTo: topAnchor),
-            materialView.bottomAnchor.constraint(equalTo: bottomAnchor)
+            materialView.leadingAnchor.constraint(equalTo: leadingAnchor), materialView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            materialView.topAnchor.constraint(equalTo: topAnchor), materialView.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
-    }
-
-    private func setupStack() {
+        addSubview(topRule)
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.alwaysBounceHorizontal = false
+        scrollView.contentInsetAdjustmentBehavior = .never
+        addSubview(scrollView)
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .horizontal
         stackView.alignment = .center
         stackView.spacing = Self.rowSpacing
-
-        addSubview(stackView)
+        scrollView.addSubview(stackView)
+        pinnedStackView.translatesAutoresizingMaskIntoConstraints = false
+        pinnedStackView.axis = .horizontal
+        pinnedStackView.alignment = .center
+        pinnedStackView.spacing = 6
+        addSubview(pinnedStackView)
         NSLayoutConstraint.activate([
-            stackView.leadingAnchor.constraint(
-                equalTo: leadingAnchor,
-                constant: 8
-            ),
-            stackView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            stackView.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 4),
-            stackView.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -4)
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            scrollView.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            scrollView.trailingAnchor.constraint(equalTo: pinnedStackView.leadingAnchor, constant: -12),
+            stackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            stackView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
+            pinnedStackView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            pinnedStackView.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
-    }
-
-    private func addShortcutButtons() {
-        addButton(
-            symbolName: "escape",
-            identifier: "terminal-shortcut-escape",
-            label: "Escape",
-            action: #selector(sendEscape)
-        )
-        addButton(
-            symbolName: "arrow.right.to.line",
-            identifier: "terminal-shortcut-tab",
-            label: "Tab",
-            action: #selector(sendTab)
-        )
-        controlButton = addButton(
-            symbolName: "control",
-            identifier: "terminal-shortcut-control",
-            label: "Control modifier",
-            action: #selector(toggleControl)
-        )
-        dpadButton = addButton(
-            symbolName: "arrow.up.and.down.and.arrow.left.and.right",
-            identifier: "terminal-shortcut-dpad",
-            label: "Direction pad",
-            action: #selector(toggleDPad)
-        )
-        addButton(
-            symbolName: "doc.on.clipboard",
-            identifier: "terminal-shortcut-paste",
-            label: "Paste",
-            action: #selector(pasteClipboard)
-        )
-        addButton(
-            symbolName: "rectangle.stack",
-            identifier: "terminal-shortcut-jump-to",
-            label: "Jump To",
-            action: #selector(jumpToPanes)
-        )
-    }
-
-    private func addDismissKeyboardButton() {
-        dismissKeyboardButton.translatesAutoresizingMaskIntoConstraints = false
-        dismissKeyboardButton.setImage(
-            UIImage(systemName: "keyboard.chevron.compact.down")?
-                .applyingSymbolConfiguration(Self.barSymbolConfiguration),
-            for: .normal
-        )
-        dismissKeyboardButton.accessibilityIdentifier = "terminal-shortcut-dismiss-keyboard"
-        dismissKeyboardButton.accessibilityLabel = "Keyboard"
-        dismissKeyboardButton.addTarget(
-            self,
-            action: #selector(toggleKeyboard),
-            for: .touchUpInside
-        )
-        dismissKeyboardButton.layer.cornerRadius = 6
-        addSubview(dismissKeyboardButton)
+        addButton(title: "Esc", identifier: "escape", label: "Escape", action: #selector(sendEscape))
+        let tab = addButton(title: "Tab", identifier: "tab", label: "Tab · 长按反向 Tab", action: #selector(sendTab))
+        tab.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(reverseTab(_:))))
+        let hint = UILabel(frame: CGRect(x: 29, y: 0, width: 10, height: 11))
+        hint.text = "⇧"; hint.font = MudiTypography.uiFont(8); hint.textColor = MudiPalette.muteUI
+        hint.isUserInteractionEnabled = false; tab.addSubview(hint)
+        controlButton = addButton(title: "Ctrl", identifier: "control", label: "Control modifier", action: #selector(toggleControl))
+        dpadButton = addButton(icon: .move, identifier: "dpad", label: "Direction pad", action: #selector(toggleDPad))
+        addButton(icon: .paste, identifier: "paste", label: "Paste", action: #selector(pasteClipboard))
+        addButton(icon: .history, identifier: "history", label: "上一条历史", action: #selector(recallHistory))
+        addButton(icon: .compose, identifier: "compose", label: "Compose", action: #selector(openCompose))
+        addButton(icon: .layers, identifier: "jump-to", label: "Jump To", action: #selector(jumpToPanes), pinned: true)
+        configure(dismissKeyboardButton, icon: .keyboardHide, title: nil, identifier: "dismiss-keyboard", label: "Keyboard", action: #selector(toggleKeyboard))
+        pinnedStackView.addArrangedSubview(dismissKeyboardButton)
         buttons.append(dismissKeyboardButton)
-        let preferredDismissWidth = dismissKeyboardButton.widthAnchor.constraint(
-            equalToConstant: 40
-        )
-        preferredDismissWidth.priority = .defaultHigh
+        let divider = UIView()
+        divider.backgroundColor = MudiPalette.borderUI
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(divider)
         NSLayoutConstraint.activate([
-            dismissKeyboardButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            dismissKeyboardButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            preferredDismissWidth,
-            dismissKeyboardButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 24),
-            dismissKeyboardButton.heightAnchor.constraint(equalToConstant: 32),
-            stackView.trailingAnchor.constraint(
-                lessThanOrEqualTo: dismissKeyboardButton.leadingAnchor,
-                constant: -6
-            )
+            divider.widthAnchor.constraint(equalToConstant: 1), divider.heightAnchor.constraint(equalToConstant: 20),
+            divider.centerYAnchor.constraint(equalTo: centerYAnchor), divider.trailingAnchor.constraint(equalTo: pinnedStackView.leadingAnchor, constant: -6)
         ])
-        style(dismissKeyboardButton)
+        fade.startPoint = CGPoint(x: 0, y: 0.5); fade.endPoint = CGPoint(x: 1, y: 0.5)
+        layer.addSublayer(fade)
+        addCompositionLabel()
+        addOverlays()
     }
-
+    @discardableResult private func addButton(icon: MudiIcon? = nil, title: String? = nil, identifier: String, label: String, action: Selector, pinned: Bool = false) -> UIButton {
+        let button = UIButton(type: .custom)
+        configure(button, icon: icon, title: title, identifier: identifier, label: label, action: action)
+        (pinned ? pinnedStackView : stackView).addArrangedSubview(button)
+        buttons.append(button); shortcutButtons.append(button)
+        return button
+    }
+    private func configure(_ button: UIButton, icon: MudiIcon?, title: String?, identifier: String, label: String, action: Selector) {
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setImage(icon?.uiImage, for: .normal)
+        button.setTitle(title, for: .normal)
+        button.titleLabel?.font = MudiTypography.uiFont(14, weight: .medium)
+        button.accessibilityIdentifier = "terminal-shortcut-" + identifier
+        button.accessibilityLabel = label
+        button.addTarget(self, action: action, for: .touchUpInside)
+        let width = button.widthAnchor.constraint(equalToConstant: title == nil ? 36 : 40)
+        width.priority = .defaultHigh
+        NSLayoutConstraint.activate([width, button.heightAnchor.constraint(equalToConstant: 34)])
+        style(button)
+    }
     private func addOverlays() {
         for overlay in [comboPopup, dpadOverlay] {
-            overlay.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(overlay)
+            overlay.translatesAutoresizingMaskIntoConstraints = false; addSubview(overlay)
         }
-        let dpadLeading = dpadOverlay.leadingAnchor.constraint(
-            equalTo: leadingAnchor,
-            constant: 12
-        )
-        let dpadBottom = dpadOverlay.bottomAnchor.constraint(
-            equalTo: topAnchor,
-            constant: -12
-        )
-        dpadLeadingConstraint = dpadLeading
-        dpadBottomConstraint = dpadBottom
+        let leading = dpadOverlay.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12)
+        let bottom = dpadOverlay.bottomAnchor.constraint(equalTo: topAnchor, constant: -12)
+        dpadLeadingConstraint = leading; dpadBottomConstraint = bottom
         NSLayoutConstraint.activate([
             comboPopup.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             comboPopup.bottomAnchor.constraint(equalTo: topAnchor, constant: -8),
             comboPopup.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
-            dpadLeading,
-            dpadBottom,
-            dpadOverlay.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8)
+            leading, bottom, dpadOverlay.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8)
         ])
-
-        let drag = UIPanGestureRecognizer(
-            target: self,
-            action: #selector(handleDPadDrag(_:))
-        )
-        dpadOverlay.addGestureRecognizer(drag)
-    }
-
-    /// Drag-to-reposition for the floating D-pad card. Translation is
-    /// accumulated into the leading/bottom anchor constants and clamped so
-    /// the card stays inside the bar's horizontal span and above it.
-    @discardableResult
-    private func addButton(
-        symbolName: String,
-        identifier: String,
-        label: String,
-        action: Selector
-    ) -> UIButton {
-        let button = UIButton(type: .system)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.setImage(
-            UIImage(systemName: symbolName)?
-                .applyingSymbolConfiguration(Self.barSymbolConfiguration),
-            for: .normal
-        )
-        button.accessibilityIdentifier = identifier
-        button.accessibilityLabel = label
-        button.addTarget(self, action: action, for: .touchUpInside)
-        button.layer.cornerRadius = 6
-        // Preferred 40pt but compressible: on narrow layouts the six
-        // buttons shrink evenly instead of breaking the constraints.
-        let preferredWidth = button.widthAnchor.constraint(equalToConstant: 40)
-        preferredWidth.priority = .defaultHigh
-        preferredWidth.isActive = true
-        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 24).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 32).isActive = true
-        // Compression (749) yields to the preferred width (750) only
-        // under real stack pressure; low hugging keeps icons from
-        // collapsing to intrinsic size (the composition-cycle regression).
-        button.setContentCompressionResistancePriority(
-            UILayoutPriority(749),
-            for: .horizontal
-        )
-        button.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        stackView.addArrangedSubview(button)
-        buttons.append(button)
-        shortcutButtons.append(button)
-        style(button)
-        return button
+        dpadOverlay.dragHandle.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(handleDPadDrag(_:))))
     }
 }

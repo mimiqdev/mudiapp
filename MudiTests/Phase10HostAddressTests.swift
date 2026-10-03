@@ -467,10 +467,16 @@ final class Phase10HostAddressTests: XCTestCase {  // pi-lens-ignore: type_body_
         }
 
         await connector.waitUntilStarted(addresses[0])
+        // Timer registration and connector entry run in separate tasks.
+        // Advance only after the relevant fake-clock timers are registered.
+        await clock.waitUntilSleepScheduled(at: .seconds(2))
+        await clock.waitUntilSleepScheduled(at: .seconds(30))
         await clock.advance(by: .seconds(2))
         await connector.waitUntilStarted(addresses[1])
+        await clock.waitUntilSleepScheduled(at: .milliseconds(2500))
         await clock.advance(by: .milliseconds(500))
         await connector.waitUntilStarted(addresses[2])
+        await clock.waitUntilSleepScheduled(at: .seconds(3))
         await clock.advance(by: .milliseconds(500))
         await connector.waitUntilStarted(addresses[3])
         await clock.advance(by: .seconds(27))
@@ -952,6 +958,12 @@ private actor Phase10TestClock: HostAddressRaceClock {
         for (id, waiter) in ready {
             waiters[id] = nil
             waiter.continuation.resume()
+        }
+    }
+
+    func waitUntilSleepScheduled(at target: Duration) async {
+        while !waiters.values.contains(where: { $0.target == target }) {
+            await Task.yield()
         }
     }
 

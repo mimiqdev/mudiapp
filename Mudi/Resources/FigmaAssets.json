@@ -1,0 +1,330 @@
+[
+  {
+    "file": "f572a.svg",
+    "variable": "imgIconPlus",
+    "source": "hosts_dark",
+    "name": "Plus",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "d1e0b.svg",
+    "variable": "imgIconSettings",
+    "source": "hosts_dark",
+    "name": "Settings",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "f186e.svg",
+    "variable": "imgIconEllipsis",
+    "source": "hosts_dark",
+    "name": "Ellipsis",
+    "width": "16",
+    "height": "16"
+  },
+  {
+    "file": "b5d79.svg",
+    "variable": "imgIconChevronRight",
+    "source": "hosts_dark",
+    "name": "ChevronRight",
+    "width": "16",
+    "height": "16"
+  },
+  {
+    "file": "857ea.svg",
+    "variable": "imgIconRefresh",
+    "source": "hosts_dark",
+    "name": "Retry",
+    "width": "13",
+    "height": "13"
+  },
+  {
+    "file": "85b5b.svg",
+    "variable": "imgIconSearch",
+    "source": "picker_dark",
+    "name": "Search",
+    "width": "16",
+    "height": "16"
+  },
+  {
+    "file": "826b9.svg",
+    "variable": "imgIconX",
+    "source": "picker_dark",
+    "name": "Close",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "5a6c0.svg",
+    "variable": "imgIconRefresh",
+    "source": "picker_dark",
+    "name": "Refresh",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "3bf53.svg",
+    "variable": "imgIconStarFill",
+    "source": "picker_dark",
+    "name": "Star",
+    "width": "12",
+    "height": "12"
+  },
+  {
+    "file": "bdc54.svg",
+    "variable": "imgIconClock",
+    "source": "picker_dark",
+    "name": "Clock",
+    "width": "13",
+    "height": "13"
+  },
+  {
+    "file": "9a7c0.svg",
+    "variable": "imgIconLayers",
+    "source": "picker_dark",
+    "name": "Project",
+    "width": "13",
+    "height": "13"
+  },
+  {
+    "file": "e325f.svg",
+    "variable": "imgIconTerminal",
+    "source": "picker_dark",
+    "name": "Terminal",
+    "width": "14",
+    "height": "14"
+  },
+  {
+    "file": "06020.svg",
+    "variable": "imgIconGrip",
+    "source": "host_edit_dark",
+    "name": "Grip",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "62cc0.svg",
+    "variable": "imgIconMinus",
+    "source": "host_edit_dark",
+    "name": "Minus",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "1c29c.svg",
+    "variable": "imgIconMove",
+    "source": "terminal_dark",
+    "name": "Move",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "3ad69.svg",
+    "variable": "imgIconChevronLeft",
+    "source": "terminal_dark",
+    "name": "ChevronLeft",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "be549.svg",
+    "variable": "imgIcon",
+    "source": "terminal_dark",
+    "name": "Paste",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "19518.svg",
+    "variable": "imgIcon1",
+    "source": "terminal_dark",
+    "name": "History",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "52ced.svg",
+    "variable": "imgIcon2",
+    "source": "terminal_dark",
+    "name": "Compose",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "777b8.svg",
+    "variable": "imgIcon3",
+    "source": "terminal_dark",
+    "name": "Layers",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "ba04a.svg",
+    "variable": "imgIcon4",
+    "source": "terminal_dark",
+    "name": "KeyboardHide",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "dbbd1.svg",
+    "variable": "imgOrigin",
+    "source": "thumb_arc",
+    "name": "Origin",
+    "width": "12",
+    "height": "12"
+  },
+  {
+    "file": "b6889.svg",
+    "variable": "imgOriginDot",
+    "source": "thumb_arc",
+    "name": "OriginDot",
+    "width": "4",
+    "height": "4"
+  },
+  {
+    "file": "1ac17.svg",
+    "variable": "imgGlyph",
+    "source": "thumb_arc",
+    "name": "ShiftTab",
+    "width": "16",
+    "height": "16"
+  },
+  {
+    "file": "92c7e.svg",
+    "variable": "imgGlyph1",
+    "source": "thumb_arc",
+    "name": "Up",
+    "width": "16",
+    "height": "16"
+  },
+  {
+    "file": "3ceee.svg",
+    "variable": "imgGlyph2",
+    "source": "thumb_arc",
+    "name": "ArcPaste",
+    "width": "16",
+    "height": "16"
+  },
+  {
+    "file": "5a714.svg",
+    "variable": "imgGlyph3",
+    "source": "thumb_arc",
+    "name": "ArcLayers",
+    "width": "16",
+    "height": "16"
+  },
+  {
+    "file": "be5d6.svg",
+    "variable": "imgIconChevronDown",
+    "source": "dpad",
+    "name": "Down",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "fecb7.svg",
+    "variable": "imgIconChevronRight",
+    "source": "dpad",
+    "name": "Right",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "c2ab5.svg",
+    "variable": "imgIconChevronLeft",
+    "source": "dpad",
+    "name": "Left",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "c796d.svg",
+    "variable": "imgIconChevronUp",
+    "source": "dpad",
+    "name": "DPadUp",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "b042a.svg",
+    "variable": "imgLockUnlocked",
+    "source": "dpad",
+    "name": "Unlock",
+    "width": "13",
+    "height": "13"
+  },
+  {
+    "file": "d1caf.svg",
+    "variable": "imgIconDeleteLeft",
+    "source": "dpad",
+    "name": "Backspace",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "e1d0e.svg",
+    "variable": "imgIconEraser",
+    "source": "dpad",
+    "name": "Clear",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "c8f93.svg",
+    "variable": "imgIconEnter",
+    "source": "dpad",
+    "name": "Enter",
+    "width": "18",
+    "height": "18"
+  },
+  {
+    "file": "09ebf.svg",
+    "variable": "imgStatus",
+    "source": "picker_dark",
+    "name": "StatusWaiting",
+    "width": "16",
+    "height": "16"
+  },
+  {
+    "file": "27b86.svg",
+    "variable": "imgStatus1",
+    "source": "picker_dark",
+    "name": "StatusWorking",
+    "width": "16",
+    "height": "16"
+  },
+  {
+    "file": "8ed91.svg",
+    "variable": "imgStatus2",
+    "source": "picker_dark",
+    "name": "StatusDone",
+    "width": "16",
+    "height": "16"
+  },
+  {
+    "file": "7cee4.svg",
+    "variable": "imgStatusRing",
+    "source": "hosts_dark",
+    "name": "StatusIdle",
+    "width": "16",
+    "height": "16"
+  },
+  {
+    "file": "a281e.svg",
+    "variable": "imgStatusRed",
+    "source": "hosts_dark",
+    "name": "StatusFailed",
+    "width": "16",
+    "height": "16"
+  },
+  {
+    "file": "4c50b.svg",
+    "variable": "imgIconKeyboard",
+    "source": "keyboard",
+    "name": "Keyboard",
+    "width": "18",
+    "height": "18"
+  }
+]

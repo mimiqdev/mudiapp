@@ -66,7 +66,7 @@ final class Phase7ReviewFixesTests: XCTestCase {
 
     // MARK: f4 - narrow-layout compression
 
-    func testShortcutBarCompressesToFit320PointWidth() throws {
+    func testShortcutBarScrollsWithPinnedActionsAt320PointWidth() throws {
         let container = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 44))
         let terminalView = ShellTerminalView(frame: .zero)
         defer { terminalView.stop() }
@@ -84,18 +84,16 @@ final class Phase7ReviewFixesTests: XCTestCase {
         container.layoutIfNeeded()
 
         let buttons = phase7ShortcutButtons(in: bar)
-        XCTAssertEqual(buttons.count, 7, "All seven items must survive a 320pt layout")
+        XCTAssertEqual(buttons.count, 9, "All actions remain in the scrollable/pinned layout")
         for button in buttons {
             XCTAssertGreaterThan(
                 button.bounds.width,
                 0,
                 "\(button.accessibilityIdentifier ?? "button") must stay visible"
             )
-            XCTAssertLessThanOrEqual(
-                button.frame.maxX,
-                bar.bounds.width + 0.5,
-                "\(button.accessibilityIdentifier ?? "button") must not clip past the bar"
-            )
+            if ["terminal-shortcut-jump-to", "terminal-shortcut-dismiss-keyboard"].contains(button.accessibilityIdentifier ?? "") {
+                XCTAssertTrue(bar.bounds.contains(button.convert(button.bounds, to: bar)), "Pinned actions stay visible")
+            }
         }
     }
 

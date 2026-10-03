@@ -77,3 +77,37 @@
 ## 完成后
 
 归档为 `archive/10-ux-polish-2.md`，将 `future/11-release.md` 提升为 `active_plan.md`。
+
+
+## 用户追加：Figma UI polish（ui-polish 分支）
+
+**出口：** 按 2026-10-03 用户提供的 Figma `Bs8ZxjukT714hydSC9WejI` 实现非 Agent 的明暗界面；保留现有 SSH/Mosh/Herdr wire 与会话语义。此独立分支不归档 Phase 10，不合并、不推送。
+
+**范围内：** 设计色彩/字体/原始图标；主机列表及连接反馈；主机编辑；Pane Picker 的搜索、状态筛选、项目分组及本地收藏/最近使用；终端导航、可滚动快捷栏、Ctrl/反向 Tab、compose/history；可拖动/锁定 D-Pad；拇指快捷弧及槽位/左右手/触感/练习设置；现有重连状态的呈现。
+
+**不在本轮：** Pi/Agent 面板、工具协议适配；跨 Host 会话实现；future 项目；远端协议与连接生命周期变更。
+
+**自动化（先红后绿）：**
+- `UIPolishTests.testHostsUseFigmaCanvasInBothAppearancesAndKeepHostAction`：明暗真实渲染使用设计 canvas，主机入口仍传递正确 Host。
+- `UIPolishTests.testPickerOffersSearchAndStateFiltersWithoutLosingCurrentPane`：真实 Picker 展示搜索与状态筛选，当前 pane 身份标记保留。
+- `UIPolishTests.testShortcutBarHasScrollableHistoryComposeAndPinnedNavigation`：历史/compose 可用，跳转/键盘固定可达。
+- `UIPolishTests.testDPadLockKeepsPositionButDoesNotDisableKeys`：锁定禁止拖动，方向键仍可用。
+- `UIPolishTests.testDoubleTapDragIsInstalledWithoutReplacingTextSelection`：双击拖选手势安装且不取代单指文本选择。
+- `UIPolishTests.testArcPreferencesRoundTripAndOldPreferencesRemainCompatible`：槽位、左右手和触感可保存，旧设置解码兼容。
+- `UIPolishRenderTests.testHostLargeTitleRemainsVisibleInBothAppearances`：真实渲染中原生大标题在明暗模式均可见，避免导航背景遮挡。
+- 补充 `UIPolishInteractionTests` 覆盖搜索/筛选的 pane 身份、收藏/最近使用持久化、快捷弧边缘几何/返回原点取消/真实输入、D-Pad 自定义角键、compose bracketed paste。
+- 回归：`make test-core`、Mudi XCTest（模拟器）；仅更新被新设计明确替代的旧外观合同。
+
+**手工：** 对照 Figma 核对主机、编辑、Picker、终端、拇指弧、D-Pad 的明暗渲染；iPhone 与 iPad 检查可达范围、滚动与键盘空间。真实主机/设备交互出口保留待用户验收。
+
+**切片：** 合同/红测 → 设计系统与资源 → 主机/Picker/编辑 → 终端与输入浮层 → 模拟器验证。
+
+
+**验证记录（2026-10-03）：**
+- 先跑红 6 项 UI 合同，再实现；新增真实输入、持久化、几何、后台颜色解析、D-Pad 角键及原生标题可见性覆盖。
+- `make test-core`：13 项通过；日志 `/tmp/mudi-build-core.log`。
+- iPhone 17 Pro / iOS 27 模拟器全量 XCTest：353 项通过、0 失败、0 跳过；`/tmp/mudi-build/UIPolish-Verified2.xcresult`。
+- iPad Pro 11 / iOS 27 模拟器 UI、交互、渲染、快捷栏及输入空间检查：32 项通过、0 失败；`/tmp/mudi-build/UIPolish-iPadVerified.xcresult`。
+- 核对 41 个原始 SVG 的编译尺寸，以及主机、编辑、Picker、终端、D-Pad、拇指弧和设置的 14 张明暗渲染；预览位于 `/tmp/mudi-build/ui-preview/`。
+- 原生大标题被导航背景遮挡的问题已修复并有像素断言；既有地址竞速测试补充了 fake clock 注册同步，保持原有预算及结果合同。
+- 真机与真实 Host 交互尚未验收；此记录不代表 Phase 10 手工出口完成，Agent 工具适配仍暂缓。

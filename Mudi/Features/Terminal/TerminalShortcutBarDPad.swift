@@ -6,7 +6,8 @@ import UIKit
 @MainActor
 extension MudiTerminalShortcutBar {
     @objc func handleDPadDrag(_ gesture: UIPanGestureRecognizer) {
-        guard gesture.state == .changed else { return }
+        dpadOverlay.isDragging = gesture.state == .began || gesture.state == .changed
+        guard gesture.state == .changed, !dpadOverlay.isLocked else { return }
         moveDPadOverlay(translation: gesture.translation(in: self))
         gesture.setTranslation(.zero, in: self)
         // Track the finger immediately instead of a frame late.
@@ -43,7 +44,7 @@ extension MudiTerminalShortcutBar {
     }
 
     func moveDPadOverlay(translation: CGPoint) {
-        guard bounds.width > 0 else { return }
+        guard !dpadOverlay.isLocked, bounds.width > 0 else { return }
         clampDPadOverlayPosition(adding: translation)
     }
 

@@ -1,20 +1,16 @@
 import UIKit
 
-/// Geometry policy for the floating shortcut-bar capsule: horizontal
-/// margins, floating gap above the bottom edge, and a content-capped
-/// maximum width (iPad centers a capped capsule; iPhone expands to nearly
-/// the full width). Pure and fully testable - the bar only applies the
-/// resolved layout.
+/// Geometry for the shortcut strip: iPhone uses the full bottom edge;
+/// iPad centers a floating strip with a capped width.
 struct MudiShortcutBarCapsulePolicy: Equatable {
     let horizontalMargin: CGFloat
     let bottomMargin: CGFloat
     let maxContentWidth: CGFloat
 
-    /// iPhone (compact width): the capsule expands to nearly the full
-    /// screen width with small horizontal margins.
+    /// iPhone (compact width): a flat strip spanning the bottom edge.
     static let phone = Self(
-        horizontalMargin: 12,
-        bottomMargin: 10,
+        horizontalMargin: 0,
+        bottomMargin: 0,
         maxContentWidth: .greatestFiniteMagnitude
     )
 
@@ -35,8 +31,7 @@ struct MudiShortcutBarCapsulePolicy: Equatable {
 
     /// Resolves the concrete capsule geometry for a container width:
     /// the capsule never spans wider than the margins allow and never
-    /// exceeds the content cap; corners are fully rounded (half the bar
-    /// height).
+    /// exceeds the content cap. The floating iPad strip uses a 12-point radius.
     func capsuleLayout(
         containerWidth: CGFloat,
         barHeight: CGFloat
@@ -50,7 +45,7 @@ struct MudiShortcutBarCapsulePolicy: Equatable {
             horizontalMargin: horizontalMargin,
             bottomMargin: bottomMargin,
             width: width,
-            cornerRadius: barHeight / 2,
+            cornerRadius: horizontalMargin == 0 ? 0 : 12,
             centered: centered
         )
     }

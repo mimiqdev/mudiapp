@@ -194,7 +194,7 @@ final class Phase7UXPolishTests: XCTestCase {  // pi-lens-ignore: type_body_leng
         XCTAssertEqual(deletedHost, host)
     }
 
-    func testShortcutBarIsOnePageWithExactlyTheContractItemsInOrder() throws {
+    func testShortcutBarUsesFigmaScrollableAndPinnedItemsInOrder() throws {
         let terminalView = ShellTerminalView(frame: .zero)
         defer { terminalView.stop() }
         let bar = try XCTUnwrap(terminalView.shortcutBar)
@@ -205,6 +205,8 @@ final class Phase7UXPolishTests: XCTestCase {  // pi-lens-ignore: type_body_leng
             "terminal-shortcut-control",
             "terminal-shortcut-dpad",
             "terminal-shortcut-paste",
+            "terminal-shortcut-history",
+            "terminal-shortcut-compose",
             "terminal-shortcut-jump-to",
             "terminal-shortcut-dismiss-keyboard",
         ]
@@ -215,9 +217,9 @@ final class Phase7UXPolishTests: XCTestCase {  // pi-lens-ignore: type_body_leng
         XCTAssertEqual(
             actualIdentifiers,
             expectedIdentifiers,
-            "The shortcut bar must be a single ordered seven-item model"
+            "The scrollable actions precede the two pinned actions"
         )
-        XCTAssertEqual(bar.intrinsicContentSize.height, 44)
+        XCTAssertEqual(bar.intrinsicContentSize.height, 48)
 
         let allIdentifiers = Set(
             phase7Buttons(in: bar).compactMap(\.accessibilityIdentifier)
@@ -270,8 +272,8 @@ final class Phase7UXPolishTests: XCTestCase {  // pi-lens-ignore: type_body_leng
             ("terminal-dpad-left", EscapeSequences.moveLeftNormal),
             ("terminal-dpad-right", EscapeSequences.moveRightNormal),
             ("terminal-dpad-enter", EscapeSequences.cmdRet),
-            ("terminal-dpad-page-up", EscapeSequences.cmdPageUp),
-            ("terminal-dpad-page-down", EscapeSequences.cmdPageDown),
+            ("terminal-dpad-backspace", [0x7f]),
+            ("terminal-dpad-clearScreen", [0x0c]),
         ]
 
         for (identifier, expectedBytes) in expectedSequences {

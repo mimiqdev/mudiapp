@@ -59,167 +59,254 @@ struct PanePickerView: View {
     let onSelectPane: (Pane.ID) -> Void
     let onSelectOrdinaryTerminal: () -> Void
     let onAppear: () -> Void
+    @State private var query = ""
+    @State private var filter: PanePickerFilter = .all
+    @StateObject private var history = PanePickerHistory()
+    @FocusState private var isSearchFocused: Bool
+
+    private var catalog: PanePickerCatalog { PanePickerCatalog(host: state.host, snapshot: state.snapshot) }
+    private var matching: [PanePickerCatalog.Entry] { catalog.matching(query: query, filter: filter) }
 
     var body: some View {
         NavigationStack {
             List {
+                if let message = state.message {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(MudiTypography.body(13)).foregroundStyle(MudiPalette.sunset).mudiRow()
+                }
+                if state.isLoading {
+                    ProgressView("正在发现 Herdr…").frame(maxWidth: .infinity, minHeight: 180)
+                        .listRowBackground(Color.clear)
+                } else if !query.isEmpty {
+                    Section {
+                        paneRows(matching)
+                    } header: {
+                        MudiSectionHeader(title: "「\(query)」", count: matching.count)
+                    }
+                    if matching.isEmpty { emptyResults }
+                } else {
+                    let favorites = matching.filter { history.isFavorite(hostID: state.host.id, paneID: $0.pane.id) }
+                    if !favorites.isEmpty {
+                        Section { paneRows(favorites) } header: {
+                            MudiSectionHeader(title: "收藏", count: favorites.count, icon: .star)
+                        }
+                    }
+                    let recent = history.recentPaneIDs(hostID: state.host.id).prefix(3).compactMap { id in
+                        matching.first { $0.pane.id == id }
+                    }
+                    if !recent.isEmpty {
+                        Section { paneRows(recent) } header: {
+                            MudiSectionHeader(title: "最近使用", count: recent.count, icon: .clock)
+                        }
+                    }
+                    let groups = orderedProjectIDs
+                    ForEach(groups, id: \.self) { projectID in
+                        let rows = matching.filter { $0.projectID == projectID }
+                        Section { paneRows(rows) } header: {
+                            MudiSectionHeader(title: "按项目 · \(rows.first?.projectTitle ?? "")", count: rows.count, icon: .project)
+                        }
+                    }
+                    if matching.isEmpty { emptyResults }
+                }
                 if !state.isLoading {
                     Section {
                         Button(action: onSelectOrdinaryTerminal) {
-                            Label {
+                            HStack(spacing: 12) {
+                                MudiIcon.terminal.image.frame(width: 16).foregroundStyle(MudiPalette.mute)
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text("Ordinary SSH Terminal")
-                                    Text("Open the host shell without attaching a pane")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                    Text("普通 SSH 终端").font(MudiTypography.body(16, weight: .semibold))
+                                    Text(state.host.displayName).font(MudiTypography.mono(12)).foregroundStyle(MudiPalette.mute)
                                 }
-                            } icon: {
-                                Image(systemName: "terminal")
-                            }
+                                Spacer()
+                                Text("Shell").font(MudiTypography.body(13)).foregroundStyle(MudiPalette.mute)
+                            }.frame(minHeight: 64)
                         }
+                        .buttonStyle(.plain)
                         .accessibilityIdentifier("pane-picker-ordinary-terminal")
-                    } header: {
-                        Text("Terminal")
-                    }
-                }
-
-                if let message = state.message {
-                    Section {
-                        Label(message, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
-                    }
-                }
-
-                if state.isLoading {
-                    ProgressView("Discovering Herdr…")
-                        .frame(maxWidth: .infinity, minHeight: 180)
-                } else if presentationSections.isEmpty
-                    || presentationSections.allSatisfy({ $0.roots.isEmpty }) {
-                    ContentUnavailableView {
-                        Label("No Herdr Sessions", systemImage: "rectangle.stack")
-                    } description: {
-                        Text("No active Herdr session was found on this host.")
-                    }
-                } else {
-                    ForEach(presentationSections) { session in
-                        Section {
-                            ForEach(session.roots) { root in
-                                PanePickerWorkspaceNodeView(
-                                    node: root,
-                                    currentPaneID: state.currentPaneID,
-                                    onSelectPane: onSelectPane
-                                )
-                            }
-                        } header: {
-                            HStack {
-                                Text(session.title)
-                                if presentationSections.count > 1, session.isDefault {
-                                    Text("Default")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
+                        .mudiRow()
                     }
                 }
             }
-            .navigationTitle("Choose Pane")
+            .mudiGroupedList(background: MudiPalette.sheet)
+            .safeAreaInset(edge: .top, spacing: 0) { searchAndFilters }
             .navigationBarTitleDisplayMode(.inline)
-            .refreshable {
-                await onRefresh()
-            }
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark", action: onDismiss)
-                        .accessibilityIdentifier("pane-picker-close")
-                }
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Button("Create Workspace", systemImage: "plus", action: onCreateWorkspace)
-                        .disabled(isCreatingWorkspace)
-                        .accessibilityIdentifier("pane-picker-create-workspace")
-                    Button("Refresh", systemImage: "arrow.clockwise") {
-                        Task { await onRefresh() }
-                    }
-                    .accessibilityIdentifier("pane-picker-refresh")
-                }
-            }
+            .toolbar { pickerToolbar }
+            .refreshable { await onRefresh() }
         }
+        .tint(MudiPalette.ink)
         .onAppear(perform: onAppear)
         .accessibilityIdentifier("pane-picker")
     }
 
-    private var presentationSections: [PanePickerSessionPresentation] {
-        panePickerPresentationSections(in: state.snapshot)
+    @ToolbarContentBuilder private var pickerToolbar: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            MudiRoundButton(icon: .close, label: "关闭", action: onDismiss)
+                .accessibilityIdentifier("pane-picker-close")
+        }.mudiToolbarBackground()
+        ToolbarItem(placement: .principal) {
+            VStack(spacing: 2) {
+                Text("选择 Pane").font(MudiTypography.body(17, weight: .semibold)).foregroundStyle(MudiPalette.ink)
+                Text("\(state.host.displayName) · \(catalog.rows.count) 个 pane")
+                    .font(MudiTypography.mono(12)).foregroundStyle(MudiPalette.mute)
+            }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            HStack(spacing: 8) {
+                MudiRoundButton(icon: .plus, label: "新建工作区", action: onCreateWorkspace)
+                    .disabled(isCreatingWorkspace).accessibilityIdentifier("pane-picker-create-workspace")
+                MudiRoundButton(icon: .refresh, label: "刷新", action: { Task { await onRefresh() } })
+                    .accessibilityIdentifier("pane-picker-refresh")
+            }.fixedSize()
+        }.mudiToolbarBackground()
+    }
+
+    private var searchAndFilters: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                MudiIcon.search.image.foregroundStyle(MudiPalette.mute)
+                TextField("搜索 pane、repo、host…", text: $query)
+                    .font(MudiTypography.body()).focused($isSearchFocused)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .accessibilityIdentifier("pane-picker-search")
+                    .overlay(alignment: .leading) {
+                        AccessibilityIdentifierBridge(identifier: "pane-picker-search").frame(width: 1, height: 1)
+                    }
+                if !query.isEmpty {
+                    Button { query = "" } label: { MudiIcon.close.image }
+                        .accessibilityLabel("清除搜索").buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12).frame(height: 38)
+            .background(MudiPalette.surface, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(MudiPalette.hairline, lineWidth: 1))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(PanePickerFilter.allCases, id: \.self) { value in
+                        Button { filter = value } label: {
+                            HStack(spacing: 5) {
+                                if value != .all { Circle().fill(filterColor(value)).frame(width: 6, height: 6) }
+                                Text(value.title).font(MudiTypography.body(13, weight: .medium))
+                                Text("\(catalog.matching(query: query, filter: value).count)").font(MudiTypography.mono(12)).opacity(0.65)
+                            }
+                            .foregroundStyle(filter == value ? MudiPalette.canvas : MudiPalette.body)
+                            .padding(.horizontal, 10).frame(height: 30)
+                            .background(filter == value ? MudiPalette.ink : .clear, in: Capsule())
+                            .overlay(Capsule().stroke(filter == value ? .clear : MudiPalette.border, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("pane-picker-filter-\(value.rawValue)")
+                        .accessibilityAddTraits(filter == value ? .isSelected : [])
+                        .overlay(alignment: .leading) {
+                            AccessibilityIdentifierBridge(identifier: "pane-picker-filter-\(value.rawValue)", action: { filter = value })
+                                .frame(width: 1, height: 1)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 20).padding(.top, 4).padding(.bottom, 6)
+        .background(MudiPalette.sheet)
+    }
+
+    private var orderedProjectIDs: [String] {
+        var seen = Set<String>()
+        return matching.compactMap { seen.insert($0.projectID).inserted ? $0.projectID : nil }
+    }
+    private var emptyResults: some View {
+        ContentUnavailableView(query.isEmpty ? "没有匹配的 Pane" : "没有搜索结果", systemImage: "magnifyingglass", description: Text("试试其他关键词或状态，或打开普通 SSH 终端。"))
+            .listRowBackground(Color.clear)
+    }
+    private func filterColor(_ value: PanePickerFilter) -> Color {
+        switch value {
+        case .waiting: MudiPalette.sunset
+        case .working: MudiPalette.green
+        case .all, .done: MudiPalette.dim
+        }
+    }
+    private func paneRows(_ rows: [PanePickerCatalog.Entry]) -> some View {
+        ForEach(rows) { entry in
+            let current = state.currentPaneID == entry.pane.id
+            Button {
+                history.recordSelection(hostID: state.host.id, paneID: entry.pane.id)
+                onSelectPane(entry.pane.id)
+            } label: {
+                MudiPaneRow(entry: entry, isFavorite: history.isFavorite(hostID: state.host.id, paneID: entry.pane.id), isCurrent: current)
+            }
+            .buttonStyle(.plain).mudiRow()
+            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("pane-picker-pane-\(entry.pane.id)")
+            .accessibilityAddTraits(current ? .isSelected : [])
+            .accessibilityValue(current ? "Current pane" : "")
+            .overlay(alignment: .topLeading) {
+                AccessibilityIdentifierBridge(
+                    identifier: "pane-picker-pane-\(entry.pane.id)",
+                    action: {
+                        history.recordSelection(hostID: state.host.id, paneID: entry.pane.id)
+                        onSelectPane(entry.pane.id)
+                    },
+                    accessibilityValue: current ? "Current pane" : nil,
+                    accessibilityTraits: current ? [.button, .selected] : [.button]
+                ).frame(width: 1, height: 1)
+            }
+            .contextMenu {
+                Button(history.isFavorite(hostID: state.host.id, paneID: entry.pane.id) ? "取消收藏" : "收藏", systemImage: "star") {
+                    history.toggleFavorite(hostID: state.host.id, paneID: entry.pane.id)
+                }
+            }
+        }
     }
 }
 
-private struct PanePickerWorkspaceNodeView: View {
-    let node: PanePickerWorkspacePresentation
-    let currentPaneID: Pane.ID?
-    let onSelectPane: (Pane.ID) -> Void
-
+private struct MudiPaneRow: View {
+    let entry: PanePickerCatalog.Entry
+    let isFavorite: Bool
+    let isCurrent: Bool
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(node.title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            ForEach(node.rows) { row in
-                PanePickerPaneRowView(
-                    row: row,
-                    highlight: PanePickerRowHighlight.resolve(
-                        paneID: row.paneID,
-                        currentPaneID: currentPaneID
-                    ),
-                    onSelectPane: onSelectPane
-                )
-            }
-
-            ForEach(node.children) { child in
-                PanePickerWorkspaceNodeView(
-                    node: child,
-                    currentPaneID: currentPaneID,
-                    onSelectPane: onSelectPane
-                )
-                .padding(.leading, 16)
+        HStack(spacing: 12) {
+            statusIcon.image.foregroundStyle(statusColor).frame(width: 16, height: 16)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(entry.pane.agent?.name ?? entry.pane.title).font(MudiTypography.body(16, weight: .semibold))
+                        .foregroundStyle(MudiPalette.ink).lineLimit(1)
+                    if entry.pane.agent != nil {
+                        Text(entry.pane.title).font(MudiTypography.body(15)).foregroundStyle(MudiPalette.body).lineLimit(1)
+                    }
+                }
+                Text(entry.context).font(MudiTypography.mono(12)).foregroundStyle(MudiPalette.mute).lineLimit(1)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 6) {
+                if isFavorite { MudiIcon.star.image.foregroundStyle(MudiPalette.mute) }
+                if isCurrent { Image(systemName: "checkmark").font(.caption).accessibilityHidden(true) }
+                Text(statusTitle).font(MudiTypography.body(13, weight: .medium)).foregroundStyle(statusColor)
             }
         }
-        .padding(.vertical, 4)
+        .frame(minHeight: 64)
+        .contentShape(Rectangle())
     }
-}
-
-/// One tappable pane row. The current-pane mark is a pure function of the
-/// real attached pane identity (``PanePickerRowHighlight``), so a refresh
-/// that relocates the pane keeps the same row marked, and the mark is
-/// announced instead of only being a trailing glyph.
-private struct PanePickerPaneRowView: View {
-    let row: PanePickerPresentationRow
-    let highlight: PanePickerRowHighlight
-    let onSelectPane: (Pane.ID) -> Void
-
-    var body: some View {
-        Button {
-            onSelectPane(row.paneID)
-        } label: {
-            HerdrPaneRow(
-                pane: row.pane,
-                isAttached: highlight.isCurrent,
-                workspaceContext: row.workspaceContext
-            )
-            .padding(.vertical, 4)
-            .padding(.horizontal, 8)
-            .background {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(
-                        highlight.isCurrent
-                            ? Color.accentColor.opacity(0.14)
-                            : Color.clear
-                    )
-            }
+    private var statusIcon: MudiIcon {
+        switch entry.pane.agent?.state {
+        case .waitingForInput: .statusWaiting
+        case .working: .statusWorking
+        case .done, .idle, .unknown: .statusDone
+        case nil: .terminal
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("pane-picker-pane-\(row.paneID)")
-        .accessibilityAddTraits(highlight.isCurrent ? .isSelected : [])
-        .accessibilityValue(highlight.accessibilityValue ?? "")
+    }
+    private var statusColor: Color {
+        switch entry.pane.agent?.state {
+        case .waitingForInput: MudiPalette.sunset
+        case .working: MudiPalette.green
+        default: MudiPalette.mute
+        }
+    }
+    private var statusTitle: String {
+        switch entry.pane.agent?.state {
+        case .waitingForInput: "需要输入"
+        case .working: "正在工作"
+        case .done: "已完成"
+        case .idle: "空闲"
+        case .unknown: "未知"
+        case nil: "Shell"
+        }
     }
 }

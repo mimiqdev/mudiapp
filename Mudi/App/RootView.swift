@@ -174,6 +174,11 @@ extension RootViewModel {
         persistPreferences()
     }
 
+    func updateThumbArc(_ value: ThumbArcPreferences) {
+        preferences.thumbArc = value
+        persistPreferences()
+    }
+
     func updateFontSize(_ fontSize: Double) {
         preferences.fontSize = fontSize
         persistPreferences()

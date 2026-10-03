@@ -7,7 +7,7 @@ import UIKit
 /// state.
 @MainActor
 extension ShellTerminalView {
-    static let shortcutBarHeight: CGFloat = 44
+    static let shortcutBarHeight: CGFloat = 48
 
     /// Pure geometry for the visible grid rows when a bottom strip is
     /// reserved for the shortcut bar. Same floor math as SwiftTerm's own
@@ -128,7 +128,7 @@ extension ShellTerminalView {
     ) -> CGFloat {
         var offset = container.safeAreaInsets.bottom
             + (shortcutBar?.capsulePolicy?.bottomMargin ?? 0)
-        if let window = container.window,
+        if container.window != nil,
            let keyboardFrame = keyboardFrameEnd ?? lastKeyboardFrameEnd {
             let keyboardTop = container.convert(keyboardFrame, from: nil).minY
             if keyboardTop < container.bounds.maxY - 0.5 {

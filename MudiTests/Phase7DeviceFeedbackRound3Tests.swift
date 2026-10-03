@@ -27,10 +27,7 @@ final class Phase7DeviceFeedbackRound3Tests: XCTestCase {
         )
 
         func glyph(_ name: String) -> UIImage? {
-            UIImage(systemName: name)?
-                .applyingSymbolConfiguration(
-                    MudiTerminalShortcutBar.barSymbolConfiguration
-                )
+(name == "keyboard" ? MudiIcon.keyboard : .keyboardHide).uiImage
         }
 
         // Keyboard starts hidden: the button must offer "show keyboard".
@@ -78,10 +75,7 @@ final class Phase7DeviceFeedbackRound3Tests: XCTestCase {
         )
 
         func glyph(_ name: String) -> UIImage? {
-            UIImage(systemName: name)?
-                .applyingSymbolConfiguration(
-                    MudiTerminalShortcutBar.barSymbolConfiguration
-                )
+(name == "keyboard" ? MudiIcon.keyboard : .keyboardHide).uiImage
         }
 
         // Terminal keyboard down: a keyboard shown elsewhere in the app
@@ -184,8 +178,8 @@ final class Phase7DeviceFeedbackRound3Tests: XCTestCase {
                 .compactMap { $0 as? UIVisualEffectView }
             XCTAssertEqual(
                 materials.count,
-                1,
-                "\(identifier) must carry a glass/material backdrop"
+                identifier == "terminal-dpad-overlay" ? 8 : 1,
+                "D-Pad uses independent glass keys; Ctrl retains its shared material"
             )
             XCTAssertNotNil(materials.first?.effect)
         }
@@ -255,8 +249,8 @@ final class Phase7DeviceFeedbackRound3Tests: XCTestCase {
         )
         XCTAssertLessThanOrEqual(
             overlay.frame.height,
-            120,
-            "The D-pad card must keep a compact footprint"
+            190,
+            "The Figma D-pad includes three 46pt rows and its drag handle"
         )
     }
 }

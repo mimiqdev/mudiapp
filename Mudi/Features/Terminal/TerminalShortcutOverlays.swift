@@ -24,7 +24,7 @@ final class MudiControlComboPopup: UIView {
         accessibilityIdentifier = "terminal-control-combo-popup"
         isHidden = true
         backgroundColor = .clear
-        layer.cornerRadius = 10
+        layer.cornerRadius = 14
         layer.shadowColor = UIColor.black.cgColor
         layer.shadowOpacity = 0.2
         layer.shadowRadius = 6
@@ -32,7 +32,7 @@ final class MudiControlComboPopup: UIView {
 
         let backdrop = MudiTerminalShortcutBar.makeMaterialView()
         backdrop.translatesAutoresizingMaskIntoConstraints = false
-        backdrop.layer.cornerRadius = 10
+        backdrop.layer.cornerRadius = 14
         backdrop.clipsToBounds = true
         addSubview(backdrop)
 
@@ -73,6 +73,9 @@ final class MudiControlComboPopup: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        for button in comboButtons {
+            button.layer.borderColor = MudiPalette.borderUI.resolvedColor(with: traitCollection).cgColor
+        }
         layer.shadowPath = UIBezierPath(
             roundedRect: bounds,
             cornerRadius: layer.cornerRadius
@@ -88,7 +91,10 @@ final class MudiControlComboPopup: UIView {
             weight: .semibold
         )
         button.accessibilityLabel = combo.label
-        button.backgroundColor = .tertiarySystemFill
+        button.backgroundColor = MudiPalette.keyUI
+        button.tintColor = MudiPalette.inkUI
+        button.layer.borderWidth = 1
+        button.layer.borderColor = MudiPalette.borderUI.cgColor
         button.layer.cornerRadius = 6
         button.addTarget(
             self,
@@ -113,186 +119,216 @@ final class MudiControlComboPopup: UIView {
     }
 }
 
-/// Floating directional pad overlay toggled by the shortcut bar's direction
-/// button: four direction keys, center Enter, and PgUp/PgDn. Every key sends
-/// its sequence through the existing terminal input path.
+/// Independent glass keys, with a drag handle and a lock. Corner keys can be configured with a long press.
 @MainActor
 final class MudiTerminalDPadOverlay: UIView {
-    enum Command {
-        case cursorUp
-        case cursorDown
-        case cursorLeft
-        case cursorRight
-        case enter
-        case pageUp
-        case pageDown
+    enum Command: Int, CaseIterable {
+        case cursorUp, cursorDown, cursorLeft, cursorRight, enter, pageUp, pageDown
+        case backspace, clearScreen, home, end
+        var title: String {
+            switch self {
+            case .cursorUp: "Up"
+            case .cursorDown: "Down"
+            case .cursorLeft: "Left"
+            case .cursorRight: "Right"
+            case .enter: "Enter"
+            case .pageUp: "Page Up"
+            case .pageDown: "Page Down"
+            case .backspace: "退格"
+            case .clearScreen: "清屏"
+            case .home: "Home"
+            case .end: "End"
+            }
+        }
     }
-
     var onCommand: ((Command) -> Void)?
-
-    private let backdropView: UIVisualEffectView
+    let dragHandle = UIView()
+    private let lockButton = UIButton(type: .system)
+    private(set) var isLocked = false
+    var isDragging = false { didSet { updateHandle() } }
+    private var cornerCommands: [Command]
+    private var cornerButtons: [UIButton] = []
 
     init() {
-        backdropView = MudiTerminalShortcutBar.makeMaterialView()
+        cornerCommands = ["left", "right"].enumerated().map { index, side in
+            let key = "dev.mudi.mobile.dpad-corner-" + side
+            return UserDefaults.standard.object(forKey: key) != nil
+                ? Command(rawValue: UserDefaults.standard.integer(forKey: key)) ?? (index == 0 ? .backspace : .clearScreen)
+                : (index == 0 ? .backspace : .clearScreen)
+        }
         super.init(frame: .zero)
         accessibilityIdentifier = "terminal-dpad-overlay"
         isHidden = true
-        // Floating card: transparent container, material backdrop, soft
-        // shadow. It hovers above the terminal and may cover content.
         backgroundColor = .clear
-        layer.cornerRadius = 12
-        layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.18
-        layer.shadowRadius = 8
-        layer.shadowOffset = CGSize(width: 0, height: 4)
-
-        backdropView.translatesAutoresizingMaskIntoConstraints = false
-        backdropView.layer.cornerRadius = 12
-        backdropView.clipsToBounds = true
-        addSubview(backdropView)
-
         let content = UIStackView()
+        content.axis = .vertical; content.alignment = .center; content.spacing = 8
         content.translatesAutoresizingMaskIntoConstraints = false
-        content.axis = .horizontal
-        content.alignment = .center
-        content.spacing = 6
         addSubview(content)
-
-        content.addArrangedSubview(directionGrid())
-        content.addArrangedSubview(pageColumn())
-
+        setupHandle()
+        content.addArrangedSubview(dragHandle)
+        let rows: [[Command?]] = [[cornerCommands[0], .cursorUp, cornerCommands[1]], [.cursorLeft, .enter, .cursorRight], [nil, .cursorDown, nil]]
+        for (rowIndex, row) in rows.enumerated() {
+            let stack = UIStackView()
+            stack.axis = .horizontal; stack.spacing = 6; stack.alignment = .center
+            for (column, command) in row.enumerated() {
+                if let command {
+                    let corner = rowIndex == 0 && column != 1
+                    let button = makeButton(command, corner: corner)
+                    if corner {
+                        button.tag = cornerButtons.count
+                        cornerButtons.append(button)
+                        configureCornerMenu(button, index: button.tag)
+                    }
+                    stack.addArrangedSubview(button)
+                } else {
+                    let spacer = UIView()
+                    spacer.translatesAutoresizingMaskIntoConstraints = false
+                    spacer.widthAnchor.constraint(equalToConstant: 46).isActive = true
+                    stack.addArrangedSubview(spacer)
+                }
+            }
+            content.addArrangedSubview(stack)
+        }
         NSLayoutConstraint.activate([
-            backdropView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            backdropView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            backdropView.topAnchor.constraint(equalTo: topAnchor),
-            backdropView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            content.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            content.bottomAnchor.constraint(
-                equalTo: bottomAnchor,
-                constant: -6
-            ),
-            content.leadingAnchor.constraint(
-                equalTo: leadingAnchor,
-                constant: 6
-            ),
-            content.trailingAnchor.constraint(
-                equalTo: trailingAnchor,
-                constant: -6
-            )
+            content.topAnchor.constraint(equalTo: topAnchor), content.bottomAnchor.constraint(equalTo: bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor), content.trailingAnchor.constraint(equalTo: trailingAnchor)
         ])
     }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func layoutSubviews() {
         super.layoutSubviews()
-        layer.shadowPath = UIBezierPath(
-            roundedRect: bounds,
-            cornerRadius: layer.cornerRadius
-        ).cgPath
+        updateHandle()
+        for button in subviews.flatMap({ view in allButtons(in: view) }) {
+            button.layer.borderColor = MudiPalette.inkUI.withAlphaComponent(0.22).resolvedColor(with: traitCollection).cgColor
+            for shape in (button.layer.sublayers ?? []).compactMap({ $0 as? CAShapeLayer }) where shape.name == "corner-border" {
+                shape.strokeColor = MudiPalette.inkUI.withAlphaComponent(0.35).resolvedColor(with: traitCollection).cgColor
+            }
+        }
     }
-
-    private func directionGrid() -> UIStackView {
-        let grid = UIStackView()
-        grid.axis = .vertical
-        grid.alignment = .center
-        grid.spacing = 6
-        grid.addArrangedSubview(row([spacer(), arrow(.cursorUp), spacer()]))
-        grid.addArrangedSubview(
-            row(
-                [
-                    arrow(.cursorLeft),
-                    arrow(.enter),
-                    arrow(.cursorRight),
-                ]
-            )
-        )
-        grid.addArrangedSubview(row([spacer(), arrow(.cursorDown), spacer()]))
-        return grid
+    private func allButtons(in view: UIView) -> [UIButton] {
+        (view as? UIButton).map { [$0] } ?? view.subviews.flatMap { allButtons(in: $0) }
     }
-
-    private func row(_ buttons: [UIView]) -> UIStackView {
-        let stack = UIStackView(arrangedSubviews: buttons)
-        stack.axis = .horizontal
-        stack.alignment = .center
-        stack.spacing = 6
-        return stack
+    private func setupHandle() {
+        dragHandle.translatesAutoresizingMaskIntoConstraints = false
+        let glass = MudiTerminalShortcutBar.makeMaterialView()
+        glass.translatesAutoresizingMaskIntoConstraints = false
+        glass.isUserInteractionEnabled = false
+        glass.layer.cornerRadius = 12; glass.clipsToBounds = true
+        dragHandle.addSubview(glass)
+        dragHandle.layer.cornerRadius = 12
+        dragHandle.layer.borderWidth = 1
+        let grip = UIView()
+        grip.backgroundColor = MudiPalette.muteUI; grip.layer.cornerRadius = 1.5
+        grip.translatesAutoresizingMaskIntoConstraints = false
+        dragHandle.addSubview(grip)
+        lockButton.translatesAutoresizingMaskIntoConstraints = false
+        lockButton.setImage(MudiIcon.unlock.uiImage, for: .normal)
+        lockButton.accessibilityLabel = "锁定方向键位置"
+        lockButton.accessibilityIdentifier = "terminal-dpad-lock"
+        lockButton.addTarget(self, action: #selector(toggleLock), for: .touchUpInside)
+        dragHandle.addSubview(lockButton)
+        NSLayoutConstraint.activate([
+            dragHandle.widthAnchor.constraint(equalToConstant: 64), dragHandle.heightAnchor.constraint(equalToConstant: 24),
+            glass.leadingAnchor.constraint(equalTo: dragHandle.leadingAnchor), glass.trailingAnchor.constraint(equalTo: dragHandle.trailingAnchor),
+            glass.topAnchor.constraint(equalTo: dragHandle.topAnchor), glass.bottomAnchor.constraint(equalTo: dragHandle.bottomAnchor),
+            grip.leadingAnchor.constraint(equalTo: dragHandle.leadingAnchor, constant: 12), grip.centerYAnchor.constraint(equalTo: dragHandle.centerYAnchor),
+            grip.widthAnchor.constraint(equalToConstant: 18), grip.heightAnchor.constraint(equalToConstant: 3),
+            lockButton.trailingAnchor.constraint(equalTo: dragHandle.trailingAnchor, constant: -4),
+            lockButton.topAnchor.constraint(equalTo: dragHandle.topAnchor), lockButton.bottomAnchor.constraint(equalTo: dragHandle.bottomAnchor),
+            lockButton.widthAnchor.constraint(equalToConstant: 28)
+        ])
+        updateHandle()
     }
-
-    private func pageColumn() -> UIStackView {
-        let column = UIStackView()
-        column.axis = .vertical
-        column.alignment = .center
-        column.spacing = 6
-        column.addArrangedSubview(arrow(.pageUp))
-        column.addArrangedSubview(arrow(.pageDown))
-        return column
+    @objc private func toggleLock() {
+        isLocked.toggle()
+        lockButton.setImage(isLocked ? UIImage(systemName: "lock.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 12)) : MudiIcon.unlock.uiImage, for: .normal)
+        lockButton.accessibilityValue = isLocked ? "已锁定" : "可拖动"
+        lockButton.accessibilityTraits = isLocked ? [.button, .selected] : [.button]
+        updateHandle()
     }
-
-    private func arrow(_ command: Command) -> UIButton {
-        let button = UIButton(type: .system)
+    private func updateHandle() {
+        lockButton.tintColor = isLocked ? MudiPalette.sunsetUI : MudiPalette.muteUI
+        dragHandle.layer.borderColor = (isDragging && !isLocked ? MudiPalette.sunsetUI : MudiPalette.inkUI.withAlphaComponent(0.22)).resolvedColor(with: traitCollection).cgColor
+    }
+    private func makeButton(_ command: Command, corner: Bool) -> UIButton {
+        let button = UIButton(type: .custom)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.setImage(
-            UIImage(systemName: Self.symbol(for: command)),
-            for: .normal
-        )
-        button.accessibilityIdentifier = "terminal-dpad-\(Self.identifier(for: command))"
-        button.accessibilityLabel = Self.label(for: command)
-        button.backgroundColor = .tertiarySystemFill
-        button.layer.cornerRadius = 7
-        button.widthAnchor.constraint(equalToConstant: 32).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        button.addAction(
-            UIAction { [weak self] _ in
-                self?.onCommand?(command)
-            },
-            for: .touchUpInside
-        )
+        button.layer.cornerRadius = 15
+        let glass = MudiTerminalShortcutBar.makeMaterialView()
+        glass.translatesAutoresizingMaskIntoConstraints = false
+        glass.isUserInteractionEnabled = false; glass.layer.cornerRadius = 15; glass.clipsToBounds = true
+        button.insertSubview(glass, at: 0)
+        if command == .enter { glass.effect = nil; glass.backgroundColor = MudiPalette.inkUI }
+        button.tintColor = command == .enter ? MudiPalette.canvasUI : MudiPalette.inkUI
+        button.layer.borderWidth = 1
+        button.layer.borderColor = MudiPalette.inkUI.withAlphaComponent(0.22).cgColor
+        let identifier: String
+        switch command {
+        case .cursorUp: identifier = "up"
+        case .cursorDown: identifier = "down"
+        case .cursorLeft: identifier = "left"
+        case .cursorRight: identifier = "right"
+        case .pageUp: identifier = "page-up"
+        case .pageDown: identifier = "page-down"
+        default: identifier = String(describing: command)
+        }
+        button.accessibilityIdentifier = "terminal-dpad-" + identifier
+        button.accessibilityLabel = command.title
+        configureGlyph(button, command: command)
+        if let imageView = button.imageView { button.bringSubviewToFront(imageView) }
+        button.addAction(UIAction { [weak self, weak button] _ in
+            guard let self else { return }
+            let value = corner ? self.cornerCommands[button?.tag ?? 0] : command
+            self.onCommand?(value)
+        }, for: .touchUpInside)
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 46), button.heightAnchor.constraint(equalToConstant: 46),
+            glass.leadingAnchor.constraint(equalTo: button.leadingAnchor), glass.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+            glass.topAnchor.constraint(equalTo: button.topAnchor), glass.bottomAnchor.constraint(equalTo: button.bottomAnchor)
+        ])
+        if corner {
+            let border = CAShapeLayer()
+            border.name = "corner-border"; border.fillColor = UIColor.clear.cgColor
+            border.strokeColor = MudiPalette.inkUI.withAlphaComponent(0.35).cgColor
+            border.lineDashPattern = [3, 3]; border.lineWidth = 1
+            border.path = UIBezierPath(roundedRect: CGRect(x: 0.5, y: 0.5, width: 45, height: 45), cornerRadius: 15).cgPath
+            button.layer.addSublayer(border)
+        }
         return button
     }
-
-    private func spacer() -> UIView {
-        let view = UIView()
-        view.translatesAutoresizingMaskIntoConstraints = false
-        view.widthAnchor.constraint(equalToConstant: 32).isActive = true
-        return view
-    }
-
-    private static func symbol(for command: Command) -> String {
+    private func configureGlyph(_ button: UIButton, command: Command) {
+        let icon: MudiIcon?
         switch command {
-        case .cursorUp: "chevron.up"
-        case .cursorDown: "chevron.down"
-        case .cursorLeft: "chevron.left"
-        case .cursorRight: "chevron.right"
-        case .enter: "return"
-        case .pageUp: "arrow.up.to.line"
-        case .pageDown: "arrow.down.to.line"
+        case .cursorUp: icon = .dPadUp
+        case .cursorDown: icon = .down
+        case .cursorLeft: icon = .left
+        case .cursorRight: icon = .right
+        case .enter: icon = .enter
+        case .backspace: icon = .backspace
+        case .clearScreen: icon = .clear
+        default: icon = nil
         }
+        button.setImage(icon?.uiImage, for: .normal)
+        button.setTitle(icon == nil ? command.title : nil, for: .normal)
+        button.titleLabel?.font = MudiTypography.uiFont(11)
+        button.setTitleColor(MudiPalette.inkUI, for: .normal)
     }
-
-    private static func identifier(for command: Command) -> String {
-        switch command {
-        case .cursorUp: "up"
-        case .cursorDown: "down"
-        case .cursorLeft: "left"
-        case .cursorRight: "right"
-        case .enter: "enter"
-        case .pageUp: "page-up"
-        case .pageDown: "page-down"
-        }
+    func setCornerCommand(_ command: Command, index: Int) {
+        guard cornerButtons.indices.contains(index), [.backspace, .clearScreen, .pageUp, .pageDown, .home, .end].contains(command) else { return }
+        cornerCommands[index] = command
+        UserDefaults.standard.set(command.rawValue, forKey: "dev.mudi.mobile.dpad-corner-" + (index == 0 ? "left" : "right"))
+        let button = cornerButtons[index]
+        configureGlyph(button, command: command)
+        if let imageView = button.imageView { button.bringSubviewToFront(imageView) }
+        button.accessibilityLabel = command.title
+        configureCornerMenu(button, index: index)
     }
-
-    private static func label(for command: Command) -> String {
-        switch command {
-        case .cursorUp: "Cursor up"
-        case .cursorDown: "Cursor down"
-        case .cursorLeft: "Cursor left"
-        case .cursorRight: "Cursor right"
-        case .enter: "Return"
-        case .pageUp: "Page up"
-        case .pageDown: "Page down"
-        }
+    private func configureCornerMenu(_ button: UIButton, index: Int) {
+        let choices: [Command] = [.backspace, .clearScreen, .pageUp, .pageDown, .home, .end]
+        button.menu = UIMenu(title: "角键操作", children: choices.map { command in
+            UIAction(title: command.title, state: cornerCommands[index] == command ? .on : .off) { [weak self] _ in
+                self?.setCornerCommand(command, index: index)
+            }
+        })
     }
 }
