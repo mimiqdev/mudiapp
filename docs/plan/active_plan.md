@@ -146,3 +146,5 @@
 - make test-core：13 项通过；/tmp/mudi-build/arc-icon-core.log。
 - 核对 Pro Max 明暗弧、预览和手势设置的真实渲染，截图 /tmp/mudi-build/arc-icon-final-preview/；模拟器和真机 Assets.car 均含 Any、Dark、Tinted 三套图标。真机构建成功，已更新安装到 Mimikyu 并启动成功；安装日志 /tmp/mudi-build/arc-icon-device-install.json，启动日志 /tmp/mudi-build/arc-icon-device-launch.json。
 - 本轮不归档 Phase 10、不合并、不推送，Agent 工具适配仍暂缓；设备安装不等同于真实 Host 手工出口验收。
+
+**PR 评审（2026-10-04）：** 用户确认创建 UI polish PR，授权推送评审分支 users/agent/ui-polish-pr。此分支仅整理四个 UI 提交，保留远端 main 的原 Phase 10 计划；产品、测试和项目配置与已验证的 ui-polish 6f03738d 一致。本轮不合并、不归档，Agent 工具适配继续暂缓。
