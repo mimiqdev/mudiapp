@@ -45,6 +45,10 @@ targets:
           - "Info.plist"
     resources:
       - path: Mudi/Resources/Assets.xcassets
+      - path: Mudi/Resources/Fonts/Inter.ttf
+      - path: Mudi/Resources/Fonts/NotoSansSC.ttf
+      - path: Mudi/Resources/Fonts/Inter-OFL.txt
+      - path: Mudi/Resources/Fonts/NotoSansSC-OFL.txt
       - path: Mudi/Resources/SymbolsNerdFontMono-Regular.ttf
       - path: Mudi/Resources/SymbolsNerdFontMono-LICENSE.txt
       - path: Mudi/Resources/JetBrainsMonoNerdFontMono-Regular.ttf

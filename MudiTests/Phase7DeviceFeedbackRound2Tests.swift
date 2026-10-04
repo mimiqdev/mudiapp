@@ -11,6 +11,10 @@ import XCTest
 @MainActor
 final class Phase7DeviceFeedbackRound2Tests: XCTestCase {
     func testDPadOverlayPopsAboveBarNearDirectionButton() throws {
+        let key = "dev.mudi.mobile.dpad-relative-position"
+        let saved = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { if let saved { UserDefaults.standard.set(saved, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) } }
         let fixture = try makeBarFixture(width: 390)
         defer { fixture.teardown() }
 
@@ -32,13 +36,17 @@ final class Phase7DeviceFeedbackRound2Tests: XCTestCase {
             "The D-pad card must float above the shortcut bar"
         )
         XCTAssertLessThanOrEqual(
-            abs(overlay.frame.minX - dpadButton.frame.minX),
+            abs(overlay.frame.minX - dpadButton.convert(dpadButton.bounds, to: fixture.bar).minX),
             24,
             "The D-pad card must pop up near the direction button"
         )
     }
 
     func testDPadDragTracksFingerDirection() throws {
+        let key = "dev.mudi.mobile.dpad-relative-position"
+        let saved = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { if let saved { UserDefaults.standard.set(saved, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) } }
         let fixture = try makeBarFixture(width: 390)
         defer { fixture.teardown() }
 
@@ -72,7 +80,7 @@ final class Phase7DeviceFeedbackRound2Tests: XCTestCase {
         )
     }
 
-    func testLatchRenderingTintsGlyphWithoutBackgroundFill() throws {
+    func testLatchRenderingUsesFigmaFilledKeycap() throws {
         let terminalView = ShellTerminalView(frame: .zero)
         let harness = Phase7TerminalViewHarness(terminalView: terminalView)
         defer {
@@ -91,32 +99,32 @@ final class Phase7DeviceFeedbackRound2Tests: XCTestCase {
         controlButton.sendActions(for: .touchUpInside)
         XCTAssertTrue(controlButton.isSelected)
         XCTAssertEqual(
-            controlButton.backgroundColor,
-            .clear,
-            "Latched Ctrl must not fill the button background"
+            (controlButton as? MudiKeyButton)?.cap.backgroundColor?.resolvedColor(with: bar.traitCollection),
+            MudiPalette.inkUI.resolvedColor(with: bar.traitCollection),
+            "Latched Ctrl uses the Figma filled keycap"
         )
         XCTAssertEqual(
-            controlButton.tintColor,
-            .systemBlue,
-            "Latched Ctrl must tint the glyph with the accent color"
+            controlButton.tintColor.resolvedColor(with: bar.traitCollection),
+            MudiPalette.canvasUI.resolvedColor(with: bar.traitCollection),
+            "Selected keycaps invert their glyph"
         )
 
         controlButton.sendActions(for: .touchUpInside)
         XCTAssertFalse(controlButton.isSelected)
-        XCTAssertEqual(controlButton.tintColor, UIColor.label)
+        XCTAssertEqual(controlButton.tintColor.resolvedColor(with: bar.traitCollection), MudiPalette.inkUI.resolvedColor(with: bar.traitCollection))
 
         dpadButton.sendActions(for: .touchUpInside)
         XCTAssertTrue(dpadButton.isSelected)
-        XCTAssertEqual(dpadButton.backgroundColor, .clear)
-        XCTAssertEqual(dpadButton.tintColor, .systemBlue)
+        XCTAssertEqual((dpadButton as? MudiKeyButton)?.cap.backgroundColor?.resolvedColor(with: bar.traitCollection), MudiPalette.inkUI.resolvedColor(with: bar.traitCollection))
+        XCTAssertEqual(dpadButton.tintColor.resolvedColor(with: bar.traitCollection), MudiPalette.canvasUI.resolvedColor(with: bar.traitCollection))
 
         dpadButton.sendActions(for: .touchUpInside)
         XCTAssertFalse(dpadButton.isSelected)
-        XCTAssertEqual(dpadButton.tintColor, UIColor.label)
+        XCTAssertEqual(dpadButton.tintColor.resolvedColor(with: bar.traitCollection), MudiPalette.inkUI.resolvedColor(with: bar.traitCollection))
         _ = dpadButton
     }
 
-    func testBarIconsShareUniformSymbolConfiguration() throws {
+    func testBarUsesOriginalFigmaIconsAndUniformKeycapHeight() throws {
         let terminalView = ShellTerminalView(frame: .zero)
         let harness = Phase7TerminalViewHarness(terminalView: terminalView)
         defer {
@@ -126,25 +134,24 @@ final class Phase7DeviceFeedbackRound2Tests: XCTestCase {
         let bar = try XCTUnwrap(terminalView.shortcutBar)
         harness.window.layoutIfNeeded()
         let buttons = phase7ShortcutButtons(in: bar)
-        XCTAssertEqual(buttons.count, 7)
+        XCTAssertEqual(buttons.count, 9)
 
-        // UIKit enriches stored symbol configurations with environment
-        // traits, so uniformity + identical point size/weight/scale are
-        // asserted via the configuration descriptions.
-        let descriptions = buttons.map {
-            String(describing: $0.image(for: .normal)?.configuration)
-        }
-        for description in descriptions {
-            XCTAssertTrue(description.contains("pointSize=15"), description)
-            XCTAssertTrue(description.contains("weight=Semibold"), description)
-            XCTAssertTrue(description.contains("scale=Medium"), description)
+        let iconIDs = ["dpad", "paste", "history", "compose", "jump-to", "dismiss-keyboard"]
+        for id in iconIDs {
+            let button = try XCTUnwrap(phase7View(with: "terminal-shortcut-" + id, in: bar) as? UIButton)
+            let image = try XCTUnwrap(button.image(for: .normal))
+            XCTAssertEqual(image.renderingMode, .alwaysTemplate)
+            XCTAssertEqual(image.size, CGSize(width: 18, height: 18))
         }
         let heights = Set(buttons.map { $0.bounds.height })
         XCTAssertEqual(
             heights,
-            [32],
-            "All bar buttons must share one uniform frame height"
+            [44],
+            "All independent button targets must share a 44pt frame height"
         )
+        for button in buttons {
+            XCTAssertEqual(try XCTUnwrap(button as? MudiKeyButton).cap.bounds.height, 34, accuracy: 0.1)
+        }
     }
 
     @MainActor

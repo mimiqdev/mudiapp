@@ -66,11 +66,13 @@ struct RootView: View {
                     // first responder so UIKit restores the keyboard without
                     // a resize animation.
                     .id("ordinary-\(activeConnection.host.id)")
-                case let .attached(_, pane):
+                case let .attached(herdrSession, pane):
                     TerminalScreen(
                         host: activeConnection.host,
                         session: activeConnection.session,
                         title: activeConnection.terminalTitle ?? pane.terminalTitle,
+                        subtitle: PanePickerCatalog(host: activeConnection.host, snapshot: HerdrSnapshot(sessions: [herdrSession]))
+                            .rows.first { $0.pane.id == pane.id }?.context,
                         transport: activeConnection.transport,
                         onDisconnect: model.disconnect,
                         onOpenPanePicker: model.openPanePickerFromTerminal,
@@ -136,6 +138,7 @@ struct RootView: View {
                 )
             }
         }
+        .tint(MudiPalette.ink)
         .preferredColorScheme(model.preferences.appearance.colorScheme)
         .onGeometryChange(for: CGSize.self) { proxy in
             proxy.size
@@ -210,20 +213,24 @@ struct RootView: View {
                     host: context.host,
                     credentials: context.credentials,
                     onSave: model.save,
-                    onCancel: model.cancelEditing
+                    onCancel: model.cancelEditing,
+                    addressPromotion: Binding(get: { model.preferences.isAddressPromotionEnabled }, set: { model.updateAddressPromotionEnabled($0) })
                 )
             }
         }
         .overlay(alignment: .top) {
             if model.isTransparentlyReconnecting {
-                Label("Reconnecting…", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(.blue.opacity(0.85), in: Capsule())
-                    .padding(.top, 60)
-                    .accessibilityIdentifier("transparent-reconnect-overlay")
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small).tint(MudiPalette.ink)
+                    Text("网络已切换，正在重连…").font(MudiTypography.body(13, weight: .medium))
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(MudiPalette.ink)
+                .padding(.horizontal, 14).frame(height: 44)
+                .background(MudiPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(MudiPalette.border, lineWidth: 1))
+                .padding(.horizontal, 20).padding(.top, 60)
+                .accessibilityIdentifier("transparent-reconnect-overlay")
                     .transition(.opacity)
             }
         }

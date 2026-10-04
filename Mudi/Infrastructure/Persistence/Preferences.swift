@@ -22,6 +22,7 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
     /// When enabled, a Host's last successful address is tried first without
     /// changing the saved manual order.
     var isAddressPromotionEnabled: Bool
+    var thumbArc: ThumbArcPreferences
 
     init(
         appearance: AppearancePreference = .system,
@@ -31,7 +32,8 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
         hasCompletedLocalNetworkOnboarding: Bool = false,
         isDebugLoggingEnabled: Bool = false,
         isSaveLogsEnabled: Bool = false,
-        isAddressPromotionEnabled: Bool = false
+        isAddressPromotionEnabled: Bool = false,
+        thumbArc: ThumbArcPreferences = ThumbArcPreferences()
     ) {
         self.appearance = appearance
         self.themeSelection = themeSelection
@@ -41,6 +43,7 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
         self.isDebugLoggingEnabled = isDebugLoggingEnabled
         self.isSaveLogsEnabled = isSaveLogsEnabled
         self.isAddressPromotionEnabled = isAddressPromotionEnabled
+        self.thumbArc = thumbArc
     }
 
     /// Source-compatible initializer for callers that only know the original
@@ -93,6 +96,7 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
             Bool.self,
             forKey: .isSaveLogsEnabled
         ) ?? false
+        thumbArc = try container.decodeIfPresent(ThumbArcPreferences.self, forKey: .thumbArc) ?? ThumbArcPreferences()
         isAddressPromotionEnabled = try container.decodeIfPresent(
             Bool.self,
             forKey: .isAddressPromotionEnabled
@@ -108,6 +112,7 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
         case isDebugLoggingEnabled
         case isSaveLogsEnabled
         case isAddressPromotionEnabled
+        case thumbArc
     }
 }
 

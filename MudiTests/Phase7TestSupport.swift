@@ -286,17 +286,6 @@ func phase7Buttons(in root: UIView) -> [UIButton] {
 
 @MainActor
 func phase7ShortcutButtons(in bar: MudiTerminalShortcutBar) -> [UIButton] {
-    guard let stack = phase7Descendants(of: bar)
-        .compactMap({ $0 as? UIStackView })
-        .first
-    else {
-        return []
-    }
-
-    let stackedButtons = stack.arrangedSubviews.compactMap { $0 as? UIButton }
-    let dismissButton = phase7View(
-        with: "terminal-shortcut-dismiss-keyboard",
-        in: bar
-    ) as? UIButton
-    return stackedButtons + (dismissButton.map { [$0] } ?? [])
+    (bar.stackView.arrangedSubviews + bar.pinnedStackView.arrangedSubviews)
+        .compactMap { $0 as? UIButton }
 }

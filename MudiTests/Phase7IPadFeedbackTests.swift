@@ -86,7 +86,7 @@ final class Phase7IPadFeedbackTests: XCTestCase {
         bar.updateComposition(markedText: nil)
         harness.window.layoutIfNeeded()
         XCTAssertFalse(keyboardButton.isHidden)
-        XCTAssertEqual(visibleButtons().count, 7)
+        XCTAssertEqual(visibleButtons().count, 9)
         XCTAssertTrue(
             label.isHidden,
             "A suppressed strip must never present the composition label"

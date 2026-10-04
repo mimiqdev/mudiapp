@@ -35,8 +35,8 @@ struct TerminalAppearance {
         let selection = TerminalThemeRegistry.defaultSelection
         let theme = TerminalThemeRegistry.resolve(selection, for: variant)
             ?? TerminalThemeRegistry.builtInThemes[0]
-        let background: UIColor = colorScheme == .dark ? .black : .white
-        let foreground: UIColor = colorScheme == .dark ? .white : .black
+        let background = theme.defaultBackground.uiColor
+        let foreground = theme.defaultForeground.uiColor
         return TerminalAppearance(
             theme: theme,
             background: background,

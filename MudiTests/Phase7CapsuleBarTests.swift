@@ -44,10 +44,10 @@ final class Phase7CapsuleBarTests: XCTestCase {
         )
         XCTAssertEqual(
             layout.cornerRadius,
-            22,
-            "A 44pt bar must have fully rounded capsule corners"
+            0,
+            "The Figma phone bar spans the screen with square outer corners"
         )
-        XCTAssertEqual(layout.bottomMargin, 10)
+        XCTAssertEqual(layout.bottomMargin, 0)
     }
 
     // MARK: iPad layout contract
@@ -66,7 +66,7 @@ final class Phase7CapsuleBarTests: XCTestCase {
             layout.centered,
             "The capped iPad capsule must be centered"
         )
-        XCTAssertEqual(layout.cornerRadius, 22)
+        XCTAssertEqual(layout.cornerRadius, 12)
     }
 
     func testPadPolicyFallsBackToFullSpanWhenCapNoLongerBinds() {

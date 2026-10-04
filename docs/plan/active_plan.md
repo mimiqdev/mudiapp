@@ -77,3 +77,74 @@
 ## 完成后
 
 归档为 `archive/10-ux-polish-2.md`，将 `future/11-release.md` 提升为 `active_plan.md`。
+
+
+## 用户追加：Figma UI polish（ui-polish 分支）
+
+**出口：** 按 2026-10-03 用户提供的 Figma `Bs8ZxjukT714hydSC9WejI` 实现非 Agent 的明暗界面；保留现有 SSH/Mosh/Herdr wire 与会话语义。此独立分支不归档 Phase 10，不合并、不推送。
+
+**范围内：** 设计色彩/字体/原始图标；主机列表及连接反馈；主机编辑；Pane Picker 的搜索、状态筛选、项目分组及本地收藏/最近使用；终端导航、可滚动快捷栏、Ctrl/反向 Tab、compose/history；可拖动/锁定 D-Pad；拇指快捷弧及槽位/左右手/触感/练习设置；现有重连状态的呈现。
+
+**不在本轮：** Pi/Agent 面板、工具协议适配；跨 Host 会话实现；future 项目；远端协议与连接生命周期变更。
+
+**自动化（先红后绿）：**
+- `UIPolishTests.testHostsUseFigmaCanvasInBothAppearancesAndKeepHostAction`：明暗真实渲染使用设计 canvas，主机入口仍传递正确 Host。
+- `UIPolishTests.testPickerOffersSearchAndStateFiltersWithoutLosingCurrentPane`：真实 Picker 展示搜索与状态筛选，当前 pane 身份标记保留。
+- `UIPolishTests.testShortcutBarHasScrollableHistoryComposeAndPinnedNavigation`：历史/compose 可用，跳转/键盘固定可达。
+- `UIPolishTests.testDPadLockKeepsPositionButDoesNotDisableKeys`：锁定禁止拖动，方向键仍可用。
+- `UIPolishTests.testDoubleTapDragIsInstalledWithoutReplacingTextSelection`：双击拖选手势安装且不取代单指文本选择。
+- `UIPolishTests.testArcPreferencesRoundTripAndOldPreferencesRemainCompatible`：槽位、左右手和触感可保存，旧设置解码兼容。
+- `UIPolishRenderTests.testHostLargeTitleRemainsVisibleInBothAppearances`：真实渲染中原生大标题在明暗模式均可见，避免导航背景遮挡。
+- 补充 `UIPolishInteractionTests` 覆盖搜索/筛选的 pane 身份、收藏/最近使用持久化、快捷弧边缘几何/返回原点取消/真实输入、D-Pad 自定义角键、compose bracketed paste。
+- 回归：`make test-core`、Mudi XCTest（模拟器）；仅更新被新设计明确替代的旧外观合同。
+
+**手工：** 对照 Figma 核对主机、编辑、Picker、终端、拇指弧、D-Pad 的明暗渲染；iPhone 与 iPad 检查可达范围、滚动与键盘空间。真实主机/设备交互出口保留待用户验收。
+
+**切片：** 合同/红测 → 设计系统与资源 → 主机/Picker/编辑 → 终端与输入浮层 → 模拟器验证。
+
+
+**验证记录（2026-10-03）：**
+- 先跑红 6 项 UI 合同，再实现；新增真实输入、持久化、几何、后台颜色解析、D-Pad 角键及原生标题可见性覆盖。
+- `make test-core`：13 项通过；日志 `/tmp/mudi-build-core.log`。
+- iPhone 17 Pro / iOS 27 模拟器全量 XCTest：353 项通过、0 失败、0 跳过；`/tmp/mudi-build/UIPolish-Verified2.xcresult`。
+- iPad Pro 11 / iOS 27 模拟器 UI、交互、渲染、快捷栏及输入空间检查：32 项通过、0 失败；`/tmp/mudi-build/UIPolish-iPadVerified.xcresult`。
+- 核对 41 个原始 SVG 的编译尺寸，以及主机、编辑、Picker、终端、D-Pad、拇指弧和设置的 14 张明暗渲染；预览位于 `/tmp/mudi-build/ui-preview/`。
+- 原生大标题被导航背景遮挡的问题已修复并有像素断言；既有地址竞速测试补充了 fake clock 注册同步，保持原有预算及结果合同。
+- 真机与真实 Host 交互尚未验收；此记录不代表 Phase 10 手工出口完成，Agent 工具适配仍暂缓。
+
+**用户反馈修正（2026-10-03）：** D-Pad 删除/清除角键采用与方向键相同的单层轮廓，取消额外虚线；拇指快捷弧全部保持等大，选中仅通过颜色和标签反馈。先跑红选中前后目标几何稳定测试，再移除放大；角键自定义与终端输入合同沿用现有覆盖。
+
+- 修正验证：Pro Max 相关 UI/交互/明暗渲染 20 项通过，Core 13 项通过；选中前后所有目标的可见位置与尺寸保持一致。结果 `/tmp/mudi-build/UIPolish-Uniform-Green.xcresult`，新截图 `/tmp/mudi-build/ui-preview-uniform/`。
+
+**Figma 原则 review 修复（2026-10-03）：** 用户确认修复 review 中的 7 项差距。以 Implementation Notes `172:2976` 与新版 Composer 明暗画面为准；Agent 工具继续暂缓。
+
+- Compose 改为键盘上方的实色 inline 卡片，取代快捷栏；原生 UITextView 自动增高至 6 行后内部滚动，保留中文输入及系统键盘能力。工具栏从左侧起始并可滚动，清空置末尾，听写入口与发送固定；超过 20 行先显示行数并要求第二次确认，修改正文后重新确认；原生长按菜单提供回车、括号粘贴和本地草稿选项。
+- D-Pad 以安全区域定位、保存相对位置，重新打开、旋转和窄窗口变化后重算边界；短窗口内方向键可以滚动。视觉轮廓沿用用户已确认的单层样式，拖动/锁定及快捷弧选中均不放大目标。
+- 快捷栏顺序为 Esc、Tab、Ctrl、D-Pad、Compose、Paste、History；普通快捷栏与 Composer 在可用宽度内滚动，Picker/键盘或听写/发送保持固定。按钮提供独立的至少 44pt 点击区域；可见图标沿用 Figma 原始尺寸。
+- UI 字体使用 Dynamic Type，主机地址、连接错误和 Pane 上下文允许换行；临时浮层沿用原生 Liquid Glass/旧系统 blur，并应用对应明暗模式的 tint、描边和阴影。
+- 新增红测覆盖 inline Compose 与长文确认、候选栏高度/网格预留、44pt 区域、快捷栏顺序、D-Pad 位置保存与短窗口边界、字体缩放、浅色浮层选中/取消后的轮廓，以及 Compose 在输入被阻止或 terminal 停止后释放键盘焦点。地址竞速旧测试补齐 fake clock 的计时器注册同步；D-Pad 拖动旧测试隔离已保存的位置，底部留白断言按设备布局策略计算。
+
+**本轮验证：**
+- `make test-core`：13 项通过；`/tmp/mudi-build/principles-core.log`。
+- iPhone 17 Pro Max / iOS 27 全量 XCTest：361 项通过、0 失败、0 跳过；`/tmp/mudi-build/UIPolish-Principles-Complete.xcresult`。
+- iPad Pro 11-inch (M5) / iOS 27 相关 UI、浮层、键盘空间、尺寸变化及交互回归：55 项通过、0 失败、0 跳过；`/tmp/mudi-build/UIPolish-Principles-iPadComplete.xcresult`。
+- 51 个原始 Figma SVG 编译尺寸检查通过；核对 19 张明暗/大字号渲染，另抓取 4 张包含真实系统键盘的 Pro Max Compose 屏幕。预览位于 `/tmp/mudi-build/ui-preview-principles/`。
+- 中文候选栏高度及短窗口边界通过注入几何验证；真实 Host、真机输入、系统听写与硬件键盘手工出口仍待验收。此记录不代表 Phase 10 手工出口完成。
+
+**新版拇指弧与 App 图标（2026-10-04）：** 用户确认按新版 Figma 普通 32pt、选中 38pt；此决定替代此前「所有圆等大」的反馈合同。以 Thumb Arc 67:2278、设置 56:1183 / 73:2754 和 Implementation Notes 中的方向选择规则为准。
+
+- 双击后拖动按方向选中，无需移动到按钮；120° 均分扇区不可见，外侧容错 15°、边界滞回 4°。触发距离短／中／长为 22／28／36pt，旧设置默认中；进入 18pt 取消圈后取消，离开扇区不执行操作。选中放大围绕固定中心、橙色 glow 与外侧原生 Liquid Glass 标签，普通标签半径 110pt；边缘旋转布局及方向扇区，极端角落将视觉标签移入可见范围，触摸起点保留。
+- 同步预览、练习文案与触发距离的原生分段设置；保留单指长按文本选择、默认槽位与现有真实输入路径。
+- 使用 Figma 最终 C3-a 的默认 188:3263、深色 188:3292、系统着色 188:3321 三张 1024×1024 PNG，原始导出像素均不透明，仅移除多余 alpha 通道；三种外观均编译到 AppIcon。更新 36pt 取消圈、4pt 起点及四个 12.1905pt 原始弧上 SVG，保留设置页原尺寸图标；55 个 SVG 尺寸按 actool 的显示像素取整规则验证。
+- 先跑红四项方向选择／触发距离／防抖／尺寸合同，再实现；补充左右手与边缘旋转、离开扇区后的激活状态、真实短／中／长控件及持久化测试。
+
+**本轮验证：**
+
+- Pro Max 相关 UI 32 项通过；/tmp/mudi-build/ThumbArc-Icon-Green5.xcresult。
+- iPhone 17 Pro Max / iOS 27 全量 XCTest：368 项通过、0 失败、0 跳过；/tmp/mudi-build/ThumbArc-Icon-ProMax-Complete.xcresult。
+- iPad Pro 11-inch (M5) / iOS 27 UI、方向弧、设置、输入空间及紧凑窗口回归：45 项通过、0 失败；/tmp/mudi-build/ThumbArc-Icon-iPad-Complete.xcresult。
+- make test-core：13 项通过；/tmp/mudi-build/arc-icon-core.log。
+- 核对 Pro Max 明暗弧、预览和手势设置的真实渲染，截图 /tmp/mudi-build/arc-icon-final-preview/；模拟器和真机 Assets.car 均含 Any、Dark、Tinted 三套图标。真机构建成功，已更新安装到 Mimikyu 并启动成功；安装日志 /tmp/mudi-build/arc-icon-device-install.json，启动日志 /tmp/mudi-build/arc-icon-device-launch.json。
+- 本轮不归档 Phase 10、不合并、不推送，Agent 工具适配仍暂缓；设备安装不等同于真实 Host 手工出口验收。
+
+**PR 评审（2026-10-04）：** 用户确认创建 UI polish PR，授权推送评审分支 users/agent/ui-polish-pr。此分支仅整理四个 UI 提交，保留远端 main 的原 Phase 10 计划；产品、测试和项目配置与已验证的 ui-polish 6f03738d 一致。本轮不合并、不归档，Agent 工具适配继续暂缓。
