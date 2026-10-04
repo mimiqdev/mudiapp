@@ -127,6 +127,7 @@ struct TerminalScreen: View {
     let host: Host
     let session: SSHShellSession
     let title: String
+    let subtitle: String?
     let transport: ActiveTransport
     let onDisconnect: () -> Void
     let onBackToBrowser: (() -> Void)?
@@ -151,6 +152,7 @@ struct TerminalScreen: View {
         host: Host,
         session: SSHShellSession,
         title: String? = nil,
+        subtitle: String? = nil,
         transport: ActiveTransport = .ssh,
         onDisconnect: @escaping () -> Void,
         onBackToBrowser: (() -> Void)? = nil,
@@ -168,7 +170,8 @@ struct TerminalScreen: View {
     ) {
         self.host = host
         self.session = session
-        self.title = title ?? host.hostname
+        self.title = title ?? host.displayName
+        self.subtitle = subtitle
         self.transport = transport
         self.onDisconnect = onDisconnect
         self.onBackToBrowser = onBackToBrowser
@@ -209,7 +212,9 @@ struct TerminalScreen: View {
                 isInputFocusAllowed: isInputFocusAllowed,
                 shouldRestoreInputFocus: shouldRestoreInputFocus,
                 onInputFocusChange: onInputFocusChange,
+                thumbArcPreferences: settingsModel.preferences.thumbArc,
                 onOpenPanePicker: onOpenPanePicker,
+                composeTargetLabel: subtitle ?? title,
                 onClosed: {
                     guard !isLeaving else { return }
                     terminalErrorState.clear()
@@ -266,14 +271,6 @@ struct TerminalScreen: View {
 
         }
         .background(Color(uiColor: terminalAppearance.background))
-        .overlay(alignment: terminalTransportBadgePolicy.alignment) {
-            transportBadge
-                .padding(.top, terminalTransportBadgePolicy.topInset)
-                .padding(
-                    .trailing,
-                    terminalTransportBadgePolicy.horizontalInset
-                )
-        }
         .onAppear {
             isLeaving = false
             terminalErrorState.clear()
@@ -282,37 +279,31 @@ struct TerminalScreen: View {
             isLeaving = false
             terminalErrorState.updateSession(newIdentity)
         }
-        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    isTerminalSettingsPresented = true
-                } label: {
-                    Image(systemName: "gearshape")
-                }
-                .accessibilityLabel("Terminal Settings")
-                .accessibilityIdentifier("terminal-settings")
-                .tint(Color(uiColor: terminalAppearance.foreground))
-            }
             ToolbarItem(placement: .topBarLeading) {
-                if let onBackToHosts {
-                    Button {
-                        beginLeaving(onBackToHosts)
-                    } label: {
-                        Label("Hosts", systemImage: "chevron.backward")
+                HStack(spacing: 10) {
+                    if let onBackToHosts {
+                        MudiRoundButton(icon: .chevronLeft, label: "Hosts", action: { beginLeaving(onBackToHosts) })
+                            .accessibilityIdentifier("return-to-hosts")
+                    } else if let onBackToBrowser {
+                        MudiRoundButton(icon: .chevronLeft, label: "Herdr", action: { beginLeaving(onBackToBrowser) })
                     }
-                    .accessibilityIdentifier("return-to-hosts")
-                    .tint(Color(uiColor: terminalAppearance.foreground))
-                } else if let onBackToBrowser {
-                    Button {
-                        beginLeaving(onBackToBrowser)
-                    } label: {
-                        Label("Herdr", systemImage: "chevron.backward")
-                    }
-                    .tint(Color(uiColor: terminalAppearance.foreground))
-                }
-            }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(MudiTypography.body(16, weight: .semibold)).lineLimit(1)
+                            .foregroundStyle(MudiPalette.ink)
+                        Text(subtitle ?? (host.displayName + " · " + (host.selectedTarget?.address ?? host.hostname)))
+                            .font(MudiTypography.mono(11)).foregroundStyle(MudiPalette.mute).lineLimit(1)
+                    }.frame(maxWidth: 180, alignment: .leading)
+                }.fixedSize(horizontal: true, vertical: false)
+            }.mudiToolbarBackground()
+            ToolbarItem(placement: .topBarTrailing) {
+                HStack(spacing: 8) {
+                    transportBadge.fixedSize()
+                    MudiRoundButton(icon: .settings, label: "终端设置", action: { isTerminalSettingsPresented = true })
+                        .accessibilityIdentifier("terminal-settings")
+                }.fixedSize()
+            }.mudiToolbarBackground()
         }
         .sheet(isPresented: $isTerminalSettingsPresented) {
             NavigationStack {
@@ -366,17 +357,14 @@ struct TerminalScreen: View {
 
     private var transportBadge: some View {
         Text(transport.displayName)
-            .font(.footnote.weight(.medium))
-            .foregroundStyle(Color(uiColor: transportBadgeStyle.text.uiColor))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(
-                Color(uiColor: transportBadgeStyle.fill.uiColor),
-                in: Capsule()
-            )
+            .font(MudiTypography.mono(11))
+            .foregroundStyle(MudiPalette.mute)
+            .padding(.horizontal, 9).frame(height: 24)
+            .overlay(Capsule().stroke(MudiPalette.border, lineWidth: 1))
             .accessibilityLabel(transport.accessibilityLabel)
             .accessibilityIdentifier("terminal-transport-badge")
     }
+
 }
 
 private extension ActiveTransport {

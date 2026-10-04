@@ -7,7 +7,7 @@ import UIKit
 /// state.
 @MainActor
 extension ShellTerminalView {
-    static let shortcutBarHeight: CGFloat = 44
+    static let shortcutBarHeight: CGFloat = 48
 
     /// Pure geometry for the visible grid rows when a bottom strip is
     /// reserved for the shortcut bar. Same floor math as SwiftTerm's own
@@ -43,6 +43,7 @@ extension ShellTerminalView {
         animationDuration: TimeInterval = 0,
         animationCurve: UInt = 0
     ) {
+        if let keyboardFrameEnd { lastKeyboardFrameEnd = keyboardFrameEnd }
         guard let bar = shortcutBar,
               let container = bar.superview,
               let bottom = shortcutBarBottomConstraint
@@ -55,11 +56,13 @@ extension ShellTerminalView {
         // The terminal scroll view reserves the whole strip between its own
         // bottom edge and the bar's TOP edge, so its grid rows always end
         // above the bar (keyboard up and down).
-        let reserved = offset + Self.shortcutBarHeight
+        let heightChanged = abs((shortcutBarHeightConstraint?.constant ?? 48) - bar.preferredHeight) > 0.25
+        shortcutBarHeightConstraint?.constant = bar.preferredHeight
+        let reserved = offset + bar.preferredHeight
         if let chromeView = container as? TerminalChromeView {
             chromeView.setReservedBottom(reserved)
         }
-        guard abs(bottom.constant - newConstant) > 0.25 else { return }
+        guard heightChanged || abs(bottom.constant - newConstant) > 0.25 else { return }
         bottom.constant = newConstant
         applyOffsetChange(
             to: container,
@@ -104,12 +107,9 @@ extension ShellTerminalView {
             equalTo: container.bottomAnchor
         )
         shortcutBarBottomConstraint = bottomConstraint
-        NSLayoutConstraint.activate([
-            bottomConstraint,
-            bar.heightAnchor.constraint(
-                equalToConstant: Self.shortcutBarHeight
-            )
-        ])
+        let heightConstraint = bar.heightAnchor.constraint(equalToConstant: bar.preferredHeight)
+        shortcutBarHeightConstraint = heightConstraint
+        NSLayoutConstraint.activate([bottomConstraint, heightConstraint])
         bar.applyCapsuleLayout(
             MudiShortcutBarCapsulePolicy.resolved(for: bar.traitCollection),
             in: container
@@ -128,7 +128,7 @@ extension ShellTerminalView {
     ) -> CGFloat {
         var offset = container.safeAreaInsets.bottom
             + (shortcutBar?.capsulePolicy?.bottomMargin ?? 0)
-        if let window = container.window,
+        if container.window != nil,
            let keyboardFrame = keyboardFrameEnd ?? lastKeyboardFrameEnd {
             let keyboardTop = container.convert(keyboardFrame, from: nil).minY
             if keyboardTop < container.bounds.maxY - 0.5 {

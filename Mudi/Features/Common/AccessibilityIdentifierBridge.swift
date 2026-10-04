@@ -13,15 +13,21 @@ struct AccessibilityIdentifierBridge: UIViewRepresentable {
     let identifier: String
     var action: (() -> Void)?
     var accessibilityLabel: String?
+    var accessibilityValue: String?
+    var accessibilityTraits: UIAccessibilityTraits
 
     init(
         identifier: String,
         action: (() -> Void)? = nil,
-        accessibilityLabel: String? = nil
+        accessibilityLabel: String? = nil,
+        accessibilityValue: String? = nil,
+        accessibilityTraits: UIAccessibilityTraits = []
     ) {
         self.identifier = identifier
         self.action = action
         self.accessibilityLabel = accessibilityLabel
+        self.accessibilityValue = accessibilityValue
+        self.accessibilityTraits = accessibilityTraits
     }
 
     func makeUIView(context: Context) -> UIView {
@@ -29,12 +35,16 @@ struct AccessibilityIdentifierBridge: UIViewRepresentable {
             let control = BridgeControl()
             control.accessibilityIdentifier = identifier
             control.accessibilityLabel = accessibilityLabel
+            control.accessibilityValue = accessibilityValue
+            control.accessibilityTraits = accessibilityTraits
             control.onActivated = action
             return control
         }
         let view = UIView()
         view.accessibilityIdentifier = identifier
         view.accessibilityLabel = accessibilityLabel
+        view.accessibilityValue = accessibilityValue
+        view.accessibilityTraits = accessibilityTraits
         view.isUserInteractionEnabled = false
         return view
     }
@@ -42,6 +52,8 @@ struct AccessibilityIdentifierBridge: UIViewRepresentable {
     func updateUIView(_ uiView: UIView, context: Context) {
         uiView.accessibilityIdentifier = identifier
         uiView.accessibilityLabel = accessibilityLabel
+        uiView.accessibilityValue = accessibilityValue
+        uiView.accessibilityTraits = accessibilityTraits
         (uiView as? BridgeControl)?.onActivated = action
     }
 

@@ -15,7 +15,7 @@ struct SettingsView: View {
                         Text(appearance.label).tag(appearance)
                     }
                 }
-            }
+            }.mudiRow()
 
             Section("Connections") {
                 Toggle(
@@ -26,12 +26,17 @@ struct SettingsView: View {
                     )
                 )
                 .accessibilityIdentifier("settings-address-promotion-toggle")
-            }
+            }.mudiRow()
+
+            Section {
+                NavigationLink("拇指快捷弧") { ThumbArcSettingsView(model: model) }
+            }.mudiRow()
 
             TerminalAppearanceSection(model: model)
             DiagnosticsSettingsSection(model: model)
         }
-        .navigationTitle("Settings")
+        .mudiGroupedList()
+        .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -114,6 +119,7 @@ struct TerminalAppearanceSection: View {
             AccessibilityIdentifierBridge(identifier: "terminal-theme-preview")
                 .frame(width: 1, height: 1)
         }
+        .mudiRow()
         .fileImporter(
             isPresented: $isFontImporterPresented,
             allowedContentTypes: supportedFontTypes,
@@ -173,9 +179,11 @@ struct TerminalAppearanceSettingsView: View {
     var body: some View {
         Form {
             TerminalAppearanceSection(model: model)
+            Section { NavigationLink("拇指快捷弧") { ThumbArcSettingsView(model: model) } }.mudiRow()
             DiagnosticsSettingsSection(model: model)
         }
-        .navigationTitle("Terminal Appearance")
+        .mudiGroupedList()
+        .navigationTitle("终端设置")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -211,7 +219,7 @@ struct DiagnosticsSettingsSection: View {
                 Label("Share Logs…", systemImage: "square.and.arrow.up")
             }
             .accessibilityIdentifier("settings-share-logs-button")
-        }
+        }.mudiRow()
     }
 
     private var logShareURL: URL {
