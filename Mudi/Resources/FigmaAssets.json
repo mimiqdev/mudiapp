@@ -168,17 +168,17 @@
     "height": "18"
   },
   {
-    "file": "dbbd1.svg",
-    "variable": "imgOrigin",
-    "source": "thumb_arc",
+    "file": "a285a.svg",
+    "variable": "imgOrigin18Pthairline",
+    "source": "thumb_arc_direction_67:2278",
     "name": "Origin",
-    "width": "12",
-    "height": "12"
+    "width": "36",
+    "height": "36"
   },
   {
-    "file": "b6889.svg",
+    "file": "222e9.svg",
     "variable": "imgOriginDot",
-    "source": "thumb_arc",
+    "source": "thumb_arc_direction_67:2278",
     "name": "OriginDot",
     "width": "4",
     "height": "4"
@@ -406,5 +406,37 @@
     "source": "composer_multiline",
     "width": "17",
     "height": "17"
+  },
+  {
+    "file": "f5f70.svg",
+    "variable": "imgGlyph",
+    "source": "thumb_arc_direction_67:2278",
+    "name": "ArcShiftTab",
+    "width": "12.1905",
+    "height": "12.1905"
+  },
+  {
+    "file": "3b6fc.svg",
+    "variable": "imgGlyph1",
+    "source": "thumb_arc_direction_67:2278",
+    "name": "ArcUp",
+    "width": "12.1905",
+    "height": "12.1905"
+  },
+  {
+    "file": "b7b0c.svg",
+    "variable": "imgGlyph2",
+    "source": "thumb_arc_direction_67:2278",
+    "name": "ArcClipboard",
+    "width": "12.1905",
+    "height": "12.1905"
+  },
+  {
+    "file": "56855.svg",
+    "variable": "imgGlyph3",
+    "source": "thumb_arc_direction_67:2278",
+    "name": "ArcJump",
+    "width": "12.1905",
+    "height": "12.1905"
   }
 ]

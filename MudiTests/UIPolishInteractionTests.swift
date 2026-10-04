@@ -148,7 +148,7 @@ final class UIPolishInteractionTests: XCTestCase {
         XCTAssertGreaterThan(enlarged, normal * 1.5)
     }
 
-    func testLightFloatingArcUsesLightOutlineAndShadowWithoutResizing() throws {
+    func testLightFloatingArcRestoresLightOutlineAndSizeAfterCancelling() throws {
         let overlay = MudiThumbArcOverlay()
         overlay.overrideUserInterfaceStyle = .light
         overlay.frame = CGRect(x: 0, y: 0, width: 440, height: 650)
@@ -157,11 +157,13 @@ final class UIPolishInteractionTests: XCTestCase {
         let key = try XCTUnwrap(overlay.subviews.first { $0.accessibilityLabel?.contains(" · ") == true })
         XCTAssertEqual(try XCTUnwrap(key.layer.borderColor).alpha, 0.10, accuracy: 0.001)
         XCTAssertEqual(key.layer.shadowOpacity, 0.14, accuracy: 0.001)
-        XCTAssertEqual(key.bounds.size, CGSize(width: 42, height: 42))
+        XCTAssertEqual(key.bounds.size, CGSize(width: 32, height: 32))
         overlay.select(at: CGPoint(x: key.frame.midX, y: key.frame.midY))
+        XCTAssertEqual(key.bounds.size, CGSize(width: 38, height: 38))
         overlay.select(at: CGPoint(x: 330, y: 420))
         XCTAssertEqual(try XCTUnwrap(key.layer.borderColor).alpha, 0.10, accuracy: 0.001,
                        "Returning to origin must restore the light outline token")
+        XCTAssertEqual(key.bounds.size, CGSize(width: 32, height: 32))
     }
 
     func testSearchMatchesRealHierarchyAndFilteringRetainsPaneIdentity() {
@@ -211,7 +213,7 @@ final class UIPolishInteractionTests: XCTestCase {
                     let layout = ThumbArcLayout(origin: origin, bounds: bounds, count: 6, isLeftHanded: left)
                     XCTAssertEqual(layout.centers.count, 6)
                     for center in layout.centers {
-                        XCTAssertTrue(bounds.contains(CGRect(x: center.x - 21, y: center.y - 21, width: 42, height: 42)))
+                        XCTAssertTrue(bounds.contains(CGRect(x: center.x - 19, y: center.y - 19, width: 38, height: 38)))
                     }
                     XCTAssertNil(layout.selectedIndex(at: origin))
                 }
@@ -219,7 +221,7 @@ final class UIPolishInteractionTests: XCTestCase {
         }
     }
 
-    func testArcSelectionKeepsTargetGeometryStable() {
+    func testArcSelectionEnlargesHighlightAroundStableCenters() {
         let overlay = MudiThumbArcOverlay()
         overlay.frame = CGRect(x: 0, y: 0, width: 440, height: 956)
         let preferences = ThumbArcPreferences()
@@ -231,7 +233,11 @@ final class UIPolishInteractionTests: XCTestCase {
         for index in keys.indices {
             overlay.select(at: CGPoint(x: frames[index].midX, y: frames[index].midY))
             XCTAssertEqual(overlay.selectedIndex, index)
-            XCTAssertEqual(keys.map(\.frame), frames, "Selection must not enlarge or move any target")
+            XCTAssertEqual(keys.map(\.center), frames.map { CGPoint(x: $0.midX, y: $0.midY) })
+            for (keyIndex, key) in keys.enumerated() {
+                let size: CGFloat = keyIndex == index ? 38 : 32
+                XCTAssertEqual(key.bounds.size, CGSize(width: size, height: size))
+            }
         }
         XCTAssertEqual(overlay.finish(), preferences.actions.last)
     }

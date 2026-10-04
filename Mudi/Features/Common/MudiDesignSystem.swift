@@ -102,6 +102,7 @@ enum MudiIcon: String, CaseIterable {
     case keyboard = "Keyboard"
     case origin = "Origin", originDot = "OriginDot", shiftTab = "ShiftTab", up = "Up"
     case arcPaste = "ArcPaste", arcLayers = "ArcLayers"
+    case arcShiftTab = "ArcShiftTab", arcUp = "ArcUp", arcClipboard = "ArcClipboard", arcJump = "ArcJump"
     case down = "Down", right = "Right", left = "Left", dPadUp = "DPadUp"
     case unlock = "Unlock", backspace = "Backspace", clear = "Clear", enter = "Enter"
     case statusWaiting = "StatusWaiting", statusWorking = "StatusWorking", statusDone = "StatusDone"

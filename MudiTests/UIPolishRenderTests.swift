@@ -41,8 +41,42 @@ final class UIPolishRenderTests: XCTestCase {
         for asset in assets {
             let name = try XCTUnwrap(asset["name"])
             let image = try XCTUnwrap(UIImage(named: "Mudi" + name), name)
-            XCTAssertEqual(image.size.width, try XCTUnwrap(Double(asset["width"] ?? "")), accuracy: 0.1, name)
-            XCTAssertEqual(image.size.height, try XCTUnwrap(Double(asset["height"] ?? "")), accuracy: 0.1, name)
+            // actool rounds fractional vector canvases up to the next display pixel.
+            let width = try XCTUnwrap(Double(asset["width"] ?? ""))
+            let height = try XCTUnwrap(Double(asset["height"] ?? ""))
+            XCTAssertEqual(image.size.width, ceil(width * image.scale) / image.scale, accuracy: 0.01, name)
+            XCTAssertEqual(image.size.height, ceil(height * image.scale) / image.scale, accuracy: 0.01, name)
+        }
+    }
+
+    func testArcActivationPickerPersistsAndRendersInBothAppearances() async throws {
+        for style in [UIUserInterfaceStyle.dark, .light] {
+            let name = "ThumbArcSettings.\(UUID())"
+            defer { UserDefaults(suiteName: name)?.removePersistentDomain(forName: name) }
+            let defaults = UserDefaults(suiteName: name)!
+            let store = UserDefaultsPreferencesStore(defaults: defaults)
+            let model = RootViewModel(preferencesStore: store)
+            let harness = UIPolishHarness(NavigationStack {
+                ThumbArcSettingsView(model: model)
+            }, style: style)
+            defer { harness.close() }
+            await harness.settle()
+            let scroll = try XCTUnwrap(phase7Descendants(of: harness.controller.view)
+                .compactMap { $0 as? UIScrollView }.first { $0.contentSize.height > $0.bounds.height })
+            scroll.setContentOffset(CGPoint(x: 0, y: max(-scroll.adjustedContentInset.top,
+                scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)), animated: false)
+            await harness.settle()
+            let picker = try XCTUnwrap(phase7Descendants(of: harness.controller.view)
+                .compactMap { $0 as? UISegmentedControl }.first { $0.numberOfSegments == 3 })
+            XCTAssertEqual((0..<3).map { picker.titleForSegment(at: $0) }, ["短", "中", "长"])
+            XCTAssertEqual(picker.selectedSegmentIndex, 1)
+            picker.selectedSegmentIndex = 2
+            picker.sendActions(for: .valueChanged)
+            await harness.settle()
+            XCTAssertEqual(model.preferences.thumbArc.activationDistance, .long)
+            let restored = try await store.load()
+            XCTAssertEqual(restored.thumbArc.activationDistance, .long)
+            attach("ArcGestures-" + (style == .dark ? "dark" : "light"), image: harness.screenshot())
         }
     }
 

@@ -16,7 +16,7 @@ struct ThumbArcSettingsView: View {
                 VStack(spacing: 12) {
                     ThumbArcDemo(preferences: draft, interactive: false).frame(height: 240)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
-                    Text("双击终端后不松手拖动呼出 · 松开执行 · 回起点取消")
+                    Text("双击后按住，朝操作方向轻滑即可选中 · 松开执行 · 回起点取消")
                         .font(MudiTypography.body(12)).foregroundStyle(MudiPalette.mute)
                 }.padding(.vertical, 16)
             } header: {
@@ -31,7 +31,7 @@ struct ThumbArcSettingsView: View {
                     .onDelete { draft.actions.remove(atOffsets: $0) }
                     .onMove { draft.actions.move(fromOffsets: $0, toOffset: $1) }
             } header: { MudiSectionHeader(title: "槽位", count: draft.actions.count) } footer: {
-                Text("按住 ≡ 拖动排序 · 顺序即弧上由下到上")
+                Text("按住 ≡ 拖动排序 · 顺序即弧上由下到上，选择只看方向")
                     .font(MudiTypography.body(12)).foregroundStyle(MudiPalette.mute)
             }
             .mudiRow()
@@ -51,7 +51,7 @@ struct ThumbArcSettingsView: View {
                         .accessibilityIdentifier("thumb-arc-custom-text")
                 }
             } header: { MudiSectionHeader(title: "可用操作") } footer: {
-                Text("移除一个槽位后即可添加。最多 6 个，保持拇指一次滑动可达。")
+                Text("移除一个槽位后即可添加。最多 6 个，120° 均分为 6 个 20° 扇区，选择只看方向。")
                     .font(MudiTypography.body(12)).foregroundStyle(MudiPalette.mute)
             }.mudiRow()
             Section {
@@ -59,8 +59,19 @@ struct ThumbArcSettingsView: View {
                     option("左手模式", detail: "镜像布局，弧向右上展开")
                 }.accessibilityIdentifier("thumb-arc-left-hand")
                 Toggle(isOn: $draft.hapticsEnabled) {
-                    option("触感反馈", detail: "滑过按钮时轻触提示")
+                    option("触感反馈", detail: "切换扇区时轻触提示")
                 }.accessibilityIdentifier("thumb-arc-haptics")
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        option("触发距离", detail: "离开触发点多远开始按方向选中")
+                        Spacer(minLength: 0)
+                        activationPicker.frame(width: 118)
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        option("触发距离", detail: "离开触发点多远开始按方向选中")
+                        activationPicker
+                    }
+                }
                 Button { practicePresented = true } label: {
                     HStack { option("练习模式", detail: "跟随引导练习拖选，不会发送按键"); Spacer(); MudiIcon.chevronRight.image }
                 }.buttonStyle(.plain).accessibilityIdentifier("thumb-arc-practice-button")
@@ -78,7 +89,7 @@ struct ThumbArcSettingsView: View {
         .sheet(isPresented: $practicePresented) {
             NavigationStack {
                 VStack(spacing: 16) {
-                    Text("双击后保持按住，拖到按钮再松开。回到起点可取消。")
+                    Text("双击后保持按住，朝操作方向轻滑即可选中，无需拖到按钮。松开执行，回到起点可取消。")
                         .font(MudiTypography.body(14)).foregroundStyle(MudiPalette.mute).padding(.horizontal, 20)
                     ThumbArcDemo(preferences: draft, interactive: true)
                         .accessibilityIdentifier("thumb-arc-practice")
@@ -87,6 +98,15 @@ struct ThumbArcSettingsView: View {
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { practicePresented = false } } }
             }
         }
+    }
+    private var activationPicker: some View {
+        Picker("触发距离", selection: $draft.activationDistance) {
+            ForEach(ThumbArcActivationDistance.allCases, id: \.self) { distance in
+                Text(distance.title).tag(distance)
+            }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("thumb-arc-activation-distance")
     }
     private func option(_ title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {

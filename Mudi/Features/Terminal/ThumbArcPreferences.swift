@@ -1,4 +1,15 @@
 import Foundation
+import CoreGraphics
+
+enum ThumbArcActivationDistance: String, Codable, CaseIterable, Sendable {
+    case short, medium, long
+    var title: String {
+        switch self { case .short: "短"; case .medium: "中"; case .long: "长" }
+    }
+    var points: CGFloat {
+        switch self { case .short: 22; case .medium: 28; case .long: 36 }
+    }
+}
 
 enum ThumbArcAction: String, Codable, CaseIterable, Sendable {
     case escape, controlC, shiftTab, cursorUp, paste, jumpTo
@@ -65,6 +76,15 @@ enum ThumbArcAction: String, Codable, CaseIterable, Sendable {
         default: nil
         }
     }
+    var arcIcon: MudiIcon? {
+        switch self {
+        case .shiftTab: .arcShiftTab
+        case .cursorUp: .arcUp
+        case .paste: .arcClipboard
+        case .jumpTo: .arcJump
+        default: icon
+        }
+    }
 }
 
 struct ThumbArcPreferences: Codable, Equatable, Sendable {
@@ -74,6 +94,7 @@ struct ThumbArcPreferences: Codable, Equatable, Sendable {
     }
     var isLeftHanded = false
     var hapticsEnabled = true
+    var activationDistance = ThumbArcActivationDistance.medium
     var customText = ""
     init() {}
     private static func normalize(_ values: [ThumbArcAction]) -> [ThumbArcAction] {
@@ -88,6 +109,8 @@ struct ThumbArcPreferences: Codable, Equatable, Sendable {
         isLeftHanded = try container.decodeIfPresent(Bool.self, forKey: .isLeftHanded) ?? false
         hapticsEnabled = try container.decodeIfPresent(Bool.self, forKey: .hapticsEnabled) ?? true
         customText = try container.decodeIfPresent(String.self, forKey: .customText) ?? ""
+        activationDistance = (try container.decodeIfPresent(String.self, forKey: .activationDistance))
+            .flatMap(ThumbArcActivationDistance.init(rawValue:)) ?? .medium
     }
-    private enum CodingKeys: String, CodingKey { case actions, isLeftHanded, hapticsEnabled, customText }
+    private enum CodingKeys: String, CodingKey { case actions, isLeftHanded, hapticsEnabled, customText, activationDistance }
 }

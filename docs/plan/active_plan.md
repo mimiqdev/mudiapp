@@ -130,3 +130,19 @@
 - iPad Pro 11-inch (M5) / iOS 27 相关 UI、浮层、键盘空间、尺寸变化及交互回归：55 项通过、0 失败、0 跳过；`/tmp/mudi-build/UIPolish-Principles-iPadComplete.xcresult`。
 - 51 个原始 Figma SVG 编译尺寸检查通过；核对 19 张明暗/大字号渲染，另抓取 4 张包含真实系统键盘的 Pro Max Compose 屏幕。预览位于 `/tmp/mudi-build/ui-preview-principles/`。
 - 中文候选栏高度及短窗口边界通过注入几何验证；真实 Host、真机输入、系统听写与硬件键盘手工出口仍待验收。此记录不代表 Phase 10 手工出口完成。
+
+**新版拇指弧与 App 图标（2026-10-04）：** 用户确认按新版 Figma 普通 32pt、选中 38pt；此决定替代此前「所有圆等大」的反馈合同。以 Thumb Arc 67:2278、设置 56:1183 / 73:2754 和 Implementation Notes 中的方向选择规则为准。
+
+- 双击后拖动按方向选中，无需移动到按钮；120° 均分扇区不可见，外侧容错 15°、边界滞回 4°。触发距离短／中／长为 22／28／36pt，旧设置默认中；进入 18pt 取消圈后取消，离开扇区不执行操作。选中放大围绕固定中心、橙色 glow 与外侧原生 Liquid Glass 标签，普通标签半径 110pt；边缘旋转布局及方向扇区，极端角落将视觉标签移入可见范围，触摸起点保留。
+- 同步预览、练习文案与触发距离的原生分段设置；保留单指长按文本选择、默认槽位与现有真实输入路径。
+- 使用 Figma 最终 C3-a 的默认 188:3263、深色 188:3292、系统着色 188:3321 三张 1024×1024 PNG，原始导出像素均不透明，仅移除多余 alpha 通道；三种外观均编译到 AppIcon。更新 36pt 取消圈、4pt 起点及四个 12.1905pt 原始弧上 SVG，保留设置页原尺寸图标；55 个 SVG 尺寸按 actool 的显示像素取整规则验证。
+- 先跑红四项方向选择／触发距离／防抖／尺寸合同，再实现；补充左右手与边缘旋转、离开扇区后的激活状态、真实短／中／长控件及持久化测试。
+
+**本轮验证：**
+
+- Pro Max 相关 UI 32 项通过；/tmp/mudi-build/ThumbArc-Icon-Green5.xcresult。
+- iPhone 17 Pro Max / iOS 27 全量 XCTest：368 项通过、0 失败、0 跳过；/tmp/mudi-build/ThumbArc-Icon-ProMax-Complete.xcresult。
+- iPad Pro 11-inch (M5) / iOS 27 UI、方向弧、设置、输入空间及紧凑窗口回归：45 项通过、0 失败；/tmp/mudi-build/ThumbArc-Icon-iPad-Complete.xcresult。
+- make test-core：13 项通过；/tmp/mudi-build/arc-icon-core.log。
+- 核对 Pro Max 明暗弧、预览和手势设置的真实渲染，截图 /tmp/mudi-build/arc-icon-final-preview/；模拟器和真机 Assets.car 均含 Any、Dark、Tinted 三套图标。真机构建成功，已更新安装到 Mimikyu 并启动成功；安装日志 /tmp/mudi-build/arc-icon-device-install.json，启动日志 /tmp/mudi-build/arc-icon-device-launch.json。
+- 本轮不归档 Phase 10、不合并、不推送，Agent 工具适配仍暂缓；设备安装不等同于真实 Host 手工出口验收。
