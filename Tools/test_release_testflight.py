@@ -288,6 +288,28 @@ class VerifyIPATests(unittest.TestCase):
             self.verify(self.ipa)
 
 
+class AppBuildSettingsTests(unittest.TestCase):
+    """The release tool must target the official bundle id, never a dev-time id."""
+
+    def show_settings(self, bundle_id):
+        return (f"    PRODUCT_BUNDLE_IDENTIFIER = {bundle_id}\n"
+                "    MARKETING_VERSION = 1.0\n")
+
+    def test_official_bundle_id_is_pinned(self):
+        self.assertEqual(release.APP_BUNDLE_ID, "com.mimiqdev.mudi")
+
+    def test_reads_marketing_version_from_xcode_build_settings(self):
+        with patch.object(release, "command", return_value=self.show_settings(release.APP_BUNDLE_ID)):
+            self.assertEqual(release.app_build_settings(), "1.0")
+
+    def test_refuses_another_bundle_id(self):
+        with (
+            patch.object(release, "command", return_value=self.show_settings("com.mimiqdev.someotherapp")),
+            self.assertRaises(release.ReleaseError),
+        ):
+            release.app_build_settings()
+
+
 class AppStoreConnectTests(unittest.TestCase):
     def test_altool_token_on_stderr(self):
         expected = "eyJheader" + ".eyJpayload.signature"
