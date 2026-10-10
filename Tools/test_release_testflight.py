@@ -194,7 +194,8 @@ class ProfileDetailsTests(unittest.TestCase):
         self.assertEqual(profile["Name"], "Mudi App Store")
 
     def test_refuses_profile_without_explicit_get_task_allow_false(self):
-        self.assert_refused(app_store_profile(), "not an App Store distribution profile")
+        entitlements = {"application-identifier": TEAM + "." + release.APP_BUNDLE_ID}
+        self.assert_refused(app_store_profile(Entitlements=entitlements), "not an App Store distribution profile")
 
     def test_refuses_profile_with_provisioned_devices(self):
         self.assert_refused(app_store_profile(ProvisionedDevices=["00008150-001265CE0E99401C"]))
