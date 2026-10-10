@@ -1,10 +1,10 @@
 # TestFlight 发布流程（本机）
 
-从仓库根目录运行 `Tools/release-testflight.py`。脚本在本机用 Apple Distribution `.p12` 和对应的 App Store profile 签名；App Store Connect `.p8` 仅用于查询 build、校验 IPA 和上传。对应的 App Store Connect app 是 **Mudi for Herdr**（`dev.mudi.mobile`），内部测试组是 `Mudi Internal`。
+从仓库根目录运行 `Tools/release-testflight.py`。脚本在本机用 Apple Distribution `.p12` 和对应的 App Store profile 签名；App Store Connect `.p8` 仅用于查询 build、校验 IPA 和上传。对应的 App Store Connect app 是 **Mudi for Herdr**（`com.mimiqdev.mudi`），内部测试组是 `Mudi Internal`。
 
 ## 准备
 
-本机已备有 Apple Distribution `.p12`、其密码文件、`dev.mudi.mobile` 的 App Store `.mobileprovision`，以及可访问 Mudi 的 App Store Connect `.p8`。这些签名文件放在仓库之外，不要提交到 Git；`.p8`、`.p12` 和密码文件权限设为 `600`。脚本从被 Git 忽略的 `Config/TestFlight.local.json` 读取 Key ID、Issuer ID 和文件路径（不在此文件存放密码或私钥内容）。首次配置：
+本机已备有 Apple Distribution `.p12`、其密码文件、`com.mimiqdev.mudi` 的 App Store `.mobileprovision`，以及可访问 Mudi 的 App Store Connect `.p8`。这些签名文件放在仓库之外，不要提交到 Git；`.p8`、`.p12` 和密码文件权限设为 `600`。脚本从被 Git 忽略的 `Config/TestFlight.local.json` 读取 Key ID、Issuer ID 和文件路径（不在此文件存放密码或私钥内容）。首次配置：
 
 ```sh
 cp -n Config/TestFlight.local.json.example Config/TestFlight.local.json

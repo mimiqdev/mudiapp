@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build and optionally upload Mudi to TestFlight with local distribution signing.
 
-The App Store Connect app is "Mudi for Herdr" (dev.mudi.mobile). A temporary
+The App Store Connect app is "Mudi for Herdr" (com.mimiqdev.mudi). A temporary
 keychain holds the Apple Distribution identity during the build. The default
 validates the IPA; --upload also publishes it to the internal group.
 """
@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PROJECT = "Mudi.xcodeproj"
 SCHEME = "Mudi"
 APP_NAME = "Mudi"
-APP_BUNDLE_ID = "dev.mudi.mobile"
+APP_BUNDLE_ID = "com.mimiqdev.mudi"
 ASC_APP_NAME = "Mudi for Herdr"
 TESTFLIGHT_GROUP = "Mudi Internal"
 

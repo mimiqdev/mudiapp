@@ -11,7 +11,7 @@ import XCTest
 @MainActor
 final class Phase7DeviceFeedbackRound2Tests: XCTestCase {
     func testDPadOverlayPopsAboveBarNearDirectionButton() throws {
-        let key = "dev.mudi.mobile.dpad-relative-position"
+        let key = "com.mimiqdev.mudi.dpad-relative-position"
         let saved = UserDefaults.standard.object(forKey: key)
         UserDefaults.standard.removeObject(forKey: key)
         defer { if let saved { UserDefaults.standard.set(saved, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) } }
@@ -43,7 +43,7 @@ final class Phase7DeviceFeedbackRound2Tests: XCTestCase {
     }
 
     func testDPadDragTracksFingerDirection() throws {
-        let key = "dev.mudi.mobile.dpad-relative-position"
+        let key = "com.mimiqdev.mudi.dpad-relative-position"
         let saved = UserDefaults.standard.object(forKey: key)
         UserDefaults.standard.removeObject(forKey: key)
         defer { if let saved { UserDefaults.standard.set(saved, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) } }

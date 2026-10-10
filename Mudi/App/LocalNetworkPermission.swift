@@ -10,7 +10,7 @@ import os
 /// it out of release builds).
 enum ProbeTrace {
     private static let logger = Logger(
-        subsystem: "dev.mudi.mobile", category: "local-network-probe"
+        subsystem: "com.mimiqdev.mudi", category: "local-network-probe"
     )
     #if DEBUG
     private static let url = FileManager.default

@@ -162,7 +162,7 @@ final class MudiTerminalDPadOverlay: UIView {
 
     init() {
         cornerCommands = ["left", "right"].enumerated().map { index, side in
-            let key = "dev.mudi.mobile.dpad-corner-" + side
+            let key = "com.mimiqdev.mudi.dpad-corner-" + side
             return UserDefaults.standard.object(forKey: key) != nil
                 ? Command(rawValue: UserDefaults.standard.integer(forKey: key)) ?? (index == 0 ? .backspace : .clearScreen)
                 : (index == 0 ? .backspace : .clearScreen)
@@ -336,7 +336,7 @@ final class MudiTerminalDPadOverlay: UIView {
     func setCornerCommand(_ command: Command, index: Int) {
         guard cornerButtons.indices.contains(index), [.backspace, .clearScreen, .pageUp, .pageDown, .home, .end].contains(command) else { return }
         cornerCommands[index] = command
-        UserDefaults.standard.set(command.rawValue, forKey: "dev.mudi.mobile.dpad-corner-" + (index == 0 ? "left" : "right"))
+        UserDefaults.standard.set(command.rawValue, forKey: "com.mimiqdev.mudi.dpad-corner-" + (index == 0 ? "left" : "right"))
         let button = cornerButtons[index]
         configureGlyph(button, command: command)
         if let imageView = button.imageView { button.bringSubviewToFront(imageView) }

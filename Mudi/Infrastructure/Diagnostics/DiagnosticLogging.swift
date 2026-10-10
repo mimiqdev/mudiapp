@@ -77,13 +77,13 @@ public final class DiagnosticLogger: @unchecked Sendable {
 
         // os.Logger output
         if level == .notice {
-            let logger = Logger(subsystem: "dev.mudi.mobile", category: category)
+            let logger = Logger(subsystem: "com.mimiqdev.mudi", category: category)
             logger.notice("\(sanitized, privacy: .public)")
         } else if level == .error {
-            let logger = Logger(subsystem: "dev.mudi.mobile", category: category)
+            let logger = Logger(subsystem: "com.mimiqdev.mudi", category: category)
             logger.error("\(sanitized, privacy: .public)")
         } else if level == .debug, debugEnabled {
-            let logger = Logger(subsystem: "dev.mudi.mobile", category: category)
+            let logger = Logger(subsystem: "com.mimiqdev.mudi", category: category)
             logger.notice("\(sanitized, privacy: .public)")
         }
 

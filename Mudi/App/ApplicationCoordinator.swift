@@ -899,7 +899,7 @@ actor ApplicationCoordinator: Sendable {  // pi-lens-ignore: type_body_length
     }
 
     private static let transportLog = Logger(
-        subsystem: "dev.mudi.mobile",
+        subsystem: "com.mimiqdev.mudi",
         category: "transport-selection"
     )
 }

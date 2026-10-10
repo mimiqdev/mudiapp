@@ -140,7 +140,7 @@ actor UserDefaultsPreferencesStore: PreferencesStore {
 
     init(
         defaults: UserDefaults = .standard,
-        key: String = "dev.mudi.mobile.terminal-preferences"
+        key: String = "com.mimiqdev.mudi.terminal-preferences"
     ) {
         self.defaults = defaults
         self.key = key

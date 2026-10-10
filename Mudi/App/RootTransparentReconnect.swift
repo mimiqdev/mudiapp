@@ -4,7 +4,7 @@ import os
 
 extension RootViewModel {
     private static let reconnectLog = Logger(
-        subsystem: "dev.mudi.mobile", category: "transparent-reconnect"
+        subsystem: "com.mimiqdev.mudi", category: "transparent-reconnect"
     )
 
     static let transparentReconnectFailureMessage =

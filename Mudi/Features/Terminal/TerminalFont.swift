@@ -88,7 +88,7 @@ enum TerminalFontRegistry {
     private static var importedFonts: [String: URL] = [:]
 
     static var appBundle: Bundle {
-        Bundle(identifier: "dev.mudi.mobile") ?? Bundle.main
+        Bundle(identifier: "com.mimiqdev.mudi") ?? Bundle.main
     }
 
     static var bundledFonts: [TerminalFontDescriptor] {

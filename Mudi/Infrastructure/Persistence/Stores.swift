@@ -103,7 +103,7 @@ enum KeychainStoreError: Error, LocalizedError, Sendable {
 struct KeychainCredentialStore: CredentialStore, Sendable {
     private let store: KeychainDataStore
 
-    init(service: String = "dev.mudi.mobile.credentials") {
+    init(service: String = "com.mimiqdev.mudi.credentials") {
         store = KeychainDataStore(service: service)
     }
 
@@ -137,7 +137,7 @@ struct KeychainCredentialStore: CredentialStore, Sendable {
 struct KeychainKnownHostKeyStore: KnownHostKeyStore, Sendable {
     private let store: KeychainDataStore
 
-    init(service: String = "dev.mudi.mobile.known-host-keys") {
+    init(service: String = "com.mimiqdev.mudi.known-host-keys") {
         store = KeychainDataStore(service: service)
     }
 

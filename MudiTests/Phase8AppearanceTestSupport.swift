@@ -150,7 +150,7 @@ func phase8XtermColor(at index: Int) -> TerminalRGBColor? {
 }
 
 func phase8AppBundle() -> Bundle {
-    Bundle(identifier: "dev.mudi.mobile") ?? Bundle.main
+    Bundle(identifier: "com.mimiqdev.mudi") ?? Bundle.main
 }
 
 func phase8Font(from url: URL, pointSize: CGFloat = 16) -> CTFont? {

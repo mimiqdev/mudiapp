@@ -80,7 +80,7 @@ final class PanePickerHistory: ObservableObject {
     }
     @Published private var saved: Saved
     private let defaults: UserDefaults
-    private let storageKey = "dev.mudi.mobile.pane-history"
+    private let storageKey = "com.mimiqdev.mudi.pane-history"
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         saved = defaults.data(forKey: storageKey)
