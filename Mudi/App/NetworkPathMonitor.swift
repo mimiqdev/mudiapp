@@ -92,7 +92,7 @@ protocol NetworkPathMonitoring: AnyObject, Sendable {
 
 final class SystemNetworkPathMonitor: NetworkPathMonitoring, @unchecked Sendable {
     private let queue = DispatchQueue(
-        label: "dev.mudi.mobile.network-path-monitor"
+        label: "com.mimiqdev.mudi.network-path-monitor"
     )
     private var monitor: NWPathMonitor?
 

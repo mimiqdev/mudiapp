@@ -7,7 +7,7 @@ import XCTest
 @MainActor
 final class UIPolishInteractionTests: XCTestCase {
     func testComposerReplacesBarAndRequiresConfirmationForChangedLongText() throws {
-        let defaults = UserDefaults.standard, key = "dev.mudi.mobile.composer-records"
+        let defaults = UserDefaults.standard, key = "com.mimiqdev.mudi.composer-records"
         let saved = defaults.object(forKey: key)
         defer { if let saved { defaults.set(saved, forKey: key) } else { defaults.removeObject(forKey: key) } }
         let terminal = ShellTerminalView(frame: .zero)
@@ -111,7 +111,7 @@ final class UIPolishInteractionTests: XCTestCase {
 
     func testDPadRetainsMovedPositionAndStaysInsideShortContainer() throws {
         let defaults = UserDefaults.standard
-        let key = "dev.mudi.mobile.dpad-relative-position"
+        let key = "com.mimiqdev.mudi.dpad-relative-position"
         let saved = defaults.object(forKey: key)
         defaults.removeObject(forKey: key)
         defer { if let saved { defaults.set(saved, forKey: key) } else { defaults.removeObject(forKey: key) } }
@@ -259,7 +259,7 @@ final class UIPolishInteractionTests: XCTestCase {
     }
 
     func testDPadCornerChoicePersistsAndUsesTheTerminalInputPath() throws {
-        let keys = ["dev.mudi.mobile.dpad-corner-left", "dev.mudi.mobile.dpad-corner-right"]
+        let keys = ["com.mimiqdev.mudi.dpad-corner-left", "com.mimiqdev.mudi.dpad-corner-right"]
         let defaults = UserDefaults.standard
         let saved = keys.map { defaults.object(forKey: $0) }
         defer { for (key, value) in zip(keys, saved) {

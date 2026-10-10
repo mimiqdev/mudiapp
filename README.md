@@ -34,4 +34,4 @@ open Mudi.xcodeproj
 make test-core
 ```
 
-bundle identifier 是 `dev.mudi.mobile`。
+bundle identifier 是 `com.mimiqdev.mudi`。

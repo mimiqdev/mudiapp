@@ -36,7 +36,7 @@ final class Phase4SettingsTests: XCTestCase {
     }
 
     private func makeStore() -> UserDefaultsPreferencesStore {
-        let suiteName = "dev.mudi.phase4.tests.\(UUID().uuidString)"
+        let suiteName = "com.mimiqdev.phase4.tests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         return UserDefaultsPreferencesStore(
             defaults: defaults,

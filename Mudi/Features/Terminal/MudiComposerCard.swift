@@ -25,8 +25,8 @@ final class MudiComposerCard: UIView, UITextViewDelegate {
     private var target = "Terminal"
     private var wasEmpty = true
     private var records: [ComposerRecord] {
-        get { (try? JSONDecoder().decode([ComposerRecord].self, from: UserDefaults.standard.data(forKey: "dev.mudi.mobile.composer-records") ?? Data())) ?? [] }
-        set { UserDefaults.standard.set(try? JSONEncoder().encode(Array(newValue.prefix(60))), forKey: "dev.mudi.mobile.composer-records") }
+        get { (try? JSONDecoder().decode([ComposerRecord].self, from: UserDefaults.standard.data(forKey: "com.mimiqdev.mudi.composer-records") ?? Data())) ?? [] }
+        set { UserDefaults.standard.set(try? JSONEncoder().encode(Array(newValue.prefix(60))), forKey: "com.mimiqdev.mudi.composer-records") }
     }
     private var menuButtons: [String: UIButton] = [:]
     private(set) var preferredHeight: CGFloat = 80

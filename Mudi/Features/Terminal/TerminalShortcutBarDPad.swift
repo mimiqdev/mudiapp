@@ -59,7 +59,7 @@ extension MudiTerminalShortcutBar {
             let normalized = CGPoint(x: maxX > minX ? (x - minX) / (maxX - minX) : 0,
                                      y: maxY > minY ? (y - minY) / (maxY - minY) : 1)
             dpadRelativePosition = normalized
-            UserDefaults.standard.set([Double(normalized.x), Double(normalized.y)], forKey: "dev.mudi.mobile.dpad-relative-position")
+            UserDefaults.standard.set([Double(normalized.x), Double(normalized.y)], forKey: "com.mimiqdev.mudi.dpad-relative-position")
         }
         setNeedsLayout()
     }

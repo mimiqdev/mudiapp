@@ -71,3 +71,11 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Python tool/test bytecode and lint caches.
+__pycache__/
+*.pyc
+.ruff_cache/
+
+# Local TestFlight signing configuration (paths and API key metadata).
+/Config/TestFlight.local.json

@@ -54,7 +54,7 @@ final class MudiTerminalShortcutBar: UIView {
         super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 48))
         accessibilityIdentifier = "terminal-shortcut-bar"
         setupView()
-        if let position = UserDefaults.standard.array(forKey: "dev.mudi.mobile.dpad-relative-position") as? [Double], position.count == 2 {
+        if let position = UserDefaults.standard.array(forKey: "com.mimiqdev.mudi.dpad-relative-position") as? [Double], position.count == 2 {
             dpadRelativePosition = CGPoint(x: min(max(position[0], 0), 1), y: min(max(position[1], 0), 1))
         }
         updateAppearance(background: .systemBackground, foreground: .label)

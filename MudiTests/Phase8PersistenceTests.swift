@@ -50,7 +50,7 @@ final class Phase8PersistenceTests: XCTestCase {
     }
 
     private func roundTrip(data: Data) async throws -> TerminalPreferences {
-        let suiteName = "dev.mudi.phase8.preferences.\(UUID().uuidString)"
+        let suiteName = "com.mimiqdev.phase8.preferences.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defaults.set(data, forKey: "terminal-preferences")
 

@@ -1,0 +1,8 @@
+{
+  "apiKeyId": "YOUR_KEY_ID",
+  "issuerId": "YOUR_ISSUER_ID",
+  "apiKeyPath": "~/.config/apple/AuthKey_YOUR_KEY_ID.p8",
+  "distributionP12Path": "~/.config/apple/mudi-distribution/apple-distribution-compat.p12",
+  "distributionP12PasswordFile": "~/.config/apple/mudi-distribution/p12.pass",
+  "appStoreProfilePath": "~/.config/apple/mudi-distribution/mudi-appstore.mobileprovision"
+}
