@@ -3,6 +3,13 @@
 <plist version="1.0">
 <dict>
 	<!--
+	    Distribution: declares no non-exempt encryption, so TestFlight
+	    builds skip the export-compliance question. Same mechanism as
+	    the keys below: merged into the generated Info.plist.
+	-->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<!--
 	    Merged into the generated Info.plist (GENERATE_INFOPLIST_FILE=YES
 	    + INFOPLIST_FILE). Bonjour browsing only triggers the iOS Local
 	    Network alert (and only works at all) when the browsed service
