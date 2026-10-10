@@ -313,8 +313,11 @@ def main():
     with local_signing(config["appStoreProfilePath"], config["distributionP12Path"],
                        config["p12Password"], output_dir) as (profile_name, team, cert_hash):
         archive = output_dir / f"{SCHEME}.xcarchive"
-        signing = ["CODE_SIGN_STYLE=Manual", "CODE_SIGN_IDENTITY=" + cert_hash,
-                   "PROVISIONING_PROFILE_SPECIFIER=" + profile_name, "DEVELOPMENT_TEAM=" + team,
+        # Command-line signing overrides apply to every target, including SPM
+        # package products, which reject a manual provisioning profile
+        # specifier. Archive unsigned and let -exportArchive below apply the
+        # manual Apple Distribution signature and profile from ExportOptions.
+        signing = ["CODE_SIGNING_ALLOWED=NO",
                    "CURRENT_PROJECT_VERSION=" + str(number), "MARKETING_VERSION=" + marketing]
         command(["xcodebuild", "-project", PROJECT, "-scheme", SCHEME,
                  "-configuration", "Release", "-destination", "generic/platform=iOS",
