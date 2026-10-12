@@ -35,6 +35,10 @@ public enum ConnectionError: Error, Equatable, LocalizedError, Sendable {
     case connectionTimedOut
     case hostUnreachable
     case connectionRefused
+    /// The SSH server rejected the supplied username, password, or key.
+    /// Kept distinct from transport failures so the UI can point at the
+    /// credentials instead of implying the host is down.
+    case authenticationFailed
     case moshUnavailable
     case hostKeyRejected
     case hostKeyMismatch(expected: String, actual: String)
@@ -49,6 +53,8 @@ public enum ConnectionError: Error, Equatable, LocalizedError, Sendable {
             "The SSH host is unreachable."
         case .connectionRefused:
             "The SSH host refused the connection."
+        case .authenticationFailed:
+            "SSH authentication failed. Check the username, password, or key."
         case .moshUnavailable:
             "Mosh is unavailable for this host."
         case .hostKeyRejected:

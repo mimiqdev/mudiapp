@@ -13,11 +13,18 @@ extension ApplicationCoordinator {
         if error is TransportSelectionError {
             return .moshUnavailable
         }
+        if let error = error as? HerdrKit.SSHClientError {
+            switch error {
+            case .authenticationFailed:
+                return .authenticationFailed
+            }
+        }
         if let error = error as? SSHShellError {
             switch error {
-            case .authenticationFailed, .connectionFailed, .commandExecutionUnavailable, .notConnected:
-                return .connectionFailed
-            case .alreadyConnected:
+            case .authenticationFailed:
+                return .authenticationFailed
+            case .connectionFailed, .commandExecutionUnavailable, .notConnected,
+                .alreadyConnected:
                 return .connectionFailed
             }
         }
