@@ -27,6 +27,11 @@ packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm.git
     exactVersion: 1.15.0
+  # Official VT core, distributed by the pinned 0.2.1 Swift wrapper.
+  # Artifact/upstream/NOTICE: docs/research/ghostty-vt-dependency.md
+  GhosttyVt:
+    url: https://github.com/caelyreth/libghostty-vt-spm.git
+    revision: 1f5446ec78f38546f1aee8f73067b9a4f7703262
   Citadel:
     url: https://github.com/orlandos-nl/Citadel.git
     exactVersion: 0.12.1
@@ -56,6 +61,7 @@ targets:
     dependencies:
       - package: HerdrKit
       - package: SwiftTerm
+      - package: GhosttyVt
       - package: Citadel
       - package: TraversioMosh
         products:
@@ -104,6 +110,7 @@ targets:
     dependencies:
       - target: Mudi
       - package: HerdrKit
+      - package: GhosttyVt
       - package: TraversioMosh
         products:
           - TraversioMoshCore
