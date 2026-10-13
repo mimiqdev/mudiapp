@@ -86,6 +86,22 @@ make test-core
 git diff --check 0e5250d37e21f2f7345940a52f4044ed789fc90d..HEAD
 ```
 
-七组 VT suite 共 38 项。最终 handoff 必须再对**最终 clean HEAD**记录 `vt-correctness`、`simulator-regression`、`core-tests`、`diff-check`，历史 HEAD 的绿不代替本轮最终验证。
+七组 VT suite 在 `a0bc32c` 为 38 项、本轮 Review 修复后为 43 项。最终 handoff 必须再对**最终 clean HEAD**记录 `vt-correctness`、`simulator-regression`、`core-tests`、`diff-check`，历史 HEAD 的绿不代替本轮最终验证。
+
+## Review 18de19d8 修复（R1–R3，2026-10-13）
+
+已接受 Review 范围 `0e5250d..a0bc32c` 的三项 medium source_defect。每项先提交窄测试、观察运行期红（原因正确），再实现绿；只改实验 VT 路径，SwiftTerm 默认/策略、transport/wire 未改：
+
+| 项 | 测试先行 clean HEAD / 运行期红 | 实现 HEAD / 窄绿 |
+| --- | --- | --- |
+| R1 硬件键 | `fd9884f`：`GhosttyVTHostTests` 8 项中 4 项、39 条 assertion 失败：Home/End/ForwardDelete/F1–F11/Option+B/F/Option+←→/Ctrl+I/M/[/\\/Space/Shift+Tab 经生产 `pressesBegan` 零发送且全部落到 UIKit；无重复键；PageUp/Down 不翻 local/Herdr/wheel（kitty 模式两条 assertion 在观察红之后、实现之前补入同一测试） | `277862d`：8/8 通过 |
+| R2 copy | `55087d1`：6 列真实 VT `"abcd  X"` 跨软折行复制为 `"abcdX"`；硬行写入空格被删、行内未写入 padding 保留为空格（7 条 assertion） | `761eead`：viewport 6/6 通过 |
+| R3 bold | `018783b`：深/浅内置主题 `SGR 1;31` 等画出 palette[1]（Light `#c4281c`）而不是 SwiftTerm 的 palette[9] `#fc391f`；独立 SwiftTerm 像素 oracle 同样不一致（78 条 assertion） | `665e7ab`：theme+renderer 11/11 通过 |
+
+- **R1**：`GhosttyVTView.pressesBegan` 取代原 UIKeyCommand 子集，逐键按 SwiftTerm 1.15（`dd2fb8ac`）`iOSTerminalView.pressesBegan` legacy 决策与 Mudi `ShellTerminalView` PageUp/Down 覆盖；字节全部由真实 VT encoder 按当前模式编码、经同一 adapter/PTY。Option 为 Meta（SwiftTerm 默认 `optionAsMetaKey`），Option+←/→ 为 ESC b/f。Ghostty legacy encoder 对 Ctrl+I/M/[ 按 fixterms 产生 CSI u，故映射为 VT Tab/Enter/Escape 键以保持 SwiftTerm 的 09/0D/1B；其他 Ctrl 字符集合同 SwiftTerm `applyControlToEventCharacters`。Insert/F12+ 与 SwiftTerm 一样不处理。普通文本/Return/Backspace 不在 presses 发送，交还 UIKit insertText/deleteBackward；marked text 存在时全部交 IME。kitty 键盘模式下按 SwiftTerm 改由 VT kitty 编码。按住键 0.4 s 后每 0.1 s 重复，release/取消/失焦/stop 停止。PageUp/Down：Herdr `PTYScrollChannel` 与 Mosh wheel（仅 mouse reporting 时）按可见行数；普通 session 滚 VT 本地 history，application cursor 模式发 VT PageUp/Down。facade 无 DECCKM getter，以 VT encoder 对 ↑ 的输出判断。测试用只读 override 的 `UIKey`/`UIPress` 调生产 `pressesBegan`，下一 responder 记录被转给 UIKit 的键；这不是真机物理键盘验收。
+- **R2**：真实 VT 中写入的空格 cell text 为 `" "`，从未写入/擦除的 cell 为 `""`。复制只裁剪每行尾部 `""` padding（同 SwiftTerm `getTrimmedLength`），行内空 cell 输出空格；软折行无换行拼接且保留边界空格；硬行 `\n`；尾部全空行省略。spacerHead/Tail 不产生文本，宽字/组合字不拆。断言覆盖实际 UIKit `copy(_:)` 与 `UIPasteboard`。
+- **R3**：FG_COLOR 不处理 bold（`render.h`）。按 SwiftTerm `AppleTerminalView.mapColor` 默认 `useBrightColors`：inverse 交换后，bold 且前景为 palette index `< 7` 时用 `index + 8`；index 7（`ansi < 7` 边界）、显式 bright/256、真彩、默认色与背景不变；按 VT style palette index 判断，不从 RGB 反推。SGR 22 恢复基础色。测试同时比较显式 palette 期望与独立 SwiftTerm 视图在同一 SGR 流下的像素；附件 `GhosttyVT-bold-bright-*` 与 `SwiftTerm-bold-bright-oracle-*`。
+
+最终精确 HEAD 的 `vt-correctness`、`simulator-regression`、`core-tests`、`diff-check` 由 `qing verify` 记录为准。仍未覆盖：物理硬件键盘/真机 IME、按键 release 的 kitty report-events、Cmd+Option+O 切换 optionAsMeta（实验路径固定 Option=Meta）、复杂 selection/手势、blink/复杂装饰/ligatures/性能。
 
 当前 runtime 仅 iPhone 18 Pro / iOS 27 模拟器、Xcode 27；UIKit protocol 调用、gesture 安装/selector、窗口移除与后台通知模拟是可重复自动化，不等于中文/日文/韩文系统键盘输入、实际 OS 后台、真实 Herdr/Mosh 或 iOS 17 真机验收。基础 edit menu/cell selection/pan 不是完整 SwiftTerm 交互同等性；无 selection handles/跨 viewport autoscroll/惯性/鼠标点击拖曳。没有 GPU/性能结果、设备安装、发布/法律合规审查或独立 Review。保留 active plan，不归档、不合流、不 push。

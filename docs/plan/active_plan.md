@@ -1,6 +1,6 @@
 # Active plan — Phase 15: 官方 Ghostty VT + Mudi 自有 iOS renderer
 
-**状态：** 用户已确认路线 2 与下列合同，批准分阶段实现。保留首个 renderer/adapter 交接 `6e502446`；本轮已实现真正 UIKit 输入、中立快捷栏、主题/lifecycle、实际 App opt-in/同 session 显式回退及基础 selection/scroll ownership。各增量运行期红→绿见 `docs/research/ghostty-vt-dependency.md`；`67f1ac8` 的全模拟器回归为 411 项、0 失败。最终以 handoff 精确 clean HEAD 的记录为准。**真机/手工出口未执行、复杂交互仍有缺口，不是全量迁移/Phase 15 验收完成。** 保留阶段 A `297dfab1`；本工作树基于 `0e5250d37e21f2f7345940a52f4044ed789fc90d`。主 checkout 的 Phase 16 未提交/未验收，暂停、不搬运、不归档。
+**状态：** 用户已确认路线 2 与下列合同，批准分阶段实现。保留首个 renderer/adapter 交接 `6e502446`；本轮已实现真正 UIKit 输入、中立快捷栏、主题/lifecycle、实际 App opt-in/同 session 显式回退及基础 selection/scroll ownership。各增量运行期红→绿见 `docs/research/ghostty-vt-dependency.md`；`67f1ac8` 的全模拟器回归为 411 项、0 失败。已接受 Review `18de19d8` 的 R1 硬件键、R2 软折行复制、R3 bold→bright 三项 source_defect 已按测试先行修复（记录同上文档）。最终以 handoff 精确 clean HEAD 的记录为准。**真机/手工出口未执行、复杂交互仍有缺口，不是全量迁移/Phase 15 验收完成。** 保留阶段 A `297dfab1`；本工作树基于 `0e5250d37e21f2f7345940a52f4044ed789fc90d`。主 checkout 的 Phase 16 未提交/未验收，暂停、不搬运、不归档。
 
 ## 出口
 
