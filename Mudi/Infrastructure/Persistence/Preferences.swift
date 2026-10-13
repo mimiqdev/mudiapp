@@ -61,6 +61,7 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
     ) {
         self.init(
             appearance: appearance,
+            terminalEngine: .swiftTerm,
             fontSize: fontSize,
             hasCompletedLocalNetworkOnboarding: hasCompletedLocalNetworkOnboarding,
             isDebugLoggingEnabled: isDebugLoggingEnabled,

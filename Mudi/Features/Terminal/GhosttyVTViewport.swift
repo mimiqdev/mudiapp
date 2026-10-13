@@ -127,6 +127,7 @@ final class GhosttyVTViewportController: NSObject, UIGestureRecognizerDelegate, 
         view.addGestureRecognizer(pan)
         let tap = UITapGestureRecognizer(target: self, action: #selector(focusTerminal))
         tap.delegate = self
+        tap.require(toFail: select)
         view.addGestureRecognizer(tap)
         view.addInteraction(editMenu)
     }
@@ -145,7 +146,10 @@ final class GhosttyVTViewportController: NSObject, UIGestureRecognizerDelegate, 
 
     @objc private func focusTerminal() {
         guard let view, view.isInputFocusAllowed, view.window != nil else { return }
-        view.clearTerminalSelection()
+        if view.terminalSelection != nil {
+            view.clearTerminalSelection()
+            return
+        }
         _ = view.becomeFirstResponder()
     }
 

@@ -134,6 +134,51 @@ final class GhosttyVTViewportTests: XCTestCase {
         XCTAssertEqual(UIPasteboard.general.string, "abcde界Y\ne\u{301} \u{301}x")
     }
 
+    func testSelectionDismissTapPreservesHiddenKeyboardAndExplicitFocusStillWorks() throws {
+        let view = try GhosttyVTView(configuration: .init(columns: 20, rows: 3))
+        let window = Phase7TerminalScreenHarness.makeWindow()
+        let controller = UIViewController()
+        window.rootViewController = controller
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 200)
+        controller.view.addSubview(view)
+        window.makeKeyAndVisible()
+        defer { view.stop(); window.isHidden = true; window.rootViewController = nil }
+        view.layoutIfNeeded()
+        _ = try view.feed(Data("agent selection".utf8))
+        let viewport = try XCTUnwrap(view.viewportController)
+        let tap = NSSelectorFromString("focusTerminal")
+        XCTAssertTrue(viewport.responds(to: tap), "Exercise the production tap action")
+        let bar = try XCTUnwrap(view.shortcutBar)
+        var focusChanges: [Bool] = []
+        view.onInputFocusChange = { focusChanges.append($0) }
+
+        XCTAssertTrue(view.becomeFirstResponder())
+        bar.toggleKeyboard()
+        XCTAssertFalse(view.isFirstResponder)
+        view.selectTerminalCells(from: .init(column: 0, row: 0), through: .init(column: 4, row: 0))
+        XCTAssertEqual(view.selectedTerminalText, "agent")
+        focusChanges.removeAll()
+        _ = viewport.perform(tap)
+        XCTAssertNil(view.selectedTerminalText)
+        XCTAssertFalse(view.isFirstResponder, "Dismissing a long-press selection must not reopen the keyboard")
+        XCTAssertTrue(focusChanges.isEmpty, "Selection dismissal must not request input focus")
+
+        bar.toggleKeyboard()
+        XCTAssertTrue(view.isFirstResponder, "The explicit keyboard button still opens the keyboard")
+        view.selectTerminalCells(from: .init(column: 0, row: 0), through: .init(column: 4, row: 0))
+        _ = viewport.perform(tap)
+        XCTAssertNil(view.selectedTerminalText)
+        XCTAssertTrue(view.isFirstResponder, "Dismissing a selection preserves an already visible keyboard")
+        bar.toggleKeyboard()
+        XCTAssertFalse(view.isFirstResponder)
+        _ = viewport.perform(tap)
+        XCTAssertTrue(view.isFirstResponder, "A separate normal tap still requests input when there is no selection")
+        bar.toggleKeyboard()
+        view.updateInputFocus(isAllowed: false)
+        _ = viewport.perform(tap)
+        XCTAssertFalse(view.isFirstResponder, "The pane picker focus gate remains authoritative")
+    }
+
     private func pixel(_ image: UIImage, at point: CGPoint) throws -> [Int] {
         let cg = try XCTUnwrap(image.cgImage)
         let sample = try XCTUnwrap(cg.cropping(to: CGRect(x: Int(point.x * image.scale), y: Int(point.y * image.scale), width: 1, height: 1)))

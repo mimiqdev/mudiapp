@@ -1,6 +1,6 @@
 # Active plan — Phase 15: 官方 Ghostty VT + Mudi 自有 iOS renderer
 
-**状态：** 用户已确认路线 2 与下列合同，批准分阶段实现。保留首个 renderer/adapter 交接 `6e502446`；本轮已实现真正 UIKit 输入、中立快捷栏、主题/lifecycle、实际 App opt-in/同 session 显式回退及基础 selection/scroll ownership。各增量运行期红→绿见 `docs/research/ghostty-vt-dependency.md`；`67f1ac8` 的全模拟器回归为 411 项、0 失败。已接受 Review `18de19d8` 的 R1 硬件键、R2 软折行复制、R3 bold→bright 三项 source_defect 已按测试先行修复（记录同上文档）。复审 R4（session 替换时停止硬件键重复）同样测试先行修复。最终以 handoff 精确 clean HEAD 的记录为准。**真机/手工出口未执行、复杂交互仍有缺口，不是全量迁移/Phase 15 验收完成。** 保留阶段 A `297dfab1`；本工作树基于 `0e5250d37e21f2f7345940a52f4044ed789fc90d`。主 checkout 的 Phase 16 未提交/未验收，暂停、不搬运、不归档。
+**状态：** 用户已确认路线 2 与下列合同，批准分阶段实现。保留首个 renderer/adapter 交接 `6e502446`；本轮已实现真正 UIKit 输入、中立快捷栏、主题/lifecycle、实际 App opt-in/同 session 显式回退及基础 selection/scroll ownership。各增量运行期红→绿见 `docs/research/ghostty-vt-dependency.md`；`67f1ac8` 的全模拟器回归为 411 项、0 失败。已接受 Review `18de19d8` 的 R1 硬件键、R2 软折行复制、R3 bold→bright 三项 source_defect 已按测试先行修复（记录同上文档）。复审 R4（session 替换时停止硬件键重复）同样测试先行修复。最终以 handoff 精确 clean HEAD 的记录为准。**已获用户授权在 Mimikyu 安装并测试，最终模拟器回归 419/419、真机专项 49/49 通过；偏好初始化递归和选区取消召回键盘已补红→绿回归并修复。用户认可当前完整度并授权提交、推送及创建 PR。系统 IME/真实远端/复杂交互与性能仍有未验收项，不是全量迁移或 Phase 15 全部出口完成。** 保留阶段 A `297dfab1`；本工作树基于 `0e5250d37e21f2f7345940a52f4044ed789fc90d`。主 checkout 的 Phase 16 未提交/未验收，暂停、不搬运、不归档。
 
 ## 出口
 
@@ -18,7 +18,7 @@
 - 不采用 Lakr full-engine iOS fork、不重写 libghostty 或 ANSI/VT 状态机；不保留隐藏 SwiftTerm 替实验引擎解析/绘制。
 - 不改变默认引擎、不移除 SwiftTerm、不承诺性能更快；Metal/图集/批绘等优化留待有数据后的切片。
 - 不改 SSH/Mosh/Herdr transport/wire、TOFU、idle、认证、重连策略；不实施 Phase 16 或其他 future 工作。
-- 本轮不安装用户手机、不运行 device XCTest、不自动发版/归档/合并/push。真机手工出口待另行确认。
+- 用户已授权真机安装/测试及本分支提交、推送、创建 PR；不自动发版、归档或合并。真机系统输入法、真实远端与复杂交互手工出口仍按实际观察记录。
 
 ## 测试
 
@@ -27,18 +27,20 @@
 ### 自动化（首轮批准合同）
 
 - `testFreshInstallKeepsSwiftTermAsDefault`：原偏好/新安装保持 SwiftTerm；实验选择不偷偷改 transport 或重复拨号。
+- `testLegacyAppearanceAndFontInitializerKeepsDefaultsWithoutRecursion`：真机构建发现的兼容初始化递归回归；旧 `appearance/fontSize` 初始化入口正常返回，保留传入标志及 SwiftTerm/主题/字体默认值。先运行观察失败，再修复委托目标。
 - `testFragmentedVTOutputRetainsUnicodeAndColorCells`：真实 VT 分片 feed 形成可读屏幕；中文宽字符/组合字符、ANSI16/256/真彩有真实 cell 数据。
 - `testCoreTextDrawsVTCellsFallbackAndCursor`：实际 UIKit view/image 或像素证明文本、Nerd/Unicode fallback、背景和光标绘制；布局遵循 VT 列宽及 spacer。
 - `testFullPartialAndCleanUpdatesRetainUnchangedRows`：真实 full/partial/clean 状态按行应用；resize full 重建网格，clean 不清屏。
 - `testVisibleViewportResizeIsBoundedAndPreservesState`：可见 viewport/字体决定 PTY 行列；空、非有限、极端尺寸有界，不误清无关状态。
 - `testInputAndVTRepliesUseExistingPTY`：现有控键、文本提交、粘贴/Enter及 VT 查询回复落到同一 session，保持字节语义；marked text 未提交不发送，提交一次。
 - `testOptInMountAndFallbackKeepOriginalSession`：首次挂载、快捷栏/键盘预留、resize 用真实可见网格；不重复连接，真实初始化错误明确回退；已发送/已有输出不静默丢失。偏好变更不替换活动 view/state，明确下次挂载生效。
+- `testSelectionDismissTapPreservesHiddenKeyboardAndExplicitFocusStillWorks`：真机反馈的选择焦点回归；长按选中文字后点击取消选区不召回已收起的键盘，键盘已显示时保留焦点，正常输入点击及快捷栏键盘按钮仍能显式召回；单击等待长按选择失败后才识别。先观察运行期红，再修复。
 - `testScrollSelectionThemeAndLifecycleOwnership`：local scrollback/selection/clipboard 与 Herdr remote scroll/Mosh wheel 分清所有权；主题/字体、session 替换、隐藏/显示的状态与焦点可验证。API 缺口如实报告，不用 stub 宣称完整。
 - 回归：Phase 4/7/8 交互、快捷栏、layout/theme/font、Herdr frame 与 Mosh data-plane；每个切片跑窄测试，最终补模拟器全套。
 
-### 手工（尚未执行，本轮不授权设备安装）
+### 手工（已授权设备安装/测试，剩余项目待实际观察）
 
-- 后续获确认后在 iOS 17+ 真机验证中文/日文/韩文 IME、软/硬键盘、selection/copy/paste/local scrollback、持续绘制/resize/大 TUI、主题字体。
+- 已在 iOS 27.2 Mimikyu 安装、正常启动并运行专项 XCTest，用户实际试用反馈了选择焦点问题，已修复并更新安装。真实中文/日文/韩文系统 IME、实体键盘、复杂 selection/scroll 手势、持续绘制/大 TUI 与性能仍待完整手工验收。
 - 现有 SSH/Mosh/Herdr Host 的后台返回、多 Host/session 替换、远端 scroll/wheel：保留内容与焦点，不重复连接、不改协议/安全策略。
 
 ## 切片
