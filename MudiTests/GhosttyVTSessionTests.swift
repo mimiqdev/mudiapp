@@ -116,7 +116,10 @@ final class GhosttyVTSessionTests: XCTestCase {
         do {
             try await adapter.sendCommittedText("unsent")
             XCTFail("A failed PTY send must propagate an actual error")
-        } catch {}
+        } catch {
+            XCTAssertTrue(error is GhosttyVTRecordingPTY.WriteError,
+                          "The input caller needs the actual PTY error, not an opaque adapter wrapper")
+        }
         XCTAssertEqual(errors, 1)
         await channel.finish()
         let didClose = await wait { closed == 1 }
@@ -139,6 +142,40 @@ final class GhosttyVTSessionTests: XCTestCase {
         XCTAssertEqual(snapshot.sent, [[42]])
     }
 
+    func testInputBeforeStartReportsNotStartedRatherThanCancellation() async throws {
+        let channel = GhosttyVTRecordingPTY()
+        let adapter = GhosttyVTSessionAdapter(view: try GhosttyVTView(),
+                                             session: SSHShellSession(connectedChannel: channel))
+        do {
+            try await adapter.sendCommittedText("not bound")
+            XCTFail("An unstarted renderer must not send input")
+        } catch {
+            XCTAssertTrue(error is GhosttyVTSessionAdapter.AdapterError)
+        }
+        let snapshot = await channel.snapshot()
+        XCTAssertTrue(snapshot.sent.isEmpty)
+        XCTAssertEqual(snapshot.outputReaders, 0)
+    }
+
+    func testQueuedInputCannotOvertakeSuspendedPTYWrite() async throws {
+        let channel = GhosttyVTRecordingPTY()
+        let adapter = GhosttyVTSessionAdapter(view: try GhosttyVTView(),
+                                             session: SSHShellSession(connectedChannel: channel))
+        adapter.start()
+        defer { adapter.stop() }
+        await channel.delayNextWrite()
+        let first = Task { try await adapter.sendCommittedText("first") }
+        let firstStarted = await wait { (await channel.snapshot()).attempted.count == 1 }
+        XCTAssertTrue(firstStarted)
+        let second = Task { try await adapter.paste("second", appendEnter: true) }
+        try await first.value
+        try await second.value
+        let snapshot = await channel.snapshot()
+        XCTAssertEqual(snapshot.sent.map { Data($0) }, [Data("first".utf8), Data("second".utf8), Data([13])])
+        XCTAssertEqual(snapshot.attempted, snapshot.sent,
+                       "Even a reentrant PTY cannot overtake the previous send or split paste/Enter")
+    }
+
     func testInvalidInitializationIsARealObservableFailure() throws {
         XCTAssertThrowsError(try GhosttyVTView(configuration: .init(columns: 0, rows: 24))) {
             XCTAssertEqual($0 as? TerminalError, .invalidSize)
@@ -159,6 +196,7 @@ final class GhosttyVTSessionTests: XCTestCase {
 private actor GhosttyVTRecordingPTY: PTYOutputChannel {
     struct Snapshot: Sendable {
         let sent: [[UInt8]]
+        let attempted: [[UInt8]]
         let sizes: [GhosttyVt.Terminal.Size]
         let outputReaders: Int
         let closeCount: Int
@@ -167,6 +205,8 @@ private actor GhosttyVTRecordingPTY: PTYOutputChannel {
     private let stream: AsyncThrowingStream<[UInt8], Error>
     private let continuation: AsyncThrowingStream<[UInt8], Error>.Continuation
     private var sent: [[UInt8]] = []
+    private var attempted: [[UInt8]] = []
+    private var shouldDelayWrite = false
     private var sizes: [GhosttyVt.Terminal.Size] = []
     private var outputReaders = 0
     private var closeCount = 0
@@ -176,8 +216,13 @@ private actor GhosttyVTRecordingPTY: PTYOutputChannel {
         (stream, continuation) = AsyncThrowingStream.makeStream()
     }
     func outputStream() -> AsyncThrowingStream<[UInt8], Error> { outputReaders += 1; return stream }
-    func send(_ bytes: [UInt8]) throws {
+    func send(_ bytes: [UInt8]) async throws {
+        attempted.append(bytes)
         if writesFail { throw WriteError.disconnected }
+        if shouldDelayWrite {
+            shouldDelayWrite = false
+            try await Task.sleep(for: .milliseconds(40))
+        }
         sent.append(bytes)
     }
     func resize(columns: Int, rows: Int) {
@@ -187,5 +232,8 @@ private actor GhosttyVTRecordingPTY: PTYOutputChannel {
     func emit(_ text: String) { continuation.yield(Array(text.utf8)) }
     func finish() { continuation.finish() }
     func failWrites() { writesFail = true }
-    func snapshot() -> Snapshot { .init(sent: sent, sizes: sizes, outputReaders: outputReaders, closeCount: closeCount) }
+    func delayNextWrite() { shouldDelayWrite = true }
+    func snapshot() -> Snapshot {
+        .init(sent: sent, attempted: attempted, sizes: sizes, outputReaders: outputReaders, closeCount: closeCount)
+    }
 }
