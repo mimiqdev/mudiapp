@@ -45,6 +45,31 @@ final class GhosttyVTThemeTests: XCTestCase {
         XCTAssertEqual(view.screen.rows[0]?.cells[0].resolvedForeground, vt(palette[184]))
     }
 
+    func testLabAndHarmoniousPoliciesMatchIndependentSwiftTermPaletteQueries() async throws {
+        // SwiftTerm is only the independent test oracle; the VT renderer's
+        // production palette path owns its math and never instantiates it.
+        for base in [TerminalThemeRegistry.builtInThemes[0], TerminalThemeRegistry.builtInThemes[1]] {
+            for strategy in [TerminalThemePaletteStrategy.base16Lab, .base16LabHarmonious] {
+                let theme = TerminalTheme(name: "LAB oracle", family: base.family, variant: base.variant, ansi16: base.ansi16,
+                    defaultForeground: base.defaultForeground, defaultBackground: base.defaultBackground, bold: base.bold,
+                    cursor: base.cursor, selection: base.selection, extendedPaletteStrategy: strategy,
+                    extendedPaletteDocumentation: "Independent comparison", source: base.source)
+                let reference = Phase8TerminalHarness(theme: theme)
+                defer { reference.stop() }
+                let view = try GhosttyVTView()
+                try (try XCTUnwrap(view as? any TerminalHost)).apply(theme: theme)
+                for index in [16, 21, 51, 88, 124, 196, 216, 232, 244, 255] {
+                    let queried = await reference.queryColor(at: index)
+                    let expected = try XCTUnwrap(queried)
+                    let actual = try XCTUnwrap(view.screen.theme?.palette[index])
+                    XCTAssertEqual(Int(actual.red), Int(expected.red), accuracy: 1, "\(strategy) index \(index)")
+                    XCTAssertEqual(Int(actual.green), Int(expected.green), accuracy: 1, "\(strategy) index \(index)")
+                    XCTAssertEqual(Int(actual.blue), Int(expected.blue), accuracy: 1, "\(strategy) index \(index)")
+                }
+            }
+        }
+    }
+
     private func vt(_ color: TerminalRGBColor) -> TerminalFrame.RGBColor {
         .init(red: color.red, green: color.green, blue: color.blue)
     }
