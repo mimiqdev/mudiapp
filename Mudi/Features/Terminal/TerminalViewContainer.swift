@@ -1,3 +1,4 @@
+import GhosttyVt
 import HerdrKit
 @preconcurrency import SwiftTerm
 import SwiftUI
@@ -32,31 +33,66 @@ struct TerminalGridLayoutMetrics: Equatable {
     }
 }
 
-/// UIKit container that hosts the terminal scroll view and reserves the
-/// persistent shortcut-bar strip below it: the scroll view's bottom edge
-/// sits above the bar, so SwiftTerm lays out grid rows only in the truly
-/// visible region, `terminal.resize` receives the true visible rows, and
-/// the bar can never cover content (keyboard up or down).
+/// Shared chrome for either real renderer. Status and persistent shortcut
+/// strips are outside the surface bounds, so terminal.resize receives only
+/// the truly visible grid (keyboard up or down). A mounted renderer never
+/// changes just because the stored engine preference changes.
 final class TerminalChromeView: UIView {
-    private(set) var terminalView: ShellTerminalView!
+    private(set) var terminalView: (any TerminalHost)!
     private var terminalBottomConstraint: NSLayoutConstraint!
+    private var terminalTopConstraint: NSLayoutConstraint!
     private(set) var reservedBottom: CGFloat = 0
+    let requestedEngineAtMount: TerminalEnginePreference
+    let fallbackMessage: String?
+    let engineStatusLabel = UILabel()
 
-    init(terminalView: ShellTerminalView) {
+    init(terminalView: any TerminalHost, engine: TerminalEnginePreference = .swiftTerm, fallbackMessage: String? = nil) {
+        requestedEngineAtMount = engine
+        self.fallbackMessage = fallbackMessage
         super.init(frame: .zero)
         self.terminalView = terminalView
         clipsToBounds = true
-        terminalView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(terminalView)
-        terminalBottomConstraint = terminalView.bottomAnchor.constraint(
-            equalTo: bottomAnchor
-        )
+        let surface = terminalView.hostView
+        surface.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(surface)
+        terminalBottomConstraint = surface.bottomAnchor.constraint(equalTo: bottomAnchor)
+        terminalTopConstraint = surface.topAnchor.constraint(equalTo: topAnchor)
         NSLayoutConstraint.activate([
-            terminalView.topAnchor.constraint(equalTo: topAnchor),
-            terminalView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            terminalView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            terminalTopConstraint,
+            surface.leadingAnchor.constraint(equalTo: leadingAnchor),
+            surface.trailingAnchor.constraint(equalTo: trailingAnchor),
             terminalBottomConstraint,
         ])
+        engineStatusLabel.accessibilityIdentifier = "terminal-engine-status"
+        engineStatusLabel.font = .systemFont(ofSize: 10)
+        engineStatusLabel.textColor = .secondaryLabel
+        engineStatusLabel.backgroundColor = .secondarySystemBackground
+        engineStatusLabel.numberOfLines = 2
+        engineStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(engineStatusLabel)
+        NSLayoutConstraint.activate([
+            engineStatusLabel.topAnchor.constraint(equalTo: topAnchor),
+            engineStatusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            engineStatusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            engineStatusLabel.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        updateEnginePreference(engine)
+    }
+
+    func updateEnginePreference(_ preference: TerminalEnginePreference) {
+        let message: String?
+        if preference != requestedEngineAtMount {
+            let current = terminalView is GhosttyVTView ? "Ghostty VT" : "SwiftTerm"
+            message = "引擎偏好已更新，下次挂载生效；当前仍使用 \(current)。"
+        } else {
+            message = fallbackMessage ?? (requestedEngineAtMount == .ghosttyVT ? "Ghostty VT（实验）；引擎选择下次挂载生效。" : nil)
+        }
+        engineStatusLabel.text = message
+        engineStatusLabel.isHidden = message == nil
+        // Status is chrome, not an overlay obscuring a real terminal row.
+        terminalTopConstraint.constant = message == nil ? 0 : 32
+        terminalView.requestTerminalRelayout()
+        setNeedsLayout()
     }
 
     @available(*, unavailable)
@@ -82,11 +118,13 @@ final class TerminalChromeView: UIView {
 
 @MainActor
 final class TerminalViewCoordinator {
-    var terminalView: ShellTerminalView?
+    var terminalView: (any TerminalHost)?
 }
 
 struct TerminalViewContainer: UIViewRepresentable {
     let session: SSHShellSession
+    let engine: TerminalEnginePreference
+    let experimentalConfiguration: GhosttyVt.Terminal.Configuration
     let fontSize: Double
     let fontFamily: String?
     let theme: TerminalTheme?
@@ -102,6 +140,8 @@ struct TerminalViewContainer: UIViewRepresentable {
 
     init(
         session: SSHShellSession,
+        engine: TerminalEnginePreference = .swiftTerm,
+        experimentalConfiguration: GhosttyVt.Terminal.Configuration = .init(),
         fontSize: Double = 14,
         fontFamily: String? = nil,
         theme: TerminalTheme? = nil,
@@ -116,6 +156,8 @@ struct TerminalViewContainer: UIViewRepresentable {
         onError: @escaping (String) -> Void
     ) {
         self.session = session
+        self.engine = engine
+        self.experimentalConfiguration = experimentalConfiguration
         self.fontSize = fontSize
         self.fontFamily = fontFamily
         self.theme = theme
@@ -135,11 +177,25 @@ struct TerminalViewContainer: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> TerminalChromeView {
-        let terminalView = ShellTerminalView(frame: .zero)
-        if let theme {
-            terminalView.apply(theme: theme)
+        let terminalView: any TerminalHost
+        var fallbackMessage: String?
+        if engine == .ghosttyVT {
+            do {
+                let experimental = try GhosttyVTView(configuration: experimentalConfiguration)
+                try experimental.apply(theme: theme ?? TerminalAppearance.colors(for: colorScheme).theme)
+                terminalView = experimental
+            } catch {
+                // This is the real throwing VT init/theme path. It runs
+                // BEFORE either renderer attaches to the existing PTY stream.
+                fallbackMessage = "Ghostty VT 未能初始化：\(String(describing: error))；已回退 SwiftTerm（原会话）。"
+                let fallback = ShellTerminalView(frame: .zero)
+                if let theme { fallback.apply(theme: theme) } else { fallback.updateAppearance(for: colorScheme) }
+                terminalView = fallback
+            }
         } else {
-            terminalView.updateAppearance(for: colorScheme)
+            let standard = ShellTerminalView(frame: .zero)
+            if let theme { standard.apply(theme: theme) } else { standard.updateAppearance(for: colorScheme) }
+            terminalView = standard
         }
         terminalView.updateFont(familyName: fontFamily, pointSize: fontSize)
         terminalView.shouldRestoreInputFocus = shouldRestoreInputFocus
@@ -147,7 +203,7 @@ struct TerminalViewContainer: UIViewRepresentable {
         terminalView.onOpenPanePicker = onOpenPanePicker
         terminalView.shortcutBar?.composeTargetLabel = composeTargetLabel
         terminalView.thumbArcPreferences = thumbArcPreferences
-        let chromeView = TerminalChromeView(terminalView: terminalView)
+        let chromeView = TerminalChromeView(terminalView: terminalView, engine: engine, fallbackMessage: fallbackMessage)
         terminalView.start(
             session: session,
             onError: onError,
@@ -160,12 +216,13 @@ struct TerminalViewContainer: UIViewRepresentable {
 
     func updateUIView(_ chromeView: TerminalChromeView, context: Context) {
         guard let terminalView = context.coordinator.terminalView else { return }
-        if let theme {
-            if terminalView.appliedTheme != theme {
-                terminalView.apply(theme: theme)
-            }
-        } else {
-            terminalView.updateAppearance(for: colorScheme)
+        chromeView.updateEnginePreference(engine)
+        let currentTheme = theme ?? TerminalAppearance.colors(for: colorScheme).theme
+        if let standard = terminalView as? ShellTerminalView, theme == nil {
+            standard.updateAppearance(for: colorScheme)
+        } else if terminalView.appliedTheme != currentTheme {
+            do { try terminalView.apply(theme: currentTheme) }
+            catch { onError("Terminal theme update failed: \(String(describing: error))") }
         }
         terminalView.updateFont(familyName: fontFamily, pointSize: fontSize)
         terminalView.shouldRestoreInputFocus = shouldRestoreInputFocus

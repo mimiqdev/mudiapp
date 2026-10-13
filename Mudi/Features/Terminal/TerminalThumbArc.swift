@@ -180,6 +180,10 @@ extension ShellTerminalView {
         default: break
         }
     }
+}
+
+@MainActor
+extension TerminalHost {
     func executeThumbArcAction(_ action: ThumbArcAction) {
         guard isInputFocusAllowed, let bar = shortcutBar else { return }
         switch action {

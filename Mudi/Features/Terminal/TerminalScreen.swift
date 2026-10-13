@@ -205,6 +205,7 @@ struct TerminalScreen: View {
         ZStack(alignment: .top) {
             TerminalViewContainer(
                 session: session,
+                engine: settingsModel.preferences.terminalEngine,
                 fontSize: currentFontSize,
                 fontFamily: currentFontFamily,
                 theme: terminalAppearance.theme,

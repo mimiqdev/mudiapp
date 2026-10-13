@@ -184,6 +184,11 @@ extension RootViewModel {
         persistPreferences()
     }
 
+    func updateTerminalEngine(_ engine: TerminalEnginePreference) {
+        preferences.terminalEngine = engine
+        persistPreferences()
+    }
+
     func updateThemeSelection(_ selection: TerminalThemeSelection) {
         preferences.themeSelection = selection
         persistPreferences()

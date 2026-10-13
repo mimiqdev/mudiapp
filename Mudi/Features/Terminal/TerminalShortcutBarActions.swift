@@ -56,25 +56,8 @@ extension MudiTerminalShortcutBar {
         final: UInt8
     ) {
         guard let terminalView else { return }
-        if terminalView.controlModifier || terminalView.metaModifier {
-            let modifier: UInt8
-            switch (terminalView.controlModifier, terminalView.metaModifier) {
-            case (true, true):
-                modifier = 0x37
-            case (true, false):
-                modifier = 0x35
-            case (false, true):
-                modifier = 0x33
-            case (false, false):
-                modifier = 0x31
-            }
-            terminalView.send([0x1b, 0x5b, 0x31, 0x3b, modifier, final])
-            clearModifiers()
-            return
-        }
-        terminalView.send(
-            terminalView.getTerminal().applicationCursor ? application : normal
-        )
+        terminalView.sendCursorKey(normal: normal, application: application, final: final)
+        updateModifierState()
     }
 
     func handle(_ command: MudiTerminalDPadOverlay.Command) {

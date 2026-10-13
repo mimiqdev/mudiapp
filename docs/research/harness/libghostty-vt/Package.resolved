@@ -1,0 +1,14 @@
+{
+  "originHash" : "c59d3cd8cd989d772fb41761e399e95a960a112ebec956b7a63d5a081c4b463e",
+  "pins" : [
+    {
+      "identity" : "libghostty-vt-spm",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/caelyreth/libghostty-vt-spm.git",
+      "state" : {
+        "revision" : "1f5446ec78f38546f1aee8f73067b9a4f7703262"
+      }
+    }
+  ],
+  "version" : 3
+}

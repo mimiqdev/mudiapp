@@ -8,7 +8,7 @@ extension MudiTerminalShortcutBar {
             rect.size.height = max(0, min(rect.maxY, -8) - rect.minY)
             return rect
         }
-        let height = max(terminalView?.bounds.height ?? 0, 222)
+        let height = max(terminalView?.hostView.bounds.height ?? 0, 222)
         return CGRect(x: 0, y: -height, width: bounds.width, height: height - 8)
     }
     @objc func handleDPadDrag(_ gesture: UIPanGestureRecognizer) {

@@ -9,9 +9,8 @@ extension MudiTerminalShortcutBar {
     @objc func recallHistory() { handle(.cursorUp) }
     func sendComposedText(_ text: String, bracketedPaste: Bool = true, appendReturn: Bool = false) {
         guard !text.isEmpty else { return }
-        let bracket = bracketedPaste && terminalView?.getTerminal().bracketedPasteMode == true
-        let payload = (bracket ? "\u{1b}[200~\(text)\u{1b}[201~" : text) + (appendReturn ? "\r" : "")
-        send(Array(payload.utf8))
+        terminalView?.sendComposedText(text, bracketedPaste: bracketedPaste, appendReturn: appendReturn)
+        clearModifiers()
     }
     @objc func openCompose() {
         guard let terminalView, terminalView.isInputFocusAllowed else { return }
