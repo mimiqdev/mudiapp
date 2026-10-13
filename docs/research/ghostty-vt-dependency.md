@@ -14,14 +14,16 @@
 - `GhosttyVTScreen` 只保留 VT 提供的 Swift-owned frame rows/cursor/theme，不解析任何 ANSI。full/尺寸改变重建；partial 按 row.index 覆盖；clean 保留行。
 - `GhosttyVTView` 拥有真实 `GhosttyVt.Terminal`，用 CoreText fallback/排版、CoreGraphics 两遍绘制（背景先于宽字符 glyph），按 column/width/spacer 放置。没有隐藏的 SwiftTerm。
 - view 只接受已扣除 chrome 的可见 bounds；零/不可见尺寸不发 resize、不清 screen。CPU renderer 限制 512 columns × 256 rows，防止极端 geometry 溢出/无界工作；有效小 viewport 至少 1×1。字体有效范围为 `(0, 128]` pt；不改变用户持久化偏好。
-- view 不拨号、不持有网络 transport。初始化/resize/update 使用真实 throwing API；feed 返回 `drainEvents`，由后续 adapter 处理 PTY replies/bell/title。
-- 本切片尚未由 `TerminalScreen` 挂载；App 仍只用旧 SwiftTerm。软键盘/IME、中立快捷栏/Composer/ThumbArc、设置 opt-in、同 session 回退、主题完整映射、selection/clipboard/scroll gestures 与焦点/session 替换待后续切片。cursor/text blink、复杂文字装饰与 ligatures/batching 尚未实现。不能报全量迁移。
+- view 不拨号、不持有网络 transport。初始化/resize/update 使用真实 throwing API；feed 返回 `drainEvents`。`GhosttyVTSessionAdapter` 绑定已有 `SSHShellSession`：有序发送 VT PTY replies/输入/resize，交付 bell/title/PWD；重复 start 不重复读流；stop 只 detach、不关连接，EOF/error 与原 pump 一样明确断开/报告。adapter 不应在 view 隐藏时 stop，持续 feed 到 bounded VT scrollback，没有 1 MiB pre-attach raw-byte 队列。
+- 本切片尚未由 `TerminalScreen` 挂载；App 仍只用旧 SwiftTerm。adapter 的 committed-text API **不是** UIKit IME 验收。软键盘/IME、中立快捷栏/Composer/ThumbArc、设置 opt-in、同 session 回退、主题完整映射、selection/clipboard/scroll gestures 与焦点/session 替换待后续切片。cursor/text blink、复杂文字装饰与 ligatures/batching 尚未实现。不能报全量迁移。
 
 ## 首次红 → 绿（2026-10-13）
 
 1. 计划先提交 `c8c704a`。
 2. 测试/依赖先提交 `280ecaf`。真实依赖已解析/编译；`xcodebuild test -only-testing:MudiTests/GhosttyVTRendererTests` exit 65，原因是产品 `GhosttyVTView` 尚不存在（编译期红，不是已运行的 assertion 失败）。该精确 HEAD 的 `qing verify --check renderer-red` 记录为 failed。
 3. 实现后同一窄 suite 在 iPhone 18 Pro / iOS 27 模拟器上 **7 tests, 0 failures**，exit 0。包含逐字节 UTF-8/CSI feed，真实 full/partial/clean、resize/mode 保留，实际 UIView.layer/CoreText 像素、ANSI16/256/RGB 背景、组合字符/中文宽字/Nerd glyph（非 .notdef）与 cursor hide/move。XCTest 保存 `GhosttyVT-CoreText-wide-combining-Nerd` 图像 attachment。
+
+4. session/effects 窄测试先提交 `7437db5`；精确 HEAD `vt-session-red` exit 65（缺少 `GhosttyVTSessionAdapter`）。实现后两组共 **13 tests, 0 failures**：真实 VT 的 DSR/status 回复、bell/title/PWD、Ctrl-C/Shift-Tab/DEC application cursor/Enter/bracketed paste，原 PTY 单消费者、初次可见 resize/后续 chrome resize、detached 超 1 MiB 输出末尾中文/组合字符与回复、实际 send failure/EOF、stop 不关闭原 session。transport 被记录；VT/frame/view/replies 没有 mock。
 
 复现（串行，复用唯一 DerivedData；其他 booted arm64 simulator 可替换 destination）：
 
@@ -30,7 +32,8 @@ scripts/generate-xcodeproj.sh
 xcodebuild test -project Mudi.xcodeproj -scheme Mudi \
   -destination 'platform=iOS Simulator,id=92F2836A-68F8-49E0-9E90-6A89B2792F3E' \
   -derivedDataPath /tmp/mudi-build -parallel-testing-enabled NO \
-  -only-testing:MudiTests/GhosttyVTRendererTests CODE_SIGNING_ALLOWED=NO
+  -only-testing:MudiTests/GhosttyVTRendererTests \
+  -only-testing:MudiTests/GhosttyVTSessionTests CODE_SIGNING_ALLOWED=NO
 ```
 
 此证据不是 iOS 17 运行、物理设备/IME、GPU/性能或发布签名验收。最终 handoff 以精确 clean HEAD 的 verify 与实际全套结果为准。
