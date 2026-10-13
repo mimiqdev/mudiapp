@@ -32,18 +32,27 @@ struct GhosttyVTCellSelection {
         return begin <= last && begin + width - 1 >= first
     }
 
+    /// Copy text with SwiftTerm 1.15 selection semantics, decided by VT cell
+    /// metadata rather than by characters: a written space (`" "`) is content,
+    /// a never-written/erased cell (`""`) is padding. Each row drops only its
+    /// trailing padding (interior gaps become spaces); soft-wrapped rows join
+    /// without a newline and keep boundary spaces; hard rows end in `\n`;
+    /// trailing all-padding rows are omitted. Spacer cells never add text,
+    /// so wide chars and grapheme clusters stay whole.
     func text(in screen: GhosttyVTScreen) -> String? {
         guard columns > 0 else { return nil }
-        var result = ""
+        var lines: [(text: String, hardBreak: Bool)] = []
         for rowIndex in (first / columns)...(last / columns) {
             guard screen.rows.indices.contains(rowIndex), let row = screen.rows[rowIndex] else { continue }
-            let cells = row.cells.filter { $0.width != .spacerTail && $0.width != .spacerHead && contains(row: rowIndex, column: Int($0.column), width: $0.width == .wide ? 2 : 1) }
-            var line = cells.map { $0.text.isEmpty ? " " : $0.text }.joined()
-            if last >= (rowIndex + 1) * columns - 1 {
-                while line.last == " " { line.removeLast() } // Omit full-row terminal padding, not leading indentation.
-            }
-            if rowIndex < last / columns, !row.isSoftWrapped { line += "\n" }
-            result += line
+            var cells = row.cells.filter { $0.width != .spacerTail && $0.width != .spacerHead && contains(row: rowIndex, column: Int($0.column), width: $0.width == .wide ? 2 : 1) }
+            while cells.last?.text.isEmpty == true { cells.removeLast() }
+            lines.append((cells.map { $0.text.isEmpty ? " " : $0.text }.joined(), !row.isSoftWrapped))
+        }
+        while lines.last?.text.isEmpty == true { lines.removeLast() }
+        var result = ""
+        for (index, line) in lines.enumerated() {
+            result += line.text
+            if index < lines.count - 1, line.hardBreak { result += "\n" }
         }
         return result.isEmpty ? nil : result
     }
