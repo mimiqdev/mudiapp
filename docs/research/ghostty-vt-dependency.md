@@ -25,13 +25,15 @@
 
 4. session/effects 窄测试先提交 `7437db5`；精确 HEAD `vt-session-red` exit 65（缺少 `GhosttyVTSessionAdapter`）。实现后两组共 **13 tests, 0 failures**：真实 VT 的 DSR/status 回复、bell/title/PWD、Ctrl-C/Shift-Tab/DEC application cursor/Enter/bracketed paste，原 PTY 单消费者、初次可见 resize/后续 chrome resize、detached 超 1 MiB 输出末尾中文/组合字符与回复、实际 send failure/EOF、stop 不关闭原 session。transport 被记录；VT/frame/view/replies 没有 mock。
 
+5. 错误传播补充测试 `d651ee5` 得到**运行期红**：未 start 抛 CancellationError、输入 caller 得到 opaque error wrapper，两条 assertion 实际失败；精确 HEAD `vt-errors-red` exit 65。首次包含这两条的 suite 已跑完 8 tests / 2 failures，但 coverage 结果收尾超过 240 秒，未报命令成功；限定两条、关闭 coverage 的 verify 正常记录失败。修正后两组共 **15 tests, 0 failures**，包含暂停第一次 PTY send 后并发发送的顺序验证，exit 0。
+
 复现（串行，复用唯一 DerivedData；其他 booted arm64 simulator 可替换 destination）：
 
 ```sh
 scripts/generate-xcodeproj.sh
 xcodebuild test -project Mudi.xcodeproj -scheme Mudi \
   -destination 'platform=iOS Simulator,id=92F2836A-68F8-49E0-9E90-6A89B2792F3E' \
-  -derivedDataPath /tmp/mudi-build -parallel-testing-enabled NO \
+  -derivedDataPath /tmp/mudi-build -parallel-testing-enabled NO -enableCodeCoverage NO \
   -only-testing:MudiTests/GhosttyVTRendererTests \
   -only-testing:MudiTests/GhosttyVTSessionTests CODE_SIGNING_ALLOWED=NO
 ```

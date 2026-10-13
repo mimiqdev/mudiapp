@@ -1,6 +1,6 @@
 # Active plan — Phase 15: 官方 Ghostty VT + Mudi 自有 iOS renderer
 
-**状态：** 用户已确认路线 2 与下列首轮合同，批准分阶段实现，不是仅调研。保留阶段 A `297dfab1`；本工作树基于 `0e5250d37e21f2f7345940a52f4044ed789fc90d`。主 checkout 的 Phase 16 未提交/未验收，暂停、不搬运、不归档。
+**状态：** 用户已确认路线 2 与下列首轮合同，批准分阶段实现，不是仅调研。首个正确性 renderer + 同 PTY adapter 增量已实现，15 项窄模拟器测试通过；运行期红与绿见 `docs/research/ghostty-vt-dependency.md`。App A/B/UIKit 输入与高级交互尚未完成，不是全量迁移；完整回归以 handoff 精确 HEAD 的实际记录为准。保留阶段 A `297dfab1`；本工作树基于 `0e5250d37e21f2f7345940a52f4044ed789fc90d`。主 checkout 的 Phase 16 未提交/未验收，暂停、不搬运、不归档。
 
 ## 出口
 
@@ -45,8 +45,8 @@
 
 仅在相应窄测试存在并观察红后实施该切片：
 
-1. 真实 VT + 保留行状态 + CoreText/CoreGraphics view（正确性第一）；依赖固定来源/许可证，模拟器绘制与 resize 证据。
-2. 中立输入/session adapter：同 PTY 输出、查询回复、输入编码、UIKit marked text/提交；有序输出、错误可观察。
+1. **已实现首增量：** 真实 VT + 保留行状态 + CoreText/CoreGraphics view（正确性第一）；依赖固定来源/许可证，模拟器绘制与 resize 证据。
+2. **adapter 部分已实现：** 同 PTY 输出、查询回复、VT 输入编码与有序发送/错误传播；初次可见 resize，隐藏 view 继续解析。**未完成：** UIKit marked text/提交适配、selection/local scroll gestures、主题完整映射与 session 替换/focus。committed-text API 不等于 IME 已验收。
 3. App opt-in 挂载及设置、真实失败回退、快捷栏 chrome/中立宿主接口；默认与活动 session 不变。
 4. selection/local scrollback/clipboard、remote scroll/wheel、主题字体/lifecycle 完善；按实测能力记录尚未实现项，最终模拟器完整回归。
 

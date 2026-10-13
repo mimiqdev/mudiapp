@@ -68,7 +68,8 @@ final class GhosttyVTSessionAdapter {
     }
 
     func sendKey(_ event: GhosttyVt.Terminal.KeyEvent) async throws {
-        try await enqueue(.write([try view.terminal.encode(event)])).value
+        guard isRunning else { throw AdapterError.notStarted }
+        try await sendInput([try view.terminal.encode(event)])
     }
 
     /// The UIKit input adapter must call this ONLY after a composition commits;
@@ -79,11 +80,22 @@ final class GhosttyVTSessionAdapter {
     }
 
     func paste(_ text: String, appendEnter: Bool = false) async throws {
+        guard isRunning else { throw AdapterError.notStarted }
         var data = [try view.terminal.encodePaste(text)]
         if appendEnter { data.append(try view.terminal.encode(.init(key: .enter))) }
         // Paste and its explicit Enter are a single ordered batch, not two
         // unstructured Tasks that can interleave with a VT query response.
-        try await enqueue(.write(data)).value
+        try await sendInput(data)
+    }
+
+    private func sendInput(_ data: [Data]) async throws {
+        do {
+            try await enqueue(.write(data)).value
+        } catch let error as ReportedWriteError {
+            // The wrapper is only an internal duplicate-report marker for
+            // the output pump; explicit input callers get the real PTY error.
+            throw error.underlying
+        }
     }
 
     private func consumeOutput(identity: Int) async {
