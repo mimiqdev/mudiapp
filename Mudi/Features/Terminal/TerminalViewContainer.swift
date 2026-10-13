@@ -1,3 +1,4 @@
+import GhosttyVt
 import HerdrKit
 @preconcurrency import SwiftTerm
 import SwiftUI
@@ -87,6 +88,8 @@ final class TerminalViewCoordinator {
 
 struct TerminalViewContainer: UIViewRepresentable {
     let session: SSHShellSession
+    let engine: TerminalEnginePreference
+    let experimentalConfiguration: GhosttyVt.Terminal.Configuration
     let fontSize: Double
     let fontFamily: String?
     let theme: TerminalTheme?
@@ -102,6 +105,8 @@ struct TerminalViewContainer: UIViewRepresentable {
 
     init(
         session: SSHShellSession,
+        engine: TerminalEnginePreference = .swiftTerm,
+        experimentalConfiguration: GhosttyVt.Terminal.Configuration = .init(),
         fontSize: Double = 14,
         fontFamily: String? = nil,
         theme: TerminalTheme? = nil,
@@ -116,6 +121,8 @@ struct TerminalViewContainer: UIViewRepresentable {
         onError: @escaping (String) -> Void
     ) {
         self.session = session
+        self.engine = engine
+        self.experimentalConfiguration = experimentalConfiguration
         self.fontSize = fontSize
         self.fontFamily = fontFamily
         self.theme = theme
