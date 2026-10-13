@@ -40,6 +40,7 @@ final class GhosttyVTSessionAdapter {
         lastSentSize = nil
         view.onGridResize = { [weak self] in self?.resizePTY(to: $0) }
         view.onRenderError = { [weak self] in self?.onError?($0) }
+        view.onInput = { [weak self] action in self?.handleUIKitInput(action) }
         // The host may already have laid out this view before binding the PTY.
         // In that case no new grid-change callback occurs: sync it once here.
         view.setNeedsLayout()
@@ -65,6 +66,8 @@ final class GhosttyVTSessionAdapter {
         lastSentSize = nil
         view.onGridResize = nil
         view.onRenderError = nil
+        view.onInput = nil
+        view.cancelComposition()
     }
 
     func sendKey(_ event: GhosttyVt.Terminal.KeyEvent) async throws {
@@ -96,6 +99,24 @@ final class GhosttyVTSessionAdapter {
             // the output pump; explicit input callers get the real PTY error.
             throw error.underlying
         }
+    }
+
+    private func handleUIKitInput(_ action: GhosttyVTInputAction) {
+        guard isRunning else { return }
+        do {
+            let batch: [Data]
+            switch action {
+            case .key(let key): batch = [try view.terminal.encode(key)]
+            case .raw(let data): batch = [data]
+            case .paste(let text, let bracketed, let enter):
+                var data = [bracketed ? try view.terminal.encodePaste(text) : Data(text.utf8)]
+                if enter { data.append(try view.terminal.encode(.init(key: .enter))) }
+                batch = data
+            }
+            // Enqueue synchronously at the UIKit event, so a deferred Task
+            // cannot accidentally bind input to a replacement session.
+            _ = enqueue(.write(batch))
+        } catch { onError?(error) }
     }
 
     private func consumeOutput(identity: Int) async {

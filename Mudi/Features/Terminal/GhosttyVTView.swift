@@ -18,6 +18,26 @@ final class GhosttyVTView: UIView {
     var onGridResize: ((GhosttyVt.Terminal.Size) -> Void)?
     var onRenderError: ((Error) -> Void)?
     private var lastPixelCellSize: CGSize = .zero
+    let inputStorage = GhosttyVTInputStorage()
+    weak var inputDelegate: (any UITextInputDelegate)?
+    lazy var tokenizer: any UITextInputTokenizer = UITextInputStringTokenizer(textInput: self)
+    var markedTextStyle: [NSAttributedString.Key: Any]?
+    var onInput: ((GhosttyVTInputAction) -> Void)?
+    var onCompositionChange: ((String?) -> Void)?
+    var onModifiersConsumed: (() -> Void)?
+    var controlModifier = false
+    var metaModifier = false
+    private(set) var isInputFocusAllowed = true
+    var keyboardType: UIKeyboardType = .default
+    var autocorrectionType: UITextAutocorrectionType = .no
+    var autocapitalizationType: UITextAutocapitalizationType = .none
+    var spellCheckingType: UITextSpellCheckingType = .no
+    var smartQuotesType: UITextSmartQuotesType = .no
+    var smartDashesType: UITextSmartDashesType = .no
+    var smartInsertDeleteType: UITextSmartInsertDeleteType = .no
+    var returnKeyType: UIReturnKeyType = .default
+    var enablesReturnKeyAutomatically = false
+    var isSecureTextEntry = false
 
     init(configuration: GhosttyVt.Terminal.Configuration = .init()) throws {
         guard configuration.columns <= GhosttyVTGridGeometry.maximumColumns,
@@ -34,6 +54,8 @@ final class GhosttyVTView: UIView {
         clipsToBounds = true
         contentMode = .redraw
         accessibilityIdentifier = "ghostty-vt-surface"
+        inputAssistantItem.leadingBarButtonGroups = []
+        inputAssistantItem.trailingBarButtonGroups = []
         try refresh()
     }
 
@@ -41,6 +63,8 @@ final class GhosttyVTView: UIView {
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
+
+    override var canBecomeFirstResponder: Bool { isInputFocusAllowed }
 
     /// Effects are owned by the caller; in the session adapter writeToPty
     /// goes back through the same session used by input. No replies are fed
