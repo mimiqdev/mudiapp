@@ -10,6 +10,7 @@ enum AppearancePreference: String, CaseIterable, Codable, Equatable, Sendable {
 
 struct TerminalPreferences: Codable, Equatable, Sendable {
     var appearance: AppearancePreference
+    var terminalEngine: TerminalEnginePreference
     var themeSelection: TerminalThemeSelection
     var fontFamily: String
     var fontSize: Double
@@ -26,6 +27,7 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
 
     init(
         appearance: AppearancePreference = .system,
+        terminalEngine: TerminalEnginePreference = .swiftTerm,
         themeSelection: TerminalThemeSelection = TerminalThemeRegistry.defaultSelection,
         fontFamily: String = "JetBrainsMono Nerd Font Mono",
         fontSize: Double = 14,
@@ -36,6 +38,7 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
         thumbArc: ThumbArcPreferences = ThumbArcPreferences()
     ) {
         self.appearance = appearance
+        self.terminalEngine = terminalEngine
         self.themeSelection = themeSelection
         self.fontFamily = fontFamily
         self.fontSize = fontSize
@@ -72,6 +75,7 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
             AppearancePreference.self,
             forKey: .appearance
         ) ?? .system
+        terminalEngine = try container.decodeIfPresent(TerminalEnginePreference.self, forKey: .terminalEngine) ?? .swiftTerm
         themeSelection = try container.decodeIfPresent(
             TerminalThemeSelection.self,
             forKey: .themeSelection
@@ -105,6 +109,7 @@ struct TerminalPreferences: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case appearance
+        case terminalEngine
         case themeSelection
         case fontFamily
         case fontSize

@@ -53,6 +53,21 @@ struct TerminalAppearanceSection: View {
 
     var body: some View {
         Section("Terminal") {
+            Picker("Renderer", selection: Binding(
+                get: { model.preferences.terminalEngine },
+                set: { model.updateTerminalEngine($0) }
+            )) {
+                ForEach(TerminalEnginePreference.allCases, id: \.self) { engine in
+                    Text(engine.label).tag(engine)
+                }
+            }
+            .accessibilityIdentifier("terminal-engine-picker")
+            Text("引擎选择下次挂载生效，不转换或清除当前会话内容。Ghostty VT 为实验引擎，真机输入与高级交互尚待验收。")
+                .font(.footnote).foregroundStyle(.secondary)
+            AccessibilityIdentifierBridge(identifier: "terminal-engine-picker",
+                accessibilityLabel: model.preferences.terminalEngine.label + "；下次挂载生效")
+                .frame(width: 1, height: 1)
+
             Picker("Theme", selection: Binding(
                 get: { model.preferences.themeSelection },
                 set: { model.updateThemeSelection($0) }
