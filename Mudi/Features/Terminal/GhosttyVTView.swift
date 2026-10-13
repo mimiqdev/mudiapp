@@ -256,12 +256,25 @@ final class GhosttyVTView: UIView {
         var foreground = (cell.resolvedForeground ?? theme.foreground).uiColor
         var background = (cell.resolvedBackground ?? theme.background).uiColor
         if cell.style.isInverse { swap(&foreground, &background) }
+        if let bright = Self.boldBrightForeground(for: cell.style, palette: theme.palette) { foreground = bright.uiColor }
         if selectionContains(cell, row: row) {
             background = appliedTheme?.selection.uiColor ?? .systemBlue
             foreground = appliedTheme?.bold.uiColor ?? theme.background.uiColor
         }
         if cell.style.isFaint { foreground = foreground.withAlphaComponent(0.5) }
         return (foreground, background)
+    }
+
+    /// The VT FG_COLOR API deliberately leaves bold handling to the renderer.
+    /// Keep SwiftTerm 1.15 (`dd2fb8ac`) default `useBrightColors` behaviour
+    /// (`AppleTerminalView.mapColor`): after the inverse swap, a bold
+    /// foreground that is a palette index `< 7` uses `index + 8`. Index 7,
+    /// explicit bright/256 (index ≥ 8), RGB, default colours and backgrounds
+    /// are unchanged. Decided from the VT style's palette index, never from RGB.
+    static func boldBrightForeground(for style: TerminalFrame.Style, palette: [TerminalFrame.RGBColor]) -> TerminalFrame.RGBColor? {
+        guard style.isBold, case .palette(let index)? = style.isInverse ? style.background : style.foreground,
+              index < 7, palette.indices.contains(Int(index) + 8) else { return nil }
+        return palette[Int(index) + 8]
     }
 
     private func drawGlyph(_ cell: TerminalFrame.Cell, in rect: CGRect, foreground: UIColor, context: CGContext) {
