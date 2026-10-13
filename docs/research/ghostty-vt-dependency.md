@@ -38,4 +38,6 @@ xcodebuild test -project Mudi.xcodeproj -scheme Mudi \
   -only-testing:MudiTests/GhosttyVTSessionTests CODE_SIGNING_ALLOWED=NO
 ```
 
-此证据不是 iOS 17 运行、物理设备/IME、GPU/性能或发布签名验收。最终 handoff 以精确 clean HEAD 的 verify 与实际全套结果为准。
+在 `f91fb7f` 已实际执行完整 `MudiTests` 模拟器回归：**388 tests, 0 failures**，exit 0（同一 destination/DerivedData，串行、coverage 关闭），包括原 Phase 4/7/8、Herdr/Mosh 回归。最终 handoff 再以最终 clean HEAD 的 `vt-correctness` / `simulator-regression` / 核心包检查记录为准。
+
+此证据不是 iOS 17 运行、物理设备/IME、GPU/性能或发布签名验收。下个实现入口是 active plan 切片 2 的 UIKit 输入/主题与 lifecycle，再接切片 3 的受控 opt-in；不能用本阶段报告代替尚未完成的 A/B/高级交互验收。

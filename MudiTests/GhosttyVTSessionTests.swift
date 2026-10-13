@@ -142,6 +142,30 @@ final class GhosttyVTSessionTests: XCTestCase {
         XCTAssertEqual(snapshot.sent, [[42]])
     }
 
+    func testStopDuringUncancellableReplyDoesNotPublishOldSessionEffects() async throws {
+        let channel = GhosttyVTRecordingPTY()
+        let adapter = GhosttyVTSessionAdapter(view: try GhosttyVTView(),
+                                             session: SSHShellSession(connectedChannel: channel))
+        var bells = 0
+        var title: String?
+        adapter.onBell = { bells += 1 }
+        adapter.onTitleChange = { title = $0 }
+        adapter.start()
+        await channel.delayNextWrite(ignoreCancellation: true)
+        await channel.emit("\u{1b}[5n\u{07}\u{1b}]2;old session\u{07}")
+        let replyStarted = await wait { (await channel.snapshot()).attempted.count == 1 }
+        XCTAssertTrue(replyStarted)
+        adapter.stop()
+        // A real network write may already be in flight and ignore task
+        // cancellation. Its completion must not publish stale UI callbacks.
+        try await Task.sleep(for: .milliseconds(80))
+        let snapshot = await channel.snapshot()
+        XCTAssertEqual(snapshot.sent, [Array("\u{1b}[0n".utf8)])
+        XCTAssertEqual(bells, 0)
+        XCTAssertNil(title)
+        XCTAssertEqual(snapshot.closeCount, 0)
+    }
+
     func testInputBeforeStartReportsNotStartedRatherThanCancellation() async throws {
         let channel = GhosttyVTRecordingPTY()
         let adapter = GhosttyVTSessionAdapter(view: try GhosttyVTView(),
@@ -207,6 +231,7 @@ private actor GhosttyVTRecordingPTY: PTYOutputChannel {
     private var sent: [[UInt8]] = []
     private var attempted: [[UInt8]] = []
     private var shouldDelayWrite = false
+    private var ignoreSendCancellation = false
     private var sizes: [GhosttyVt.Terminal.Size] = []
     private var outputReaders = 0
     private var closeCount = 0
@@ -221,7 +246,11 @@ private actor GhosttyVTRecordingPTY: PTYOutputChannel {
         if writesFail { throw WriteError.disconnected }
         if shouldDelayWrite {
             shouldDelayWrite = false
-            try await Task.sleep(for: .milliseconds(40))
+            if ignoreSendCancellation {
+                try? await Task.sleep(for: .milliseconds(40))
+            } else {
+                try await Task.sleep(for: .milliseconds(40))
+            }
         }
         sent.append(bytes)
     }
@@ -232,7 +261,10 @@ private actor GhosttyVTRecordingPTY: PTYOutputChannel {
     func emit(_ text: String) { continuation.yield(Array(text.utf8)) }
     func finish() { continuation.finish() }
     func failWrites() { writesFail = true }
-    func delayNextWrite() { shouldDelayWrite = true }
+    func delayNextWrite(ignoreCancellation: Bool = false) {
+        shouldDelayWrite = true
+        ignoreSendCancellation = ignoreCancellation
+    }
     func snapshot() -> Snapshot {
         .init(sent: sent, attempted: attempted, sizes: sizes, outputReaders: outputReaders, closeCount: closeCount)
     }
