@@ -102,6 +102,12 @@ git diff --check 0e5250d37e21f2f7345940a52f4044ed789fc90d..HEAD
 - **R2**：真实 VT 中写入的空格 cell text 为 `" "`，从未写入/擦除的 cell 为 `""`。复制只裁剪每行尾部 `""` padding（同 SwiftTerm `getTrimmedLength`），行内空 cell 输出空格；软折行无换行拼接且保留边界空格；硬行 `\n`；尾部全空行省略。spacerHead/Tail 不产生文本，宽字/组合字不拆。断言覆盖实际 UIKit `copy(_:)` 与 `UIPasteboard`。
 - **R3**：FG_COLOR 不处理 bold（`render.h`）。按 SwiftTerm `AppleTerminalView.mapColor` 默认 `useBrightColors`：inverse 交换后，bold 且前景为 palette index `< 7` 时用 `index + 8`；index 7（`ansi < 7` 边界）、显式 bright/256、真彩、默认色与背景不变；按 VT style palette index 判断，不从 RGB 反推。SGR 22 恢复基础色。测试同时比较显式 palette 期望与独立 SwiftTerm 视图在同一 SGR 流下的像素；附件 `GhosttyVT-bold-bright-*` 与 `SwiftTerm-bold-bright-oracle-*`。
 
+### 复审 18de2069 R4（session 替换跨代重复）
+
+- 触发：`updateSession` 只停旧 adapter，未停 `hardwareKeyRepeat`；timer 调用当前 `onInput`，新 adapter 重绑后，旧 session 上按住的键会重复进新 PTY。
+- 测试先行 `fe0047d`：生产 `pressesBegan` 按住 Ctrl+C → 替换为不同 session → 等 0.75 s，运行期红：新 PTY 收到旧键重复（2 条 assertion，第二条为同因的新 PTY 混入 `0x03`）。
+- 修复 `38edd86`：不同 session 替换边界先 `stopHardwareKeyRepeat()`（在同 session guard 之后，未调用 `host.stop`）。同测试断言旧 PTY 只有替换前 1 个字节、close=0；VT/scrollback 保留；新 session 自己的按住键正常发送并重复、release 后停止；同 session update 不取消重复。Host/Session/AppMount 23/23 通过。
+
 最终精确 HEAD 的 `vt-correctness`、`simulator-regression`、`core-tests`、`diff-check` 由 `qing verify` 记录为准。仍未覆盖：物理硬件键盘/真机 IME、按键 release 的 kitty report-events、Cmd+Option+O 切换 optionAsMeta（实验路径固定 Option=Meta）、复杂 selection/手势、blink/复杂装饰/ligatures/性能。
 
 当前 runtime 仅 iPhone 18 Pro / iOS 27 模拟器、Xcode 27；UIKit protocol 调用、gesture 安装/selector、窗口移除与后台通知模拟是可重复自动化，不等于中文/日文/韩文系统键盘输入、实际 OS 后台、真实 Herdr/Mosh 或 iOS 17 真机验收。基础 edit menu/cell selection/pan 不是完整 SwiftTerm 交互同等性；无 selection handles/跨 viewport autoscroll/惯性/鼠标点击拖曳。没有 GPU/性能结果、设备安装、发布/法律合规审查或独立 Review。保留 active plan，不归档、不合流、不 push。
