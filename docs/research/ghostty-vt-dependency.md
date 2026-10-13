@@ -27,6 +27,8 @@
 
 5. 错误传播补充测试 `d651ee5` 得到**运行期红**：未 start 抛 CancellationError、输入 caller 得到 opaque error wrapper，两条 assertion 实际失败；精确 HEAD `vt-errors-red` exit 65。首次包含这两条的 suite 已跑完 8 tests / 2 failures，但 coverage 结果收尾超过 240 秒，未报命令成功；限定两条、关闭 coverage 的 verify 正常记录失败。修正后两组共 **15 tests, 0 failures**，包含暂停第一次 PTY send 后并发发送的顺序验证，exit 0。
 
+6. teardown 补充测试 `d376912`：若在飞行中的 PTY write 忽略取消，stop 后不应再派发同一帧剩余的旧 bell/title。先实际得到两条 runtime assertion 红（exit 65）；该 HEAD 的 `qing verify` 重跑 180 秒超时，query 未有 check，**没有**把那次当作已记录测试结果。添加每个 event 派发前的 generation/cancellation guard 后，两组共 **16 tests, 0 failures**，exit 0。
+
 复现（串行，复用唯一 DerivedData；其他 booted arm64 simulator 可替换 destination）：
 
 ```sh

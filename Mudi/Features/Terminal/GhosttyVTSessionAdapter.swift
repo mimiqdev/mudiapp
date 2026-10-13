@@ -108,6 +108,10 @@ final class GhosttyVTSessionAdapter {
                 // scrollback is the retained state, not a lossy raw queue.
                 let events = try view.feed(Data(bytes))
                 for event in events {
+                    // A completed in-flight write may ignore cancellation.
+                    // Recheck before publishing any remaining old-session UI
+                    // effects; a guard only before the whole frame isn't enough.
+                    guard isCurrent(identity), !Task.isCancelled else { return }
                     switch event {
                     case .writeToPty(let reply):
                         try await enqueue(.write([reply])).value

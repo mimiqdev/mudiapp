@@ -1,6 +1,6 @@
 # Active plan — Phase 15: 官方 Ghostty VT + Mudi 自有 iOS renderer
 
-**状态：** 用户已确认路线 2 与下列首轮合同，批准分阶段实现，不是仅调研。首个正确性 renderer + 同 PTY adapter 增量已实现，15 项窄模拟器测试通过；运行期红与绿见 `docs/research/ghostty-vt-dependency.md`。App A/B/UIKit 输入与高级交互尚未完成，不是全量迁移；完整回归以 handoff 精确 HEAD 的实际记录为准。保留阶段 A `297dfab1`；本工作树基于 `0e5250d37e21f2f7345940a52f4044ed789fc90d`。主 checkout 的 Phase 16 未提交/未验收，暂停、不搬运、不归档。
+**状态：** 用户已确认路线 2 与下列首轮合同，批准分阶段实现，不是仅调研。首个正确性 renderer + 同 PTY adapter 增量已实现，16 项窄模拟器测试通过；运行期红与绿见 `docs/research/ghostty-vt-dependency.md`。App A/B/UIKit 输入与高级交互尚未完成，不是全量迁移；完整回归以 handoff 精确 HEAD 的实际记录为准。保留阶段 A `297dfab1`；本工作树基于 `0e5250d37e21f2f7345940a52f4044ed789fc90d`。主 checkout 的 Phase 16 未提交/未验收，暂停、不搬运、不归档。
 
 ## 出口
 
