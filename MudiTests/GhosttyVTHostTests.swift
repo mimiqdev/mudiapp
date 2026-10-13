@@ -29,6 +29,24 @@ final class GhosttyVTHostTests: XCTestCase {
         }
     }
 
+    func testAgentActionsConfirmationIsCancelledWhenEitherHostPausesOrStops() throws {
+        for view in [ShellTerminalView(frame: .zero), try GhosttyVTView()] as [UIView] {
+            let host = try XCTUnwrap(view as? any TerminalHost)
+            let bar = try XCTUnwrap(host.shortcutBar)
+            bar.agentActionsState.selectPreset(.pi)
+            for stopping in [false, true] {
+                host.updateInputFocus(isAllowed: true)
+                bar.toggleAgentActions()
+                XCTAssertEqual(bar.activePopup, .agentActions)
+                XCTAssertNil(bar.agentActionsState.selectAction("reload"))
+                if stopping { host.stop() } else { host.updateInputFocus(isAllowed: false) }
+                XCTAssertEqual(bar.activePopup, .none)
+                XCTAssertTrue(bar.agentActionsPanel.isHidden)
+                XCTAssertNil(bar.agentActionsState.confirmCommand(), "Retired confirmation must not reach a resumed or replacement session")
+            }
+        }
+    }
+
     func testVTSharedDPadAndComposerUseCurrentModesAndByteSemantics() async throws {
         let view = try GhosttyVTView()
         let host = try XCTUnwrap(view as? any TerminalHost)

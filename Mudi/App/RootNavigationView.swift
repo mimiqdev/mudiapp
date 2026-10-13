@@ -58,7 +58,10 @@ struct RootView: View {
                         isInputFocusAllowed: !model.isPanePickerPresented,
                         shouldRestoreInputFocus: model
                             .terminalKeyboardFocusActive,
-                        onInputFocusChange: model.terminalInputFocusDidChange
+                        onInputFocusChange: model.terminalInputFocusDidChange,
+                        agentActionsContext: TerminalAgentActionsContext(
+                            hostID: activeConnection.host.id
+                        )
                     )
                     // Identity follows the terminal context, not the session
                     // object: a background retakeover swaps the control
@@ -92,7 +95,12 @@ struct RootView: View {
                         shouldRestoreInputFocus: model
                             .terminalKeyboardFocusActive,
                         onInputFocusChange: model.terminalInputFocusDidChange,
-                        suppressConnectionErrors: model.isPaneControlSuspended
+                        suppressConnectionErrors: model.isPaneControlSuspended,
+                        agentActionsContext: TerminalAgentActionsContext(
+                            hostID: activeConnection.host.id,
+                            sessionID: herdrSession.id,
+                            pane: pane
+                        )
                     )
                     .id("attached-\(pane.id)")
                 case .empty, .sessions, .panes:

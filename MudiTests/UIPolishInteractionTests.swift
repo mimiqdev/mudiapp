@@ -93,7 +93,7 @@ final class UIPolishInteractionTests: XCTestCase {
         bar.frame = CGRect(x: 0, y: 0, width: 320, height: 48)
         bar.layoutIfNeeded()
         XCTAssertEqual(bar.stackView.arrangedSubviews.compactMap(\.accessibilityIdentifier).filter { $0.hasPrefix("terminal-shortcut-") },
-                       ["escape", "tab", "control", "dpad", "compose", "paste", "history"].map { "terminal-shortcut-" + $0 })
+                       ["escape", "tab", "control", "dpad", "compose", "paste", "history", "agent-actions"].map { "terminal-shortcut-" + $0 })
         for button in bar.shortcutButtons + [bar.dismissKeyboardButton] {
             XCTAssertGreaterThanOrEqual(button.bounds.width, 44)
             XCTAssertGreaterThanOrEqual(button.bounds.height, 44)

@@ -98,6 +98,13 @@ extension MudiTerminalShortcutBar {
         let ctrlLatched = terminalView?.controlModifier == true
         comboPopup.isHidden = !(activePopup == .ctrlCombo && ctrlLatched)
         dpadOverlay.isHidden = activePopup != .dPad
+        agentActionsPanel.isHidden = activePopup != .agentActions
+        if activePopup != .agentActions {
+            agentActionsState.cancelCommand()
+            agentActionsPanel.render(agentActionsState)
+        }
+        agentActionsButton?.isSelected = activePopup == .agentActions
+        style(agentActionsButton)
         controlButton?.isSelected = activePopup == .ctrlCombo && ctrlLatched
         dpadButton?.isSelected = activePopup == .dPad
         style(controlButton)

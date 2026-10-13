@@ -134,7 +134,7 @@ final class Phase7DeviceFeedbackRound2Tests: XCTestCase {
         let bar = try XCTUnwrap(terminalView.shortcutBar)
         harness.window.layoutIfNeeded()
         let buttons = phase7ShortcutButtons(in: bar)
-        XCTAssertEqual(buttons.count, 9)
+        XCTAssertEqual(buttons.count, 10)
 
         let iconIDs = ["dpad", "paste", "history", "compose", "jump-to", "dismiss-keyboard"]
         for id in iconIDs {

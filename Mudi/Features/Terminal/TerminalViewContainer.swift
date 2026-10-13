@@ -134,6 +134,7 @@ struct TerminalViewContainer: UIViewRepresentable {
     let onInputFocusChange: ((Bool) -> Void)?
     let thumbArcPreferences: ThumbArcPreferences
     let onOpenPanePicker: (() -> Void)?
+    let agentActionsContext: TerminalAgentActionsContext?
     let composeTargetLabel: String
     let onError: (String) -> Void
     let onClosed: () -> Void
@@ -151,6 +152,7 @@ struct TerminalViewContainer: UIViewRepresentable {
         onInputFocusChange: ((Bool) -> Void)? = nil,
         thumbArcPreferences: ThumbArcPreferences = ThumbArcPreferences(),
         onOpenPanePicker: (() -> Void)? = nil,
+        agentActionsContext: TerminalAgentActionsContext? = nil,
         composeTargetLabel: String = "Terminal",
         onClosed: @escaping () -> Void = {},
         onError: @escaping (String) -> Void
@@ -167,6 +169,7 @@ struct TerminalViewContainer: UIViewRepresentable {
         self.onInputFocusChange = onInputFocusChange
         self.thumbArcPreferences = thumbArcPreferences
         self.onOpenPanePicker = onOpenPanePicker
+        self.agentActionsContext = agentActionsContext
         self.composeTargetLabel = composeTargetLabel
         self.onError = onError
         self.onClosed = onClosed
@@ -209,6 +212,7 @@ struct TerminalViewContainer: UIViewRepresentable {
             onError: onError,
             onClosed: onClosed
         )
+        terminalView.shortcutBar?.updateAgentActionsContext(agentActionsContext)
         terminalView.updateInputFocus(isAllowed: isInputFocusAllowed)
         context.coordinator.terminalView = terminalView
         return chromeView
@@ -236,6 +240,7 @@ struct TerminalViewContainer: UIViewRepresentable {
             onError: onError,
             onClosed: onClosed
         )
+        terminalView.shortcutBar?.updateAgentActionsContext(agentActionsContext)
     }
 
     static func dismantleUIView(
@@ -388,6 +393,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     func updateInputFocus(isAllowed: Bool) {
         isInputFocusAllowed = isAllowed
         guard !isAllowed else { return }
+        shortcutBar?.dismissAgentActions()
         shortcutBar?.composer?.input.resignFirstResponder()
         _ = resignFirstResponder()
     }
@@ -669,6 +675,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     }
 
     func stop() {
+        shortcutBar?.dismissAgentActions()
         thumbArcOverlay.cancel()
         // UIKit resigns first responder when the view leaves the window. That
         // implicit resign is teardown, not a user keyboard dismissal, so it
