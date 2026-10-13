@@ -72,6 +72,9 @@ extension GhosttyVTView: TerminalHost {
         guard self.session.map(ObjectIdentifier.init) != ObjectIdentifier(session) else { return }
         // Keep the same view, VT state and first responder. Retire only the
         // old pump/input generation; the connection owner handles disconnect.
+        // A key held on the old session must not repeat into the new PTY via
+        // the rebound onInput; the next press starts its own repeat.
+        stopHardwareKeyRepeat()
         sessionAdapter?.stop()
         sessionAdapter = nil
         start(session: session, onError: onError, onClosed: onClosed)
