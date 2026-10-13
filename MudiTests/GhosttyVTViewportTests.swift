@@ -88,6 +88,52 @@ final class GhosttyVTViewportTests: XCTestCase {
         XCTAssertNil(interactions.selectedTerminalText, "New cell content must invalidate stale viewport indices")
     }
 
+    /// Real VT cells: a written space is `" "`, never-written padding is `""`,
+    /// a wide char wrapped to the next row leaves a `spacerHead`. Only padding
+    /// is trimmed (SwiftTerm 1.15 `getTrimmedLength` semantics); soft wraps
+    /// join without newline and keep boundary spaces; hard rows end in `\n`.
+    func testSoftWrapBoundarySpacesAndHardRowPaddingCopyThroughUIKitPasteboard() throws {
+        let view = try GhosttyVTView(configuration: .init(columns: 6, rows: 3))
+        let interactions = try XCTUnwrap(view as? any TerminalViewportInteractions)
+        let oldClipboard = UIPasteboard.general.items
+        defer { UIPasteboard.general.items = oldClipboard }
+
+        _ = try view.feed(Data("abcd  X".utf8))
+        XCTAssertEqual(view.screen.rows[0]?.isSoftWrapped, true)
+        XCTAssertEqual(view.screen.rows[0]?.cells.suffix(2).map(\.text), [" ", " "], "Real VT keeps the written spaces")
+        interactions.selectTerminalCells(from: .init(column: 0, row: 0), through: .init(column: 0, row: 1))
+        XCTAssertEqual(interactions.selectedTerminalText, "abcd  X")
+        interactions.selectTerminalCells(from: .init(column: 0, row: 0), through: .init(column: 5, row: 2))
+        XCTAssertEqual(interactions.selectedTerminalText, "abcd  X", "Trailing never-written cells/rows are padding (SwiftTerm skips trailing blank rows)")
+        interactions.selectTerminalCells(from: .init(column: 0, row: 0), through: .init(column: 0, row: 1))
+        _ = view.perform(#selector(UIResponderStandardEditActions.copy(_:)), with: nil)
+        XCTAssertEqual(UIPasteboard.general.string, "abcd  X", "Actual UIKit copy must not change the soft-wrapped text")
+
+        // Hard newline: written trailing spaces stay, unwritten padding goes;
+        // a partial selection inside the unwritten tail is padding too.
+        _ = try view.feed(Data("\u{1b}[2J\u{1b}[Hcd  \r\nE\u{1b}[3;1Hab\u{1b}[3Cq".utf8))
+        XCTAssertEqual(view.screen.rows[0]?.isSoftWrapped, false)
+        XCTAssertEqual(view.screen.rows[0]?.cells.map(\.text), ["c", "d", " ", " ", "", ""])
+        interactions.selectTerminalCells(from: .init(column: 0, row: 0), through: .init(column: 5, row: 2))
+        XCTAssertEqual(interactions.selectedTerminalText, "cd  \nE\nab   q")
+        interactions.selectTerminalCells(from: .init(column: 0, row: 1), through: .init(column: 4, row: 1))
+        XCTAssertEqual(interactions.selectedTerminalText, "E")
+        _ = view.perform(#selector(UIResponderStandardEditActions.copy(_:)), with: nil)
+        XCTAssertEqual(UIPasteboard.general.string, "E")
+        interactions.selectTerminalCells(from: .init(column: 0, row: 0), through: .init(column: 5, row: 1))
+        _ = view.perform(#selector(UIResponderStandardEditActions.copy(_:)), with: nil)
+        XCTAssertEqual(UIPasteboard.general.string, "cd  \nE")
+
+        // A wide char wrapped by its spacerHead joins without a space/newline;
+        // grapheme clusters stay whole across the soft boundary.
+        _ = try view.feed(Data("\u{1b}[2J\u{1b}[Habcde界Y\r\ne\u{301} \u{301}x".utf8))
+        XCTAssertEqual(view.screen.rows[0]?.cells.last?.width, .spacerHead)
+        interactions.selectTerminalCells(from: .init(column: 0, row: 0), through: .init(column: 5, row: 2))
+        XCTAssertEqual(interactions.selectedTerminalText, "abcde界Y\ne\u{301} \u{301}x")
+        _ = view.perform(#selector(UIResponderStandardEditActions.copy(_:)), with: nil)
+        XCTAssertEqual(UIPasteboard.general.string, "abcde界Y\ne\u{301} \u{301}x")
+    }
+
     private func pixel(_ image: UIImage, at point: CGPoint) throws -> [Int] {
         let cg = try XCTUnwrap(image.cgImage)
         let sample = try XCTUnwrap(cg.cropping(to: CGRect(x: Int(point.x * image.scale), y: Int(point.y * image.scale), width: 1, height: 1)))
