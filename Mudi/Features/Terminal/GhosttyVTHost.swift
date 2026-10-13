@@ -77,6 +77,7 @@ extension GhosttyVTView: TerminalHost {
         start(session: session, onError: onError, onClosed: onClosed)
     }
     func stop() {
+        stopHardwareKeyRepeat()
         suppressFocusCallbacks = true
         shortcutBar?.composer?.input.resignFirstResponder()
         thumbArcController?.cancel()
@@ -143,39 +144,192 @@ extension GhosttyVTView: TerminalHost {
         } else { container.setNeedsLayout() }
     }
 
-    var hostKeyCommands: [UIKeyCommand]? {
-        guard markedTextRange == nil, isInputFocusAllowed else { return nil }
-        var commands: [UIKeyCommand] = []
-        let inputs = [UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow, UIKeyCommand.inputLeftArrow,
-            UIKeyCommand.inputRightArrow, UIKeyCommand.inputEscape, "\t", "\r", "\u{7f}"]
-        for flags: UIKeyModifierFlags in [[], .control, .alternate, [.control, .alternate], .shift] {
-            commands += inputs.map { UIKeyCommand(input: $0, modifierFlags: flags, action: #selector(handleHostHardwareKey(_:))) }
-        }
-        commands += (97...122).compactMap { UnicodeScalar($0) }.map {
-            UIKeyCommand(input: String($0), modifierFlags: .control, action: #selector(handleHostHardwareKey(_:)))
-        }
-        return commands
+}
+
+/// Hardware keyboard routing. Mirrors SwiftTerm 1.15 (`dd2fb8ac`)
+/// `iOSTerminalView.pressesBegan` key-by-key decisions (with Mudi's
+/// `ShellTerminalView` PageUp/Down override), but every byte is produced by
+/// the real VT encoder from its current modes and goes to the same PTY via
+/// `submitKey`. Plain text, Return and Backspace are NOT handled here: they
+/// stay with UIKit's text system (insertText/deleteBackward) so a key is never
+/// sent twice. While marked text exists every press belongs to the IME.
+@MainActor
+extension GhosttyVTView {
+    enum HardwareKeyAction {
+        case key(GhosttyVt.Terminal.KeyEvent)
+        case page(TerminalScrollDirection)
     }
-    @objc func handleHostHardwareKey(_ command: UIKeyCommand) {
-        guard isInputFocusAllowed, markedTextRange == nil, let input = command.input else { return }
-        var modifiers = inputModifiers
-        if command.modifierFlags.contains(.control) { modifiers.insert(.control) }
-        if command.modifierFlags.contains(.alternate) { modifiers.insert(.option) }
-        if command.modifierFlags.contains(.shift) { modifiers.insert(.shift) }
-        let key: GhosttyVt.Terminal.KeyEvent.Key
-        switch input {
-        case UIKeyCommand.inputUpArrow: key = .arrowUp
-        case UIKeyCommand.inputDownArrow: key = .arrowDown
-        case UIKeyCommand.inputLeftArrow: key = .arrowLeft
-        case UIKeyCommand.inputRightArrow: key = .arrowRight
-        case UIKeyCommand.inputEscape: key = .escape
-        case "\t": key = .tab
-        case "\r": key = .enter
-        case "\u{7f}": key = .backspace
-        default: key = .text
+
+    /// Returns the presses this view did not consume; callers forward those to
+    /// `super` so UIKit text input and responder key commands still see them.
+    func handleHardwarePresses(_ presses: Set<UIPress>) -> Set<UIPress> {
+        guard isInputFocusAllowed, markedTextRange == nil else { return presses }
+        var unhandled = Set<UIPress>()
+        for press in presses {
+            guard let key = press.key, let action = hardwareKeyAction(for: key) else {
+                unhandled.insert(press)
+                continue
+            }
+            switch action {
+            case .key(let event):
+                submitKey(event)
+                startHardwareKeyRepeat(event)
+            case .page(let direction):
+                stopHardwareKeyRepeat()
+                handleHardwarePage(direction)
+            }
         }
-        submitKey(.init(key: key, text: key == .text ? input : nil, modifiers: modifiers,
-                        unshiftedCodepoint: input.unicodeScalars.count == 1 ? input.unicodeScalars.first?.value : nil))
+        return unhandled
+    }
+
+    func stopHardwareKeyRepeat() {
+        hardwareKeyRepeat?.invalidate()
+        hardwareKeyRepeat = nil
+    }
+
+    func hardwareKeyAction(for key: UIKey) -> HardwareKeyAction? {
+        let flags = key.modifierFlags
+        let ignoring = key.charactersIgnoringModifiers
+        if (try? terminal.status().kittyKeyboardFlags.isEmpty) == false {
+            return kittyHardwareKeyAction(for: key)
+        }
+        typealias Event = GhosttyVt.Terminal.KeyEvent
+        switch key.keyCode {
+        case .keyboardUpArrow: return .key(Event(key: .arrowUp))
+        case .keyboardDownArrow: return .key(Event(key: .arrowDown))
+        case .keyboardLeftArrow, .keyboardRightArrow:
+            let left = key.keyCode == .keyboardLeftArrow
+            if flags.contains(.alternate) { return .key(Self.metaEvent(left ? "b" : "f")) } // emacs word motion
+            return .key(Event(key: left ? .arrowLeft : .arrowRight, modifiers: flags.contains(.control) ? .control : []))
+        case .keyboardPageUp: return .page(.up)
+        case .keyboardPageDown: return .page(.down)
+        case .keyboardHome: return .key(Event(key: .home))
+        case .keyboardEnd: return .key(Event(key: .end))
+        case .keyboardDeleteForward: return .key(Event(key: .delete))
+        case .keyboardEscape: return .key(Event(key: .escape))
+        case .keyboardTab: return .key(Event(key: .tab, modifiers: flags.contains(.shift) ? .shift : []))
+        case .keyboardF1, .keyboardF2, .keyboardF3, .keyboardF4, .keyboardF5, .keyboardF6,
+             .keyboardF7, .keyboardF8, .keyboardF9, .keyboardF10, .keyboardF11:
+            return .key(Event(key: .function(UInt8(key.keyCode.rawValue - UIKeyboardHIDUsage.keyboardF1.rawValue + 1))))
+        default:
+            // SwiftTerm ignores Insert/F12+/media/modifier keys here; they
+            // fall through to UIKit. Option is Meta (SwiftTerm's default
+            // optionAsMetaKey); the shortcut-bar Meta latch has the same role.
+            if flags.contains([.alternate, .command]) && ignoring == "o" { return nil }
+            if flags.contains(.alternate) || metaModifier {
+                return ignoring.isEmpty ? nil : .key(Self.metaEvent(ignoring))
+            }
+            if flags.contains(.control) { return Self.controlEvent(ignoring).map { .key($0) } }
+            return nil
+        }
+    }
+
+    /// Kitty keyboard protocol active: like SwiftTerm, functional keys and
+    /// Ctrl/Option text carry all modifiers to the (kitty-aware) VT encoder.
+    private func kittyHardwareKeyAction(for key: UIKey) -> HardwareKeyAction? {
+        let flags = key.modifierFlags
+        var modifiers: GhosttyVt.Terminal.Modifiers = []
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        if flags.contains(.control) { modifiers.insert(.control) }
+        if flags.contains(.alternate) { modifiers.insert(.option) }
+        if flags.contains(.command) { modifiers.insert(.command) }
+        if flags.contains(.alphaShift) { modifiers.insert(.capsLock) }
+        let functional: GhosttyVt.Terminal.KeyEvent.Key?
+        switch key.keyCode {
+        case .keyboardUpArrow: functional = .arrowUp
+        case .keyboardDownArrow: functional = .arrowDown
+        case .keyboardLeftArrow: functional = .arrowLeft
+        case .keyboardRightArrow: functional = .arrowRight
+        case .keyboardPageUp:
+            if scrollCapability != .none || !isApplicationCursorMode { return .page(.up) }
+            functional = .pageUp
+        case .keyboardPageDown:
+            if scrollCapability != .none || !isApplicationCursorMode { return .page(.down) }
+            functional = .pageDown
+        case .keyboardHome: functional = .home
+        case .keyboardEnd: functional = .end
+        case .keyboardInsert: functional = .insert
+        case .keyboardDeleteForward: functional = .delete
+        case .keyboardEscape: functional = .escape
+        case .keyboardTab: functional = .tab
+        default:
+            let first = UIKeyboardHIDUsage.keyboardF1.rawValue, last = UIKeyboardHIDUsage.keyboardF12.rawValue
+            let extended = UIKeyboardHIDUsage.keyboardF13.rawValue...UIKeyboardHIDUsage.keyboardF24.rawValue
+            if (first...last).contains(key.keyCode.rawValue) {
+                functional = .function(UInt8(key.keyCode.rawValue - first + 1))
+            } else if extended.contains(key.keyCode.rawValue) {
+                functional = .function(UInt8(key.keyCode.rawValue - extended.lowerBound + 13))
+            } else {
+                functional = nil
+            }
+        }
+        if let functional { return .key(.init(key: functional, modifiers: modifiers)) }
+        let text = key.charactersIgnoringModifiers
+        guard flags.contains(.control) || flags.contains(.alternate), !text.isEmpty else { return nil }
+        return .key(.init(key: .text, text: text, modifiers: modifiers,
+                          unshiftedCodepoint: text.unicodeScalars.count == 1 ? text.unicodeScalars.first?.value : nil))
+    }
+
+    /// ESC-prefixed Meta text via the VT legacy Alt-prefix encoding.
+    private static func metaEvent(_ text: String) -> GhosttyVt.Terminal.KeyEvent {
+        .init(key: .text, text: text, modifiers: .option,
+              unshiftedCodepoint: text.unicodeScalars.count == 1 ? text.unicodeScalars.first?.value : nil)
+    }
+
+    /// SwiftTerm's `applyControlToEventCharacters` set (letters, space,
+    /// `\ ] [ ^ _ 6`). Ghostty's legacy encoder emits CSI u for Ctrl+I/M/[
+    /// (fixterms), so those three map to the VT Tab/Enter/Escape keys, which
+    /// produce SwiftTerm's C0 bytes (09/0D/1B). Other characters are left
+    /// to UIKit text input, exactly like SwiftTerm.
+    private static func controlEvent(_ characters: String) -> GhosttyVt.Terminal.KeyEvent? {
+        guard characters.unicodeScalars.count == 1, let scalar = characters.unicodeScalars.first, scalar.isASCII else { return nil }
+        let lower = Character(scalar).lowercased()
+        switch lower {
+        case "i": return .init(key: .tab)
+        case "m": return .init(key: .enter)
+        case "[": return .init(key: .escape)
+        case "a"..."z", " ", "\\", "]", "^", "_", "6":
+            return .init(key: .text, text: lower, modifiers: .control, unshiftedCodepoint: lower.unicodeScalars.first?.value)
+        default: return nil
+        }
+    }
+
+    /// DECCKM as the VT encoder currently applies it (the facade exposes
+    /// no mode getter); used only for SwiftTerm's PageUp/Down rule.
+    var isApplicationCursorMode: Bool {
+        (try? terminal.encode(.init(key: .arrowUp))) == Data("\u{1b}OA".utf8)
+    }
+
+    /// Herdr/Mosh-wheel owners scroll by visible rows (ShellTerminalView's
+    /// override); a plain session pages local VT history unless the app enabled
+    /// application cursor mode, in which case the VT key goes to the PTY.
+    func handleHardwarePage(_ direction: TerminalScrollDirection) {
+        if scrollCapability == .none, isApplicationCursorMode {
+            submitKey(.init(key: direction == .up ? .pageUp : .pageDown))
+            return
+        }
+        scrollTerminal(direction: direction, lines: max(1, Int(screen.size.rows)),
+                       location: CGPoint(x: bounds.midX, y: bounds.midY))
+    }
+
+    /// SwiftTerm repeats a held handled key after 0.4 s every 0.1 s until
+    /// release; UIKit itself delivers pressesBegan only once.
+    private func startHardwareKeyRepeat(_ event: GhosttyVt.Terminal.KeyEvent) {
+        stopHardwareKeyRepeat()
+        let repeated = GhosttyVt.Terminal.KeyEvent(key: event.key, text: event.text, action: .repeatPress,
+            modifiers: event.modifiers, unshiftedCodepoint: event.unshiftedCodepoint)
+        let timer = Timer(fire: Date(timeIntervalSinceNow: 0.4), interval: 0.1, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            MainActor.assumeIsolated {
+                guard self.isInputFocusAllowed, self.markedTextRange == nil else {
+                    self.stopHardwareKeyRepeat()
+                    return
+                }
+                self.onInput?(.key(repeated))
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        hardwareKeyRepeat = timer
     }
 }
 

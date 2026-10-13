@@ -48,6 +48,7 @@ final class GhosttyVTView: UIView {
     var scrollCapability: TerminalScrollCapability = .none
     var isScrollOwnerResolved = true
     var onScroll: ((TerminalScrollDirection, Int, CGPoint) -> Void)?
+    var hardwareKeyRepeat: Timer?
     lazy var shortcutBar: MudiTerminalShortcutBar? = MudiTerminalShortcutBar(terminalView: self) { [weak self] in
         self?.onOpenPanePicker?()
     }
@@ -102,6 +103,7 @@ final class GhosttyVTView: UIView {
     }
 
     override func resignFirstResponder() -> Bool {
+        stopHardwareKeyRepeat()
         cancelComposition()
         let result = super.resignFirstResponder()
         if result, !suppressFocusCallbacks, window != nil,
@@ -116,7 +118,20 @@ final class GhosttyVTView: UIView {
         restoreHostInputFocusIfRequested()
     }
 
-    override var keyCommands: [UIKeyCommand]? { hostKeyCommands }
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let unhandled = handleHardwarePresses(presses)
+        if !unhandled.isEmpty { super.pressesBegan(unhandled, with: event) }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        stopHardwareKeyRepeat()
+        super.pressesEnded(presses, with: event)
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        stopHardwareKeyRepeat()
+        super.pressesCancelled(presses, with: event)
+    }
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(copy(_:)) { return markedTextRange == nil && selectedTerminalText != nil }
