@@ -7,7 +7,7 @@
 | 组件 | 声明版本 | 用途 | 许可证 | 集成方式 |
 | --- | --- | --- | --- | --- |
 | SwiftTerm | 1.15.0 | 默认 VT100 / xterm emulation、iOS terminal view | MIT | SwiftPM |
-| Ghostty VT / caelyreth Swift distribution | 0.2.1 wrapper revision `1f5446ec78f38546f1aee8f73067b9a4f7703262` | 实验 VT parser/state/input；Mudi 自有 CoreText/CoreGraphics view（尚未 App A/B 挂载） | upstream/wrapper MIT；binary transitive audit 尚待完成 | SwiftPM binary + Swift facade |
+| Ghostty VT / caelyreth Swift distribution | 0.2.1 wrapper revision `1f5446ec78f38546f1aee8f73067b9a4f7703262` | 实验 VT parser/state/input；Mudi 自有 UIKit/CoreText/CoreGraphics view，受控 App opt-in | upstream/wrapper MIT；binary transitive audit 尚待完成 | SwiftPM binary + Swift facade |
 | Citadel | 0.12.1 | SSH client 高层 API | MIT | SwiftPM |
 | TraversioMosh（mimiqdev fork） | revision `843909f`（tag `1.0.0-mudi.1`，基于上游 1.0.0 `c1b5dbe`） | Mosh protocol、UDP transport、state synchronization、screen snapshot、same-session link rebuild | MIT | SwiftPM |
 | Symbols Nerd Font Mono | Nerd Fonts 3.5.1 | terminal Nerd glyph fallback | MIT (license bundled with the font) | bundled TTF |
@@ -32,7 +32,9 @@ Citadel 会传递引入 SwiftNIO、Swift Crypto 和一个 SwiftNIO SSH fork 等�
 
 ## Ghostty VT 正确性切片
 
-固定官方 VT upstream `35e1a0160c4f6797e1bb1ef8e7a2b8c6b114ab58`，由上述第三方 Swift facade 分发；不是官方 SwiftPM renderer，也不使用 Lakr full-engine iOS fork。精确 artifact URL/checksum、直接许可证与实际测试记录见 [Ghostty VT 接入记录](research/ghostty-vt-dependency.md)。App 随附 `Mudi/Resources/GhosttyVT-NOTICE.txt`；在发布前仍须审查 binary 的完整 SBOM/transitive notices。现阶段 SwiftTerm 保持默认，未完成 App 设置/IME/selection 等集成；不据此声称官方 full Ghostty 支持 iOS、全量迁移或性能提升。
+固定官方 VT upstream `35e1a0160c4f6797e1bb1ef8e7a2b8c6b114ab58`，由上述第三方 Swift facade 分发；不是官方 SwiftPM renderer，也不使用 Lakr full-engine iOS fork。精确 artifact URL/checksum、直接许可证与实际测试记录见 [Ghostty VT 接入记录](research/ghostty-vt-dependency.md)。App 随附 `Mudi/Resources/GhosttyVT-NOTICE.txt`；在发布前仍须审查 binary 的完整 SBOM/transitive notices。SwiftTerm 保持默认；实验 view 已有实际 App 挂载/明确回退、UIKit 输入协议与基础 selection/scroll ownership。自动化接口证据不代替真机 IME/复杂手势/远端手工出口；不据此声称官方 full Ghostty 支持 iOS、全量迁移或性能提升。
+
+Mudi 的 `TerminalVTPalette` 仅移植现有 LAB 色彩数学，不创建/喂入隐藏的 SwiftTerm。原实现为 SwiftTerm 1.15.0 revision `dd2fb8ac5b861e7bf617c872895e338f38165648` 的 `Colors.swift`；完整 MIT notice 与固定源链接随 App 保留于 `Mudi/Resources/TerminalVTPalette-NOTICE.txt`。xterm/explicit/LAB/harmonious 策略由自有数学生成，并与独立测试 oracle 比较。
 
 ## Mosh 方案
 

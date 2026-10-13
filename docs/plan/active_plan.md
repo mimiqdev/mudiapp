@@ -1,6 +1,6 @@
 # Active plan — Phase 15: 官方 Ghostty VT + Mudi 自有 iOS renderer
 
-**状态：** 用户已确认路线 2 与下列首轮合同，批准分阶段实现，不是仅调研。首个正确性 renderer + 同 PTY adapter 增量已实现，16 项窄模拟器测试通过；运行期红与绿见 `docs/research/ghostty-vt-dependency.md`。App A/B/UIKit 输入与高级交互尚未完成，不是全量迁移；完整回归以 handoff 精确 HEAD 的实际记录为准。保留阶段 A `297dfab1`；本工作树基于 `0e5250d37e21f2f7345940a52f4044ed789fc90d`。主 checkout 的 Phase 16 未提交/未验收，暂停、不搬运、不归档。
+**状态：** 用户已确认路线 2 与下列合同，批准分阶段实现。保留首个 renderer/adapter 交接 `6e502446`；本轮已实现真正 UIKit 输入、中立快捷栏、主题/lifecycle、实际 App opt-in/同 session 显式回退及基础 selection/scroll ownership。各增量运行期红→绿见 `docs/research/ghostty-vt-dependency.md`；`67f1ac8` 的全模拟器回归为 411 项、0 失败。最终以 handoff 精确 clean HEAD 的记录为准。**真机/手工出口未执行、复杂交互仍有缺口，不是全量迁移/Phase 15 验收完成。** 保留阶段 A `297dfab1`；本工作树基于 `0e5250d37e21f2f7345940a52f4044ed789fc90d`。主 checkout 的 Phase 16 未提交/未验收，暂停、不搬运、不归档。
 
 ## 出口
 
@@ -46,9 +46,9 @@
 仅在相应窄测试存在并观察红后实施该切片：
 
 1. **已实现首增量：** 真实 VT + 保留行状态 + CoreText/CoreGraphics view（正确性第一）；依赖固定来源/许可证，模拟器绘制与 resize 证据。
-2. **adapter 部分已实现：** 同 PTY 输出、查询回复、VT 输入编码与有序发送/错误传播；初次可见 resize，隐藏 view 继续解析。**未完成：** UIKit marked text/提交适配、selection/local scroll gestures、主题完整映射与 session 替换/focus。committed-text API 不等于 IME 已验收。
-3. App opt-in 挂载及设置、真实失败回退、快捷栏 chrome/中立宿主接口；默认与活动 session 不变。
-4. selection/local scrollback/clipboard、remote scroll/wheel、主题字体/lifecycle 完善；按实测能力记录尚未实现项，最终模拟器完整回归。
+2. **UIKit/adapter 自动化切片已实现：** 真正 `UITextInput` marked 更新/取消零发送、commit 一次、UTF-16 ranges/组合字符删除；同 PTY 控键/UTF-8/paste/Enter/回复；同 VT 主题/palette/Nerd 字体与 session 替换/focus。隐藏/离窗继续消费，旧 generation 拒绝效果/输入。UIKit 接口测试及后台通知模拟不是实际系统 IME/后台手工验收。
+3. **受控 App A/B 已实现：** Settings 持久化 opt-in，缺省 SwiftTerm；偏好下次挂载生效，不替换活动 view/VT/session；真实 throwing 初始化在读取 output 前明确回退原 session。两引擎共享快捷栏/Composer/D-pad/ThumbArc 与 chrome，可见网格扣除状态栏/快捷栏/键盘。
+4. **基础 viewport 自动化切片已实现：** VT 本地 history、cell/soft-wrap selection、UIKit edit menu/copy/paste/逐行 pan；Herdr `PTYScrollChannel` 与按 VT 鼠标模式编码的 Mosh wheel 分清所有权。复杂 selection handles、跨 viewport 拖选/autoscroll、惯性滚动、鼠标点击/拖曳仍未实现；blink/复杂装饰/ligatures/batching 与性能测量也未完成。基础自动化通过不等于复杂手势/远端/真机同等性验收；最终补全套模拟器和核心包记录。
 
 ## 完成后
 

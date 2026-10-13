@@ -6,7 +6,7 @@ Mudi 是面向 iPhone 和 iPad 的远程终端客户端，用来连接开发机�
 
 - Swift 6、SwiftUI + UIKit
 - SwiftTerm：默认 terminal emulator 与 iOS terminal view
-- Ghostty VT：实验 parser/state + Mudi CoreText/CoreGraphics renderer；首个正确性切片，尚未 App opt-in 挂载（见 [接入记录](docs/research/ghostty-vt-dependency.md)）
+- Ghostty VT：实验 parser/state + Mudi UIKit/CoreText/CoreGraphics renderer；Settings → Terminal → Renderer 受控 opt-in，下次挂载生效；初始化失败明确回退原 session 的 SwiftTerm（见 [接入记录与未验收出口](docs/research/ghostty-vt-dependency.md)）
 - Citadel：基于 SwiftNIO SSH 的 SSH client
 - TraversioMosh：纯 Swift Mosh protocol / transport、UDP 数据面与链路重建
 - Swift Package Manager：源码依赖

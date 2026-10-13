@@ -44,8 +44,8 @@ final class GhosttyVTViewportTests: XCTestCase {
         interactions.selectTerminalCells(from: .init(column: 1, row: 0), through: .init(column: 2, row: 0))
         XCTAssertEqual(interactions.selectedTerminalText, "界e\u{301}")
         XCTAssertTrue(view.canPerformAction(#selector(UIResponderStandardEditActions.copy(_:)), withSender: nil))
-        let oldClipboard = UIPasteboard.general.string
-        defer { UIPasteboard.general.string = oldClipboard }
+        let oldClipboard = UIPasteboard.general.items
+        defer { UIPasteboard.general.items = oldClipboard }
         _ = view.perform(#selector(UIResponderStandardEditActions.copy(_:)), with: nil)
         XCTAssertEqual(UIPasteboard.general.string, "界e\u{301}")
         _ = view.perform(#selector(UIResponderStandardEditActions.paste(_:)), with: nil)
