@@ -1,10 +1,10 @@
 TerminalVTPalette preserves the existing xterm/LAB palette semantics.
 LAB conversion/interpolation policy adapted from SwiftTerm 1.15.0 Colors.swift:
-https://github.com/migueldeicaza/SwiftTerm/blob/v1.15.0/Sources/SwiftTerm/Colors.swift
+https://github.com/migueldeicaza/SwiftTerm/blob/dd2fb8ac5b861e7bf617c872895e338f38165648/Sources/SwiftTerm/Colors.swift
 This is color math only; the experimental terminal does not instantiate or
 feed a SwiftTerm parser or renderer.
 
-SwiftTerm LICENSE (at the pinned 1.15.0 checkout):
+SwiftTerm LICENSE (1.15.0, resolved revision dd2fb8ac5b861e7bf617c872895e338f38165648):
 
 Copyright (c) 2019-2022 Miguel de Icaza (https://github.com/migueldeicaza)
 Copyright (c) 2017-2019, The xterm.js authors (https://github.com/xtermjs/xterm.js)

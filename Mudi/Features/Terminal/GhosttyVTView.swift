@@ -1,10 +1,11 @@
 import CoreText
 import GhosttyVt
+import HerdrKit
 import UIKit
 
-/// The first correctness slice: a genuinely VT-backed UIKit surface. It does
-/// not create a connection or embed SwiftTerm. UIKit input/chrome integration
-/// is a separate slice; this view is not yet mounted by TerminalScreen.
+/// Opt-in VT-backed UIKit surface with Mudi-owned CoreText drawing and input.
+/// Never creates a connection or embeds SwiftTerm; its adapter binds the
+/// already-connected session and its chrome uses the shared TerminalHost.
 @MainActor
 final class GhosttyVTView: UIView {
     enum InitializationError: Error {
@@ -42,6 +43,11 @@ final class GhosttyVTView: UIView {
     var barHeightConstraint: NSLayoutConstraint?
     var keyboardObserver: TerminalNotificationToken?
     var thumbArcController: TerminalHostThumbArcController?
+    var viewportController: GhosttyVTViewportController?
+    var terminalSelection: GhosttyVTCellSelection?
+    var scrollCapability: TerminalScrollCapability = .none
+    var isScrollOwnerResolved = true
+    var onScroll: ((TerminalScrollDirection, Int, CGPoint) -> Void)?
     lazy var shortcutBar: MudiTerminalShortcutBar? = MudiTerminalShortcutBar(terminalView: self) { [weak self] in
         self?.onOpenPanePicker?()
     }
@@ -77,6 +83,7 @@ final class GhosttyVTView: UIView {
         onModifiersConsumed = { [weak self] in self?.shortcutBar?.updateModifierState() }
         installHostKeyboardObserver()
         thumbArcController = TerminalHostThumbArcController(host: self)
+        viewportController = GhosttyVTViewportController(view: self)
         try refresh()
     }
 
@@ -111,6 +118,17 @@ final class GhosttyVTView: UIView {
 
     override var keyCommands: [UIKeyCommand]? { hostKeyCommands }
 
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(copy(_:)) { return markedTextRange == nil && selectedTerminalText != nil }
+        if action == #selector(paste(_:)) { return isInputFocusAllowed && markedTextRange == nil && UIPasteboard.general.hasStrings }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    override func copy(_ sender: Any?) {
+        guard markedTextRange == nil, let text = selectedTerminalText else { return }
+        UIPasteboard.general.string = text
+    }
+
     /// Effects are owned by the caller; in the session adapter writeToPty
     /// goes back through the same session used by input. No replies are fed
     /// into the screen or discarded by the renderer.
@@ -122,7 +140,11 @@ final class GhosttyVTView: UIView {
     }
 
     func refresh() throws {
+        let previous = terminalSelection == nil ? nil : screen
         screen.apply(try terminal.update())
+        // A colour-only theme update retains selection. Reflow/output/scroll
+        // that actually changes cell text invalidates stale viewport indices.
+        if let previous, !GhosttyVTCellSelection.contentMatches(previous, screen) { clearTerminalSelection() }
         backgroundColor = screen.theme?.background.uiColor
         setNeedsDisplay()
     }
@@ -201,7 +223,7 @@ final class GhosttyVTView: UIView {
                                             y: CGFloat(row.index) * cellSize.height,
                                             width: cellSize.width, height: cellSize.height)
                 guard backgroundRect.intersects(rect) else { continue }
-                context.setFillColor(colors(for: cell, theme: theme).background.cgColor)
+                context.setFillColor(colors(for: cell, theme: theme, row: Int(row.index)).background.cgColor)
                 context.fill(backgroundRect)
             }
         }
@@ -209,16 +231,20 @@ final class GhosttyVTView: UIView {
             for cell in row.cells {
                 guard let cellRect = glyphRect(for: cell, row: Int(row.index)), cellRect.intersects(rect),
                       !cell.style.isInvisible, !cell.text.isEmpty else { continue }
-                drawGlyph(cell, in: cellRect, foreground: colors(for: cell, theme: theme).foreground, context: context)
+                drawGlyph(cell, in: cellRect, foreground: colors(for: cell, theme: theme, row: Int(row.index)).foreground, context: context)
             }
         }
         drawCursor(theme: theme, context: context)
     }
 
-    private func colors(for cell: TerminalFrame.Cell, theme: TerminalFrame.Theme) -> (foreground: UIColor, background: UIColor) {
+    private func colors(for cell: TerminalFrame.Cell, theme: TerminalFrame.Theme, row: Int) -> (foreground: UIColor, background: UIColor) {
         var foreground = (cell.resolvedForeground ?? theme.foreground).uiColor
         var background = (cell.resolvedBackground ?? theme.background).uiColor
         if cell.style.isInverse { swap(&foreground, &background) }
+        if selectionContains(cell, row: row) {
+            background = appliedTheme?.selection.uiColor ?? .systemBlue
+            foreground = appliedTheme?.bold.uiColor ?? theme.background.uiColor
+        }
         if cell.style.isFaint { foreground = foreground.withAlphaComponent(0.5) }
         return (foreground, background)
     }

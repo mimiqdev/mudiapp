@@ -18,6 +18,7 @@ final class GhosttyVTSessionAdapter {
     var onWorkingDirectoryChange: ((String?) -> Void)?
     private var outputTask: Task<Void, Never>?
     private var outboundTask: Task<Void, Error>?
+    private var capabilityTask: Task<Void, Never>?
     private var generation = 0
     private var isRunning = false
     private var lastSentSize: GhosttyVt.Terminal.Size?
@@ -25,6 +26,7 @@ final class GhosttyVTSessionAdapter {
     private enum Operation {
         case write([Data])
         case resize(GhosttyVt.Terminal.Size)
+        case scroll(TerminalScrollDirection, Int)
     }
 
     init(view: GhosttyVTView, session: SSHShellSession) {
@@ -41,6 +43,15 @@ final class GhosttyVTSessionAdapter {
         view.onGridResize = { [weak self] in self?.resizePTY(to: $0) }
         view.onRenderError = { [weak self] in self?.onError?($0) }
         view.onInput = { [weak self] action in self?.handleUIKitInput(action) }
+        view.isScrollOwnerResolved = false
+        view.onScroll = { [weak self] direction, lines, location in self?.handleScroll(direction: direction, lines: lines, location: location) }
+        let boundSession = session
+        capabilityTask = Task { [weak self] in
+            let capability = await boundSession.scrollCapability()
+            guard let self, self.isCurrent(identity), !Task.isCancelled else { return }
+            self.view.scrollCapability = capability
+            self.view.isScrollOwnerResolved = true
+        }
         // The host may already have laid out this view before binding the PTY.
         // In that case no new grid-change callback occurs: sync it once here.
         view.setNeedsLayout()
@@ -64,6 +75,12 @@ final class GhosttyVTSessionAdapter {
         outboundTask?.cancel()
         outboundTask = nil
         lastSentSize = nil
+        capabilityTask?.cancel()
+        capabilityTask = nil
+        view.onScroll = nil
+        view.scrollCapability = .none
+        view.isScrollOwnerResolved = true
+        view.clearTerminalSelection()
         view.onGridResize = nil
         view.onRenderError = nil
         view.onInput = nil
@@ -104,6 +121,9 @@ final class GhosttyVTSessionAdapter {
     private func handleUIKitInput(_ action: GhosttyVTInputAction) {
         guard isRunning else { return }
         do {
+            view.clearTerminalSelection()
+            try view.terminal.scroll(to: .bottom)
+            try view.refresh()
             let batch: [Data]
             switch action {
             case .key(let key): batch = [try view.terminal.encode(key)]
@@ -117,6 +137,38 @@ final class GhosttyVTSessionAdapter {
             // cannot accidentally bind input to a replacement session.
             _ = enqueue(.write(batch))
         } catch { onError?(error) }
+    }
+
+    private func handleScroll(direction: TerminalScrollDirection, lines: Int, location: CGPoint) {
+        guard isRunning, view.isScrollOwnerResolved, lines > 0 else { return }
+        switch view.scrollCapability {
+        case .none: view.scrollLocalViewport(direction: direction, lines: lines)
+        case .hostScrollback: _ = enqueue(.scroll(direction, min(lines, 64)))
+        case .remoteMouseWheel:
+            do {
+                guard try view.terminal.status().isMouseReportingEnabled,
+                      view.bounds.width > 0, view.bounds.height > 0,
+                      location.x.isFinite, location.y.isFinite else { return }
+                let scale = view.contentScaleFactor
+                func pixels(_ points: CGFloat) -> UInt32? {
+                    let value = (points * scale).rounded()
+                    guard value.isFinite, value >= 1, value <= CGFloat(UInt32.max / UInt32(GhosttyVTGridGeometry.maximumColumns)) else { return nil }
+                    return UInt32(value)
+                }
+                guard let cellWidth = pixels(view.cellSize.width), let cellHeight = pixels(view.cellSize.height) else { return }
+                let width = UInt32(view.screen.size.columns) * cellWidth
+                let height = UInt32(view.screen.size.rows) * cellHeight
+                let geometry = GhosttyVt.Terminal.MouseGeometry(screenWidth: width, screenHeight: height, cellWidth: cellWidth, cellHeight: cellHeight)
+                let position = GhosttyVt.Terminal.MouseEvent.Position(x: Float(max(0, min(CGFloat(width - 1), location.x * scale))),
+                    y: Float(max(0, min(CGFloat(height - 1), location.y * scale))))
+                var batch: [Data] = []
+                for _ in 0..<min(lines, 64) {
+                    let button: GhosttyVt.Terminal.MouseEvent.Button = direction == .up ? .scrollUp : .scrollDown
+                    batch.append(try view.terminal.encode(.init(action: .press, button: button, position: position), geometry: geometry))
+                }
+                _ = enqueue(.write(batch))
+            } catch { onError?(error) }
+        }
     }
 
     private func consumeOutput(identity: Int) async {
@@ -185,6 +237,8 @@ final class GhosttyVTSessionAdapter {
                     }
                 case .resize(let size):
                     try await session.resize(columns: Int(size.columns), rows: Int(size.rows))
+                case .scroll(let direction, let lines):
+                    try await session.scroll(direction: direction, lines: lines)
                 }
             } catch {
                 guard self.isCurrent(identity), !Task.isCancelled else { throw CancellationError() }

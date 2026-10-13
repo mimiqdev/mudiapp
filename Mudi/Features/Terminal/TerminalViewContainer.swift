@@ -33,11 +33,10 @@ struct TerminalGridLayoutMetrics: Equatable {
     }
 }
 
-/// UIKit container that hosts the terminal scroll view and reserves the
-/// persistent shortcut-bar strip below it: the scroll view's bottom edge
-/// sits above the bar, so SwiftTerm lays out grid rows only in the truly
-/// visible region, `terminal.resize` receives the true visible rows, and
-/// the bar can never cover content (keyboard up or down).
+/// Shared chrome for either real renderer. Status and persistent shortcut
+/// strips are outside the surface bounds, so terminal.resize receives only
+/// the truly visible grid (keyboard up or down). A mounted renderer never
+/// changes just because the stored engine preference changes.
 final class TerminalChromeView: UIView {
     private(set) var terminalView: (any TerminalHost)!
     private var terminalBottomConstraint: NSLayoutConstraint!

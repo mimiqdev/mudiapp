@@ -38,6 +38,8 @@ final class GhosttyVTViewportTests: XCTestCase {
         let adapter = GhosttyVTSessionAdapter(view: view, session: SSHShellSession(connectedChannel: channel))
         adapter.start()
         defer { adapter.stop() }
+        let theme = TerminalThemeRegistry.builtInThemes[0]
+        try view.apply(theme: theme)
         _ = try view.feed(Data("界e\u{301} abc\r\nnext\u{1b}[?2004h\u{1b}[?25l".utf8))
         interactions.selectTerminalCells(from: .init(column: 1, row: 0), through: .init(column: 2, row: 0))
         XCTAssertEqual(interactions.selectedTerminalText, "界e\u{301}")
@@ -68,6 +70,32 @@ final class GhosttyVTViewportTests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
         XCTAssertEqual(interactions.selectedTerminalText, "界e\u{301}")
+        let rgb = try pixel(image, at: CGPoint(x: view.cellSize.width * 1.8, y: 1))
+        for (actual, expected) in zip(rgb, [theme.selection.red, theme.selection.green, theme.selection.blue]) {
+            XCTAssertEqual(actual, Int(expected), accuracy: 2, "Both columns of the selected wide cell must actually be painted")
+        }
+    }
+
+    func testSoftWrapAndHardNewlineClipboardAndThemeRetentionUseVTMetadata() throws {
+        let view = try GhosttyVTView(configuration: .init(columns: 6, rows: 3))
+        let interactions = try XCTUnwrap(view as? any TerminalViewportInteractions)
+        _ = try view.feed(Data("界e\u{301}abcZ\r\nN".utf8))
+        interactions.selectTerminalCells(from: .init(column: 1, row: 0), through: .init(column: 0, row: 2))
+        XCTAssertEqual(interactions.selectedTerminalText, "界e\u{301}abcZ\nN")
+        try view.apply(theme: TerminalThemeRegistry.builtInThemes[1])
+        XCTAssertEqual(interactions.selectedTerminalText, "界e\u{301}abcZ\nN", "Colour changes do not invalidate text selection")
+        _ = try view.feed(Data("changed".utf8))
+        XCTAssertNil(interactions.selectedTerminalText, "New cell content must invalidate stale viewport indices")
+    }
+
+    private func pixel(_ image: UIImage, at point: CGPoint) throws -> [Int] {
+        let cg = try XCTUnwrap(image.cgImage)
+        let sample = try XCTUnwrap(cg.cropping(to: CGRect(x: Int(point.x * image.scale), y: Int(point.y * image.scale), width: 1, height: 1)))
+        var bytes = [UInt8](repeating: 0, count: 4)
+        let context = try XCTUnwrap(CGContext(data: &bytes, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(sample, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        return bytes.prefix(3).map(Int.init)
     }
 
     func testHostScrollbackOwnsScrollWithoutLocalMovementOrANSIInput() async throws {
@@ -108,8 +136,13 @@ final class GhosttyVTViewportTests: XCTestCase {
         interactions.scrollTerminal(direction: .up, lines: 2, location: location)
         let sent = await ghosttyWait { (await channel.recording.snapshot()).sent.count == 2 }
         XCTAssertTrue(sent)
+        let first = await channel.recording.snapshot()
+        XCTAssertEqual(first.sent, [Array("\u{1b}[<64;3;2M".utf8), Array("\u{1b}[<64;3;2M".utf8)])
+        interactions.scrollTerminal(direction: .down, lines: 1000, location: CGPoint(x: -100, y: 10000))
+        let bounded = await ghosttyWait { (await channel.recording.snapshot()).sent.count == 66 }
+        XCTAssertTrue(bounded)
         let snapshot = await channel.recording.snapshot()
-        XCTAssertEqual(snapshot.sent, [Array("\u{1b}[<64;3;2M".utf8), Array("\u{1b}[<64;3;2M".utf8)])
+        XCTAssertEqual(Array(snapshot.sent.dropFirst(2)), Array(repeating: Array("\u{1b}[<65;1;3M".utf8), count: 64))
         _ = try view.feed(Data("\u{1b}[?1000l".utf8))
         interactions.scrollTerminal(direction: .down, lines: 8, location: location)
         try await Task.sleep(for: .milliseconds(30))

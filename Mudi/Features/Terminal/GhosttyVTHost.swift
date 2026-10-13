@@ -12,7 +12,7 @@ extension GhosttyVTView: TerminalHost {
         onInput?(.raw(Data(bytes)))
     }
     override func paste(_ sender: Any?) {
-        guard isInputFocusAllowed, let text = UIPasteboard.general.string else { return }
+        guard isInputFocusAllowed, markedTextRange == nil, let text = UIPasteboard.general.string else { return }
         onInput?(.paste(text, bracketed: true, appendEnter: false))
     }
     func sendCursorKey(normal: [UInt8], application: [UInt8], final: UInt8) {
