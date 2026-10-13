@@ -29,6 +29,18 @@ Do **not** create a new DerivedData directory per iteration (`/tmp/mudi-phase6-f
 - Mimikyu (iPhone): `00008150-001265CE0E99401C`. Ditto (iPad): `00008103-001844D83E80801E`.
 - Signing: user picks the Xcode Team; do not ask for the Team ID. Preserve it when regenerating the project (`scripts/generate-xcodeproj.sh`).
 
+## Cursor Cloud
+
+Cloud Agents run on Linux. Xcode, the iOS Simulator, `xcodebuild`, and XcodeGen do not run there, so `make bootstrap` and `make test-core` are macOS paths. `make test-core` goes through `mise`, and the locked XcodeGen build is macOS-only.
+
+The Cloud Agent install puts Swift 6.4.1 on the default `PATH` (`/usr/local/bin/swift`) via Swiftly from swift.org. Verify the pure-Swift domain package with:
+
+```sh
+swift test --package-path Packages/HerdrKit
+```
+
+Do not let `swiftly` write a repository-root `.swift-version`. macOS builds use the Xcode toolchain; this repo does not pin a Swift version.
+
 ## Plan and git
 
 - One active plan: `docs/plan/active_plan.md`. Do not implement `future/` “while here”.
