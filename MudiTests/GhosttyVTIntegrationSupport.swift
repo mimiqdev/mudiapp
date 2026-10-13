@@ -25,6 +25,50 @@ actor GhosttyVTTestPTY: PTYOutputChannel {
     func snapshot() -> Snapshot { state }
 }
 
+/// A real UIKit hardware key object for production `pressesBegan` dispatch.
+/// UIKit has no public UIKey initializer with values; only these read-only
+/// properties are overridden, the view's UIKit responder path is unchanged.
+final class GhosttyVTTestKey: UIKey {
+    private let code: UIKeyboardHIDUsage
+    private let flags: UIKeyModifierFlags
+    private let ignoring: String
+    private let typed: String
+    init(_ code: UIKeyboardHIDUsage, _ flags: UIKeyModifierFlags = [], ignoring: String = "", typed: String? = nil) {
+        self.code = code
+        self.flags = flags
+        self.ignoring = ignoring
+        self.typed = typed ?? ignoring
+        super.init()
+    }
+    required init?(coder: NSCoder) { nil }
+    override var keyCode: UIKeyboardHIDUsage { code }
+    override var modifierFlags: UIKeyModifierFlags { flags }
+    override var charactersIgnoringModifiers: String { ignoring }
+    override var characters: String { typed }
+}
+
+final class GhosttyVTTestPress: UIPress {
+    private let testKey: UIKey
+    init(_ key: UIKey) { testKey = key; super.init() }
+    override var key: UIKey? { testKey }
+}
+
+/// Next responder: records presses the terminal forwarded to `super`, i.e.
+/// what UIKit's text system (insertText/deleteBackward) would still receive.
+final class GhosttyVTPressRecorder: UIView {
+    var forwarded: [UIKeyboardHIDUsage] = []
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        forwarded += presses.compactMap { $0.key?.keyCode }
+    }
+}
+
+@MainActor
+func ghosttyPress(_ view: UIView, _ key: UIKey, release: Bool = true) {
+    let press = GhosttyVTTestPress(key)
+    view.pressesBegan([press], with: nil)
+    if release { view.pressesEnded([press], with: nil) }
+}
+
 @MainActor
 func ghosttyWait(_ observation: () async -> Bool) async -> Bool {
     for _ in 0..<200 {
