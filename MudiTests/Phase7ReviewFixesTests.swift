@@ -84,7 +84,7 @@ final class Phase7ReviewFixesTests: XCTestCase {
         container.layoutIfNeeded()
 
         let buttons = phase7ShortcutButtons(in: bar)
-        XCTAssertEqual(buttons.count, 9, "All actions remain in the scrollable/pinned layout")
+        XCTAssertEqual(buttons.count, 10, "Existing actions plus Agent Actions remain in the scrollable/pinned layout")
         for button in buttons {
             XCTAssertGreaterThan(
                 button.bounds.width,

@@ -33,6 +33,7 @@ extension GhosttyVTView: TerminalHost {
     func updateInputFocus(isAllowed: Bool) {
         isInputFocusAllowed = isAllowed
         if !isAllowed {
+            shortcutBar?.dismissAgentActions()
             shortcutBar?.composer?.input.resignFirstResponder()
             _ = resignFirstResponder()
         } else {
@@ -80,6 +81,7 @@ extension GhosttyVTView: TerminalHost {
         start(session: session, onError: onError, onClosed: onClosed)
     }
     func stop() {
+        shortcutBar?.dismissAgentActions()
         stopHardwareKeyRepeat()
         suppressFocusCallbacks = true
         shortcutBar?.composer?.input.resignFirstResponder()

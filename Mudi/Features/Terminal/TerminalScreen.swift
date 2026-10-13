@@ -142,6 +142,7 @@ struct TerminalScreen: View {
     let shouldRestoreInputFocus: Bool
     let onInputFocusChange: ((Bool) -> Void)?
     let suppressConnectionErrors: Bool
+    let agentActionsContext: TerminalAgentActionsContext?
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var terminalErrorState: TerminalSessionErrorState
@@ -166,7 +167,8 @@ struct TerminalScreen: View {
         isInputFocusAllowed: Bool = true,
         shouldRestoreInputFocus: Bool = false,
         onInputFocusChange: ((Bool) -> Void)? = nil,
-        suppressConnectionErrors: Bool = false
+        suppressConnectionErrors: Bool = false,
+        agentActionsContext: TerminalAgentActionsContext? = nil
     ) {
         self.host = host
         self.session = session
@@ -199,6 +201,7 @@ struct TerminalScreen: View {
         self.shouldRestoreInputFocus = shouldRestoreInputFocus
         self.onInputFocusChange = onInputFocusChange
         self.suppressConnectionErrors = suppressConnectionErrors
+        self.agentActionsContext = agentActionsContext
     }
 
     var body: some View {
@@ -215,6 +218,7 @@ struct TerminalScreen: View {
                 onInputFocusChange: onInputFocusChange,
                 thumbArcPreferences: settingsModel.preferences.thumbArc,
                 onOpenPanePicker: onOpenPanePicker,
+                agentActionsContext: agentActionsContext,
                 composeTargetLabel: subtitle ?? title,
                 onClosed: {
                     guard !isLeaving else { return }

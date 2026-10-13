@@ -1,7 +1,7 @@
 import UIKit
 @preconcurrency import SwiftTerm
 
-enum MudiShortcutPopup: Equatable { case none, ctrlCombo, dPad }
+enum MudiShortcutPopup: Equatable { case none, ctrlCombo, dPad, agentActions }
 
 /// Scrollable terminal actions on the left; navigation and keyboard stay pinned.
 @MainActor
@@ -22,6 +22,9 @@ final class MudiTerminalShortcutBar: UIView {
     weak var dpadButton: UIButton?
     let comboPopup = MudiControlComboPopup()
     let dpadOverlay = MudiTerminalDPadOverlay()
+    let agentActionsPanel = MudiAgentActionsPanel()
+    var agentActionsState = TerminalAgentActionsState()
+    weak var agentActionsButton: UIButton?
     var foregroundColor = MudiPalette.inkUI
     var normalBackgroundColor = MudiPalette.keyUI
     var isKeyboardVisible = false
@@ -66,6 +69,7 @@ final class MudiTerminalShortcutBar: UIView {
         refreshKeyboardGlyph()
         comboPopup.onCombo = { [weak self] in self?.send([$0]) }
         dpadOverlay.onCommand = { [weak self] in self?.handle($0) }
+        configureAgentActions()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     deinit { NotificationCenter.default.removeObserver(self) }
@@ -83,7 +87,7 @@ final class MudiTerminalShortcutBar: UIView {
     override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: preferredHeight) }
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         if super.point(inside: point, with: event) { return true }
-        return [comboPopup, dpadOverlay].contains { !$0.isHidden && $0.frame.contains(point) }
+        return [comboPopup, dpadOverlay, agentActionsPanel].contains { !$0.isHidden && $0.frame.contains(point) }
     }
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -95,6 +99,10 @@ final class MudiTerminalShortcutBar: UIView {
         topRule.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 1)
         refreshCapsuleModeForBoundsChange()
         reclampDPadAfterBoundsChange()
+        if let container = superview {
+            let top = convert(CGPoint.zero, to: container).y
+            agentActionsPanel.setAvailableHeight(top - container.safeAreaInsets.top - 8)
+        }
         composer?.updateAvailableHeight()
     }
     override func traitCollectionDidChange(_ previous: UITraitCollection?) {
@@ -160,6 +168,7 @@ final class MudiTerminalShortcutBar: UIView {
         addButton(icon: .compose, identifier: "compose", label: "Compose", action: #selector(openCompose))
         addButton(icon: .paste, identifier: "paste", label: "Paste", action: #selector(pasteClipboard))
         addButton(icon: .history, identifier: "history", label: "上一条历史", action: #selector(recallHistory))
+        agentActionsButton = addButton(icon: .ellipsis, identifier: "agent-actions", label: "Agent Actions", action: #selector(toggleAgentActions))
         addButton(icon: .layers, identifier: "jump-to", label: "Jump To", action: #selector(jumpToPanes), pinned: true)
         configure(dismissKeyboardButton, icon: .keyboardHide, title: nil, identifier: "dismiss-keyboard", label: "Keyboard", action: #selector(toggleKeyboard))
         pinnedStackView.addArrangedSubview(dismissKeyboardButton)
@@ -195,7 +204,7 @@ final class MudiTerminalShortcutBar: UIView {
         style(button)
     }
     private func addOverlays() {
-        for overlay in [comboPopup, dpadOverlay] {
+        for overlay in [comboPopup, dpadOverlay, agentActionsPanel] {
             overlay.translatesAutoresizingMaskIntoConstraints = false; addSubview(overlay)
         }
         let leading = dpadOverlay.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12)
@@ -205,6 +214,9 @@ final class MudiTerminalShortcutBar: UIView {
             comboPopup.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             comboPopup.bottomAnchor.constraint(equalTo: topAnchor, constant: -8),
             comboPopup.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            agentActionsPanel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            agentActionsPanel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            agentActionsPanel.bottomAnchor.constraint(equalTo: topAnchor, constant: -8),
             leading, bottom
         ])
         dpadOverlay.dragHandle.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(handleDPadDrag(_:))))

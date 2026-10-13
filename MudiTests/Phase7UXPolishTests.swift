@@ -207,6 +207,7 @@ final class Phase7UXPolishTests: XCTestCase {  // pi-lens-ignore: type_body_leng
             "terminal-shortcut-compose",
             "terminal-shortcut-paste",
             "terminal-shortcut-history",
+            "terminal-shortcut-agent-actions",
             "terminal-shortcut-jump-to",
             "terminal-shortcut-dismiss-keyboard",
         ]
