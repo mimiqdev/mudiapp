@@ -166,6 +166,60 @@ final class GhosttyVTHostTests: XCTestCase {
         XCTAssertTrue(snapshot.sent.allSatisfy { $0 == Array("\u{1b}[D".utf8) })
     }
 
+    /// A key held on the old session must not keep repeating into the
+    /// replacement session's PTY; the new session's own presses still repeat.
+    func testHeldHardwareKeyRepeatDoesNotCrossSessionReplacement() async throws {
+        let view = try GhosttyVTView(configuration: .init(columns: 20, rows: 4))
+        let host = try XCTUnwrap(view as? any TerminalHost)
+        let first = GhosttyVTTestPTY()
+        let second = GhosttyVTTestPTY()
+        let firstSession = SSHShellSession(connectedChannel: first)
+        host.start(session: firstSession, onError: { XCTFail($0) }, onClosed: {})
+        defer { host.stop() }
+        await first.emit("keep")
+        let rendered = await ghosttyWait { view.screen.text(at: 0).hasPrefix("keep") }
+        XCTAssertTrue(rendered)
+        let engine = ObjectIdentifier(view.terminal)
+        let held = GhosttyVTTestPress(GhosttyVTTestKey(.keyboardC, .control, ignoring: "c"))
+        view.pressesBegan([held], with: nil)
+        let sentOld = await ghosttyWait { (await first.snapshot()).sent == [[3]] }
+        XCTAssertTrue(sentOld)
+        host.updateSession(session: SSHShellSession(connectedChannel: second), onError: { XCTFail($0) }, onClosed: {})
+        // Past the 0.4 s initial delay and several 0.1 s repeat periods.
+        try await Task.sleep(for: .milliseconds(750))
+        let oldAfter = await first.snapshot()
+        let newAfter = await second.snapshot()
+        XCTAssertEqual(oldAfter.sent, [[3]], "Old session only has the byte sent before replacement")
+        XCTAssertTrue(newAfter.sent.isEmpty, "A key held on the old session must not repeat into the new PTY")
+        view.pressesEnded([held], with: nil)
+        XCTAssertEqual(ObjectIdentifier(view.terminal), engine)
+        XCTAssertTrue(view.screen.text(at: 0).hasPrefix("keep"), "Replacement keeps VT state")
+
+        // The replacement session's own held key sends and repeats, then stops.
+        let press = GhosttyVTTestPress(GhosttyVTTestKey(.keyboardDeleteForward))
+        view.pressesBegan([press], with: nil)
+        let repeated = await ghosttyWait { (await second.snapshot()).sent.count >= 3 }
+        XCTAssertTrue(repeated)
+        view.pressesEnded([press], with: nil)
+        let count = await second.snapshot().sent.count
+        try await Task.sleep(for: .milliseconds(300))
+        let final = await second.snapshot()
+        XCTAssertEqual(final.sent.count, count)
+        XCTAssertTrue(final.sent.allSatisfy { $0 == Array("\u{1b}[3~".utf8) })
+        let oldFinal = await first.snapshot()
+        XCTAssertEqual(oldFinal.sent, [[3]])
+        XCTAssertEqual(oldFinal.closes, 0)
+
+        // Same-session update is a no-op boundary: a held key keeps repeating.
+        let same = GhosttyVTTestPress(GhosttyVTTestKey(.keyboardLeftArrow))
+        let before = await second.snapshot().sent.count
+        view.pressesBegan([same], with: nil)
+        host.updateSession(session: try XCTUnwrap(view.session), onError: { XCTFail($0) }, onClosed: {})
+        let kept = await ghosttyWait { (await second.snapshot()).sent.count >= before + 3 }
+        XCTAssertTrue(kept, "Same-session update must not cancel an active repeat")
+        view.pressesEnded([same], with: nil)
+    }
+
     func testHardwarePageKeysKeepLocalHerdrAndWheelScrollOwnership() async throws {
         // Normal session: local VT history unless the app enabled application cursor.
         let channel = GhosttyVTTestPTY()
