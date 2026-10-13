@@ -28,8 +28,10 @@ final class GhosttyVTAppMountTests: XCTestCase {
     func testExperimentalPreferenceMountsRealVTAndChangesOnlyNextMount() async throws {
         let channel = GhosttyVTTestPTY()
         await channel.emit("queued 界\u{1b}[5n")
-        let model = RootViewModel()
-        model.preferences = try preferences(.ghosttyVT)
+        let store = Phase7PreferencesStore()
+        try await store.save(try preferences(.ghosttyVT))
+        let model = RootViewModel(preferencesStore: store)
+        await model.loadPreferences()
         let harness = Phase7TerminalScreenHarness(host: Host(displayName: "experiment", hostname: "experiment", username: "test"),
             session: SSHShellSession(connectedChannel: channel), onDisconnect: {}, settingsModel: model)
         defer { harness.close() }
@@ -46,7 +48,10 @@ final class GhosttyVTAppMountTests: XCTestCase {
         XCTAssertTrue(view.screen.rows.indices.contains { view.screen.text(at: $0).contains("queued 界") })
         XCTAssertFalse(phase7Descendants(of: harness.controller.view).contains { $0 is ShellTerminalView })
         let identity = ObjectIdentifier(view.terminal)
-        model.preferences = try preferences(.swiftTerm)
+        attach(harness.controller.view, name: "GhosttyVT-App-native-opt-in")
+        model.updateTerminalEngine(.swiftTerm)
+        let persisted = await ghosttyWait { (try? await store.load())?.terminalEngine == .swiftTerm }
+        XCTAssertTrue(persisted, "The actual Settings/model setter persists the next-mount preference")
         try await Task.sleep(for: .milliseconds(80))
         let retained = phase7Descendants(of: harness.controller.view).compactMap { $0 as? GhosttyVTView }.first
         XCTAssertTrue(retained === view)
@@ -84,6 +89,7 @@ final class GhosttyVTAppMountTests: XCTestCase {
         XCTAssertEqual(snapshot.readers, 1)
         XCTAssertEqual(snapshot.closes, 0)
         XCTAssertEqual(snapshot.sent, [Array("\u{1b}[0n".utf8), [27]])
+        attach(harness.controller.view, name: "GhosttyVT-App-real-invalidSize-SwiftTerm-fallback")
     }
 
     func testExperimentalVisibleViewportExcludesBarAndKeyboardFromFirstResize() async throws {
@@ -131,6 +137,17 @@ final class GhosttyVTAppMountTests: XCTestCase {
         await harness.settle()
         let marker = try XCTUnwrap(phase7View(with: "terminal-engine-picker", in: harness.controller.view))
         XCTAssertTrue(marker.accessibilityLabel?.contains("下次挂载生效") == true)
+    }
+
+    private func attach(_ view: UIView, name: String) {
+        view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(bounds: view.bounds).image { _ in
+            _ = view.drawHierarchy(in: view.bounds, afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func preferences(_ engine: TerminalEnginePreference) throws -> TerminalPreferences {
