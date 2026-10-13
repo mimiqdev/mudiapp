@@ -27,7 +27,24 @@ final class GhosttyVTView: UIView {
     var onModifiersConsumed: (() -> Void)?
     var controlModifier = false
     var metaModifier = false
-    private(set) var isInputFocusAllowed = true
+    var isInputFocusAllowed = true
+    var shouldRestoreInputFocus = false
+    var onInputFocusChange: ((Bool) -> Void)?
+    var onOpenPanePicker: (() -> Void)?
+    var thumbArcPreferences = ThumbArcPreferences()
+    var appliedTheme: TerminalTheme?
+    var sessionAdapter: GhosttyVTSessionAdapter?
+    var onHostError: ((String) -> Void)?
+    var onHostClosed: (() -> Void)?
+    var suppressFocusCallbacks = false
+    var lastKeyboardFrameEnd: CGRect?
+    var barBottomConstraint: NSLayoutConstraint?
+    var barHeightConstraint: NSLayoutConstraint?
+    var keyboardObserver: TerminalNotificationToken?
+    var thumbArcController: TerminalHostThumbArcController?
+    lazy var shortcutBar: MudiTerminalShortcutBar? = MudiTerminalShortcutBar(terminalView: self) { [weak self] in
+        self?.onOpenPanePicker?()
+    }
     var keyboardType: UIKeyboardType = .default
     var autocorrectionType: UITextAutocorrectionType = .no
     var autocapitalizationType: UITextAutocapitalizationType = .none
@@ -56,6 +73,10 @@ final class GhosttyVTView: UIView {
         accessibilityIdentifier = "ghostty-vt-surface"
         inputAssistantItem.leadingBarButtonGroups = []
         inputAssistantItem.trailingBarButtonGroups = []
+        onCompositionChange = { [weak self] in self?.shortcutBar?.updateComposition(markedText: $0) }
+        onModifiersConsumed = { [weak self] in self?.shortcutBar?.updateModifierState() }
+        installHostKeyboardObserver()
+        thumbArcController = TerminalHostThumbArcController(host: self)
         try refresh()
     }
 
@@ -65,6 +86,30 @@ final class GhosttyVTView: UIView {
     }
 
     override var canBecomeFirstResponder: Bool { isInputFocusAllowed }
+
+    override func becomeFirstResponder() -> Bool {
+        guard isInputFocusAllowed else { return false }
+        let result = super.becomeFirstResponder()
+        if result, !suppressFocusCallbacks { onInputFocusChange?(true) }
+        return result
+    }
+
+    override func resignFirstResponder() -> Bool {
+        cancelComposition()
+        let result = super.resignFirstResponder()
+        if result, !suppressFocusCallbacks, window != nil,
+           UIApplication.shared.applicationState == .active { onInputFocusChange?(false) }
+        return result
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else { return }
+        ensureHostShortcutBarAttached()
+        restoreHostInputFocusIfRequested()
+    }
+
+    override var keyCommands: [UIKeyCommand]? { hostKeyCommands }
 
     /// Effects are owned by the caller; in the session adapter writeToPty
     /// goes back through the same session used by input. No replies are fed
@@ -96,6 +141,7 @@ final class GhosttyVTView: UIView {
     }
 
     override func layoutSubviews() {
+        ensureHostShortcutBarAttached()
         super.layoutSubviews()
         guard let size = GhosttyVTGridGeometry.size(viewport: bounds.size, cell: cellSize) else { return }
         let scale = window?.screen.scale ?? contentScaleFactor

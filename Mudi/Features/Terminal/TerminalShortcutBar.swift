@@ -6,7 +6,7 @@ enum MudiShortcutPopup: Equatable { case none, ctrlCombo, dPad }
 /// Scrollable terminal actions on the left; navigation and keyboard stay pinned.
 @MainActor
 final class MudiTerminalShortcutBar: UIView {
-    weak var terminalView: ShellTerminalView?
+    weak var terminalView: (any TerminalHost)?
     let onJumpTo: () -> Void
     private let materialView = UIView()
     let stackView = UIStackView()
@@ -48,7 +48,7 @@ final class MudiTerminalShortcutBar: UIView {
         materialView.isHidden = visible; topRule.isHidden = visible
     }
 
-    init(terminalView: ShellTerminalView, onJumpTo: @escaping () -> Void) {
+    init(terminalView: any TerminalHost, onJumpTo: @escaping () -> Void) {
         self.terminalView = terminalView
         self.onJumpTo = onJumpTo
         super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 48))

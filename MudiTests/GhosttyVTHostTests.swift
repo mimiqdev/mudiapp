@@ -126,14 +126,16 @@ final class GhosttyVTHostTests: XCTestCase {
         controller.view.addSubview(view)
         window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil }
+        view.layoutIfNeeded() // Establish the viewport BEFORE measuring retained state.
         view.isHidden = true
         view.removeFromSuperview()
         NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
-        await channel.emit("one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nkeep hidden")
+        await channel.emit((1...20).map { "line \($0)" }.joined(separator: "\r\n") + "\r\nkeep hidden")
         let received = await ghosttyWait { view.screen.rows.indices.contains { view.screen.text(at: $0).contains("keep hidden") } }
         XCTAssertTrue(received)
         let before = view.screen.rows
         let scrollback = try view.terminal.status().scrollbackRows
+        XCTAssertGreaterThan(scrollback, 0)
         controller.view.addSubview(view)
         view.isHidden = false
         NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
