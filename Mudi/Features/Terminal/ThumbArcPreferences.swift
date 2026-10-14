@@ -4,7 +4,7 @@ import CoreGraphics
 enum ThumbArcActivationDistance: String, Codable, CaseIterable, Sendable {
     case short, medium, long
     var title: String {
-        switch self { case .short: "短"; case .medium: "中"; case .long: "长" }
+        switch self { case .short: MudiL10n.text("短"); case .medium: MudiL10n.text("中"); case .long: MudiL10n.text("长") }
     }
     var points: CGFloat {
         switch self { case .short: 22; case .medium: 28; case .long: 36 }
@@ -20,8 +20,8 @@ enum ThumbArcAction: String, Codable, CaseIterable, Sendable {
         case .controlC: "^C"
         case .shiftTab: "⇧Tab"
         case .cursorUp: "↑"
-        case .paste: "粘贴"
-        case .jumpTo: "跳转"
+        case .paste: MudiL10n.text("粘贴")
+        case .jumpTo: MudiL10n.text("跳转")
         case .tab: "Tab"
         case .controlD: "^D"
         case .controlZ: "^Z"
@@ -33,27 +33,27 @@ enum ThumbArcAction: String, Codable, CaseIterable, Sendable {
         case .end: "End"
         case .pageUp: "PgUp"
         case .pageDown: "PgDn"
-        case .customText: "自定义文本"
+        case .customText: MudiL10n.text("自定义文本")
         }
     }
     var detail: String {
         switch self {
-        case .escape: "退出 / 取消"
-        case .controlC: "中断"
-        case .shiftTab: "反向 Tab"
-        case .cursorUp: "上一条历史"
-        case .paste: "剪贴板"
-        case .jumpTo: "打开 Pane 列表"
-        case .tab: "补全"
-        case .controlD: "EOF / 退出"
-        case .controlZ: "挂起"
-        case .controlL: "清屏"
-        case .cursorDown: "下一条历史"
-        case .cursorLeft, .cursorRight: "光标移动"
-        case .home: "行首"
-        case .end: "行尾"
-        case .pageUp, .pageDown: "翻页"
-        case .customText: "发送一段片段"
+        case .escape: MudiL10n.text("退出 / 取消")
+        case .controlC: MudiL10n.text("中断")
+        case .shiftTab: MudiL10n.text("反向 Tab")
+        case .cursorUp: MudiL10n.text("上一条历史")
+        case .paste: MudiL10n.text("剪贴板")
+        case .jumpTo: MudiL10n.text("打开 Pane 列表")
+        case .tab: MudiL10n.text("补全")
+        case .controlD: MudiL10n.text("EOF / 退出")
+        case .controlZ: MudiL10n.text("挂起")
+        case .controlL: MudiL10n.text("清屏")
+        case .cursorDown: MudiL10n.text("下一条历史")
+        case .cursorLeft, .cursorRight: MudiL10n.text("光标移动")
+        case .home: MudiL10n.text("行首")
+        case .end: MudiL10n.text("行尾")
+        case .pageUp, .pageDown: MudiL10n.text("翻页")
+        case .customText: MudiL10n.text("发送一段片段")
         }
     }
     var glyph: String {

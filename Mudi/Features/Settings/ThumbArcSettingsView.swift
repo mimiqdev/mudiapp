@@ -16,22 +16,22 @@ struct ThumbArcSettingsView: View {
                 VStack(spacing: 12) {
                     ThumbArcDemo(preferences: draft, interactive: false).frame(height: 240)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
-                    Text("双击后按住，朝操作方向轻滑即可选中 · 松开执行 · 回起点取消")
+                    Text(MudiL10n.text("双击后按住，朝操作方向轻滑即可选中 · 松开执行 · 回起点取消"))
                         .font(MudiTypography.body(12)).foregroundStyle(MudiPalette.mute)
                 }.padding(.vertical, 16)
             } header: {
-                HStack { Text("预览"); Spacer(); Text(draft.isLeftHanded ? "左手 · 向右上展开" : "右手 · 向左上展开") }
+                HStack { Text(MudiL10n.text("预览")); Spacer(); Text(draft.isLeftHanded ? MudiL10n.text("左手 · 向右上展开") : MudiL10n.text("右手 · 向左上展开")) }
                     .font(MudiTypography.body(13)).foregroundStyle(MudiPalette.mute).textCase(nil)
             } footer: {
-                Text("单指长按仍用于 SwiftTerm 选择文本，不会触发快捷弧。")
+                Text(MudiL10n.text("单指长按仍用于 SwiftTerm 选择文本，不会触发快捷弧。"))
                     .font(MudiTypography.body(12)).foregroundStyle(MudiPalette.mute)
             }.mudiRow()
             Section {
                 ForEach(draft.actions, id: \.self) { action in actionRow(action) }
                     .onDelete { draft.actions.remove(atOffsets: $0) }
                     .onMove { draft.actions.move(fromOffsets: $0, toOffset: $1) }
-            } header: { MudiSectionHeader(title: "槽位", count: draft.actions.count) } footer: {
-                Text("按住 ≡ 拖动排序 · 顺序即弧上由下到上，选择只看方向")
+            } header: { MudiSectionHeader(title: MudiL10n.text("槽位"), count: draft.actions.count) } footer: {
+                Text(MudiL10n.text("按住 ≡ 拖动排序 · 顺序即弧上由下到上，选择只看方向"))
                     .font(MudiTypography.body(12)).foregroundStyle(MudiPalette.mute)
             }
             .mudiRow()
@@ -46,61 +46,61 @@ struct ThumbArcSettingsView: View {
                     }.buttonStyle(.plain).disabled(draft.actions.count >= 6)
                 }
                 if draft.actions.contains(.customText) {
-                    TextField("自定义片段", text: $draft.customText, axis: .vertical)
+                    TextField(MudiL10n.text("自定义片段"), text: $draft.customText, axis: .vertical)
                         .lineLimit(3...6).font(MudiTypography.mono(13)).autocorrectionDisabled()
                         .accessibilityIdentifier("thumb-arc-custom-text")
                 }
-            } header: { MudiSectionHeader(title: "可用操作") } footer: {
-                Text("移除一个槽位后即可添加。最多 6 个，120° 均分为 6 个 20° 扇区，选择只看方向。")
+            } header: { MudiSectionHeader(title: MudiL10n.text("可用操作")) } footer: {
+                Text(MudiL10n.text("移除一个槽位后即可添加。最多 6 个，120° 均分为 6 个 20° 扇区，选择只看方向。"))
                     .font(MudiTypography.body(12)).foregroundStyle(MudiPalette.mute)
             }.mudiRow()
             Section {
                 Toggle(isOn: $draft.isLeftHanded) {
-                    option("左手模式", detail: "镜像布局，弧向右上展开")
+                    option(MudiL10n.text("左手模式"), detail: MudiL10n.text("镜像布局，弧向右上展开"))
                 }.accessibilityIdentifier("thumb-arc-left-hand")
                 Toggle(isOn: $draft.hapticsEnabled) {
-                    option("触感反馈", detail: "切换扇区时轻触提示")
+                    option(MudiL10n.text("触感反馈"), detail: MudiL10n.text("切换扇区时轻触提示"))
                 }.accessibilityIdentifier("thumb-arc-haptics")
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) {
-                        option("触发距离", detail: "离开触发点多远开始按方向选中")
+                        option(MudiL10n.text("触发距离"), detail: MudiL10n.text("离开触发点多远开始按方向选中"))
                         Spacer(minLength: 0)
                         activationPicker.frame(width: 118)
                     }
                     VStack(alignment: .leading, spacing: 8) {
-                        option("触发距离", detail: "离开触发点多远开始按方向选中")
+                        option(MudiL10n.text("触发距离"), detail: MudiL10n.text("离开触发点多远开始按方向选中"))
                         activationPicker
                     }
                 }
                 Button { practicePresented = true } label: {
-                    HStack { option("练习模式", detail: "跟随引导练习拖选，不会发送按键"); Spacer(); MudiIcon.chevronRight.image }
+                    HStack { option(MudiL10n.text("练习模式"), detail: MudiL10n.text("跟随引导练习拖选，不会发送按键")); Spacer(); MudiIcon.chevronRight.image }
                 }.buttonStyle(.plain).accessibilityIdentifier("thumb-arc-practice-button")
-            } header: { MudiSectionHeader(title: "手势") }.mudiRow()
+            } header: { MudiSectionHeader(title: MudiL10n.text("手势")) }.mudiRow()
             Section {
-                Button("恢复默认", role: .destructive) { draft = ThumbArcPreferences() }
+                Button(MudiL10n.text("恢复默认"), role: .destructive) { draft = ThumbArcPreferences() }
                     .frame(maxWidth: .infinity).foregroundStyle(MudiPalette.red)
             }.mudiRow()
         }
         .mudiGroupedList()
         .environment(\.editMode, .constant(.active))
-        .navigationTitle("拇指快捷弧").navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() }.buttonStyle(MudiPillStyle(filled: true)) }.mudiToolbarBackground() }
+        .navigationTitle(MudiL10n.text("拇指快捷弧")).navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .confirmationAction) { Button(MudiL10n.text("完成")) { dismiss() }.buttonStyle(MudiPillStyle(filled: true)) }.mudiToolbarBackground() }
         .onChange(of: draft) { _, value in model.updateThumbArc(value) }
         .sheet(isPresented: $practicePresented) {
             NavigationStack {
                 VStack(spacing: 16) {
-                    Text("双击后保持按住，朝操作方向轻滑即可选中，无需拖到按钮。松开执行，回到起点可取消。")
+                    Text(MudiL10n.text("双击后保持按住，朝操作方向轻滑即可选中，无需拖到按钮。松开执行，回到起点可取消。"))
                         .font(MudiTypography.body(14)).foregroundStyle(MudiPalette.mute).padding(.horizontal, 20)
                     ThumbArcDemo(preferences: draft, interactive: true)
                         .accessibilityIdentifier("thumb-arc-practice")
                 }
-                .background(MudiPalette.canvas).navigationTitle("练习模式").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { practicePresented = false } } }
+                .background(MudiPalette.canvas).navigationTitle(MudiL10n.text("练习模式")).navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button(MudiL10n.text("完成")) { practicePresented = false } } }
             }
         }
     }
     private var activationPicker: some View {
-        Picker("触发距离", selection: $draft.activationDistance) {
+        Picker(MudiL10n.text("触发距离"), selection: $draft.activationDistance) {
             ForEach(ThumbArcActivationDistance.allCases, id: \.self) { distance in
                 Text(distance.title).tag(distance)
             }
@@ -173,7 +173,7 @@ private final class ThumbArcDemoSurface: UIView {
         case .changed: overlay.select(at: gesture.location(in: self))
         case .ended:
             overlay.select(at: gesture.location(in: self))
-            label.text = overlay.finish().map { "\($0.title) · 已练习，不发送按键" } ?? "已取消 · 回起点取消"
+            label.text = overlay.finish().map { MudiL10n.format("%@ · 已练习，不发送按键", $0.title) } ?? MudiL10n.text("已取消 · 回起点取消")
         case .cancelled, .failed: overlay.cancel()
         default: break
         }

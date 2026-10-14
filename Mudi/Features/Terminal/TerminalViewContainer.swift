@@ -83,9 +83,9 @@ final class TerminalChromeView: UIView {
         let message: String?
         if preference != requestedEngineAtMount {
             let current = terminalView is GhosttyVTView ? "Ghostty VT" : "SwiftTerm"
-            message = "引擎偏好已更新，下次挂载生效；当前仍使用 \(current)。"
+            message = MudiL10n.format("引擎偏好已更新，下次挂载生效；当前仍使用 %@。", current)
         } else {
-            message = fallbackMessage ?? (requestedEngineAtMount == .ghosttyVT ? "Ghostty VT（实验）；引擎选择下次挂载生效。" : nil)
+            message = fallbackMessage ?? (requestedEngineAtMount == .ghosttyVT ? MudiL10n.text("Ghostty VT（实验）；引擎选择下次挂载生效。") : nil)
         }
         engineStatusLabel.text = message
         engineStatusLabel.isHidden = message == nil
@@ -190,7 +190,7 @@ struct TerminalViewContainer: UIViewRepresentable {
             } catch {
                 // This is the real throwing VT init/theme path. It runs
                 // BEFORE either renderer attaches to the existing PTY stream.
-                fallbackMessage = "Ghostty VT 未能初始化：\(String(describing: error))；已回退 SwiftTerm（原会话）。"
+                fallbackMessage = MudiL10n.format("Ghostty VT 未能初始化：%@；已回退 SwiftTerm（原会话）。", String(describing: error))
                 let fallback = ShellTerminalView(frame: .zero)
                 if let theme { fallback.apply(theme: theme) } else { fallback.updateAppearance(for: colorScheme) }
                 terminalView = fallback

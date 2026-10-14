@@ -7,8 +7,8 @@ enum TerminalEnginePreference: String, Codable, CaseIterable, Sendable {
 
     var label: String {
         switch self {
-        case .swiftTerm: "SwiftTerm（默认）"
-        case .ghosttyVT: "Ghostty VT（实验）"
+        case .swiftTerm: MudiL10n.text("SwiftTerm（默认）")
+        case .ghosttyVT: MudiL10n.text("Ghostty VT（实验）")
         }
     }
 }

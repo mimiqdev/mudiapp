@@ -118,6 +118,7 @@ final class GhosttyVTHostTests: XCTestCase {
             XCTAssertEqual(bar.activePopup, .none, "A tap outside Agent Actions closes it")
 
             bar.toggleDPad()
+            tapContainer.layoutIfNeeded()
             let dpadPoint = bar.dpadOverlay.convert(CGPoint(x: bar.dpadOverlay.bounds.midX, y: bar.dpadOverlay.bounds.midY), to: try XCTUnwrap(bar.superview))
             bar.dismissPopupIfOutsideTap(at: dpadPoint, in: try XCTUnwrap(bar.superview))
             XCTAssertEqual(bar.activePopup, .dPad, "A tap inside the D-pad keeps it open")

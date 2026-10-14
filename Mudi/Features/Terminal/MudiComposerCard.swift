@@ -42,9 +42,9 @@ final class MudiComposerCard: UIView, UITextViewDelegate {
         input.textContainer.lineFragmentPadding = 0
         input.adjustsFontForContentSizeCategory = true
         input.accessibilityIdentifier = "terminal-compose-input"
-        input.accessibilityLabel = "发送到终端的内容"
+        input.accessibilityLabel = MudiL10n.text("发送到终端的内容")
         input.smartQuotesType = .no; input.smartDashesType = .no
-        placeholder.text = "输入要发送到终端的内容…"
+        placeholder.text = MudiL10n.text("输入要发送到终端的内容…")
         placeholder.isUserInteractionEnabled = false
         targetLabel.textAlignment = .right; targetLabel.numberOfLines = 0
         targetLabel.adjustsFontForContentSizeCategory = true
@@ -83,21 +83,21 @@ final class MudiComposerCard: UIView, UITextViewDelegate {
             pinned.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             pinned.centerYAnchor.constraint(equalTo: toolbarScroll.centerYAnchor)
         ])
-        addTool(.composeClose, "关闭", id: "close") { [weak bar] _ in bar?.closeCompose() }
-        menuButtons["history"] = addTool(.composeHistory, "历史 / 草稿", id: "history")
-        addTool(.composeLayers, "选择 Pane", id: "picker") { [weak bar] _ in bar?.closeCompose(); bar?.jumpToPanes() }
-        menuButtons["insert"] = addTool(.composePlus, "插入", id: "insert")
-        menuButtons["snippet"] = addTool(.composeStar, "片段", id: "snippet")
-        menuButtons["target"] = addTool(.composeTarget, "发送目标", id: "target")
-        addTool(.composeClear, "清空", id: "clear") { [weak self] _ in self?.setText("") }
-        let mic = makeButton(.composeMic, "系统键盘听写", id: "dictation")
-        mic.accessibilityHint = "在系统键盘上使用麦克风听写"
+        addTool(.composeClose, MudiL10n.text("关闭"), id: "close") { [weak bar] _ in bar?.closeCompose() }
+        menuButtons["history"] = addTool(.composeHistory, MudiL10n.text("历史 / 草稿"), id: "history")
+        addTool(.composeLayers, MudiL10n.text("选择 Pane"), id: "picker") { [weak bar] _ in bar?.closeCompose(); bar?.jumpToPanes() }
+        menuButtons["insert"] = addTool(.composePlus, MudiL10n.text("插入"), id: "insert")
+        menuButtons["snippet"] = addTool(.composeStar, MudiL10n.text("片段"), id: "snippet")
+        menuButtons["target"] = addTool(.composeTarget, MudiL10n.text("发送目标"), id: "target")
+        addTool(.composeClear, MudiL10n.text("清空"), id: "clear") { [weak self] _ in self?.setText("") }
+        let mic = makeButton(.composeMic, MudiL10n.text("系统键盘听写"), id: "dictation")
+        mic.accessibilityHint = MudiL10n.text("在系统键盘上使用麦克风听写")
         mic.addAction(UIAction { [weak self] _ in self?.input.becomeFirstResponder() }, for: .touchUpInside)
         pinned.addArrangedSubview(mic)
         sendButton.setImage(MudiIcon.composeSend.uiImage, for: .normal)
         sendButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         sendButton.accessibilityIdentifier = "terminal-compose-send"
-        sendButton.accessibilityLabel = "发送"
+        sendButton.accessibilityLabel = MudiL10n.text("发送")
         sendButton.addAction(UIAction { [weak self] _ in self?.send() }, for: .touchUpInside)
         pinned.addArrangedSubview(sendButton)
         updateStyle(); updateMenus(); textViewDidChange(input)
@@ -132,7 +132,7 @@ final class MudiComposerCard: UIView, UITextViewDelegate {
     func textViewDidChange(_ textView: UITextView) {
         confirmedText = nil; placeholder.isHidden = !input.text.isEmpty
         sendButton.setTitle(nil, for: .normal)
-        sendButton.accessibilityLabel = "发送"
+        sendButton.accessibilityLabel = MudiL10n.text("发送")
         sendButton.isEnabled = !input.text.isEmpty
         if wasEmpty != input.text.isEmpty {
             wasEmpty = input.text.isEmpty
@@ -188,8 +188,8 @@ final class MudiComposerCard: UIView, UITextViewDelegate {
         let lines = text.components(separatedBy: .newlines).count
         if lines > 20, confirmedText != text {
             confirmedText = text
-            sendButton.setTitle("发送 \(lines) 行", for: .normal)
-            sendButton.accessibilityLabel = "确认发送 \(lines) 行"
+            sendButton.setTitle(MudiL10n.format("发送 %@ 行", String(lines)), for: .normal)
+            sendButton.accessibilityLabel = MudiL10n.format("确认发送 %@ 行", String(lines))
             return
         }
         remember(text, kind: "sent")
@@ -206,30 +206,30 @@ final class MudiComposerCard: UIView, UITextViewDelegate {
         let actions = records.filter { $0.kind == kind }.map { record in
             UIAction(title: record.text, subtitle: record.target) { [weak self] _ in self?.setText(record.text) }
         }
-        return UIMenu(title: kind == "draft" ? "草稿" : kind == "snippet" ? "片段" : "最近发送",
-                      children: actions.isEmpty ? [UIAction(title: "暂无内容", attributes: .disabled) { _ in }] : actions)
+        return UIMenu(title: kind == "draft" ? MudiL10n.text("草稿") : kind == "snippet" ? MudiL10n.text("片段") : MudiL10n.text("最近发送"),
+                      children: actions.isEmpty ? [UIAction(title: MudiL10n.text("暂无内容"), attributes: .disabled) { _ in }] : actions)
     }
     private func updateMenus() {
         menuButtons["history"]?.menu = UIMenu(children: [recordsMenu(kind: "sent"), recordsMenu(kind: "draft")])
         menuButtons["snippet"]?.menu = UIMenu(children: [
-            UIAction(title: "保存当前内容为片段", attributes: input.text.isEmpty ? .disabled : []) { [weak self] _ in
+            UIAction(title: MudiL10n.text("保存当前内容为片段"), attributes: input.text.isEmpty ? .disabled : []) { [weak self] _ in
                 guard let self else { return }; self.remember(self.input.text, kind: "snippet")
             }, recordsMenu(kind: "snippet")])
         menuButtons["insert"]?.menu = UIMenu(children: [
-            UIAction(title: "粘贴") { [weak self] _ in self?.input.paste(nil) },
-            UIAction(title: "插入 Tab") { [weak self] _ in self?.input.insertText("\t") }])
+            UIAction(title: MudiL10n.text("粘贴")) { [weak self] _ in self?.input.paste(nil) },
+            UIAction(title: MudiL10n.text("插入 Tab")) { [weak self] _ in self?.input.insertText("\t") }])
         menuButtons["target"]?.menu = UIMenu(children: [
             UIAction(title: target, state: .on) { _ in },
-            UIAction(title: "选择 Pane") { [weak self] _ in self?.bar?.closeCompose(); self?.bar?.jumpToPanes() }])
+            UIAction(title: MudiL10n.text("选择 Pane")) { [weak self] _ in self?.bar?.closeCompose(); self?.bar?.jumpToPanes() }])
         menuButtons.values.forEach { $0.showsMenuAsPrimaryAction = true }
         sendButton.menu = UIMenu(children: [
-            UIAction(title: "发送后回车", subtitle: "发送完自动按 ↵", state: appendReturn ? .on : .off) { [weak self] _ in
+            UIAction(title: MudiL10n.text("发送后回车"), subtitle: MudiL10n.text("发送完自动按 ↵"), state: appendReturn ? .on : .off) { [weak self] _ in
                 self?.appendReturn.toggle(); self?.updateMenus()
             },
-            UIAction(title: "括号粘贴", subtitle: "终端支持时包裹多行输入", state: bracketedPaste ? .on : .off) { [weak self] _ in
+            UIAction(title: MudiL10n.text("括号粘贴"), subtitle: MudiL10n.text("终端支持时包裹多行输入"), state: bracketedPaste ? .on : .off) { [weak self] _ in
                 self?.bracketedPaste.toggle(); self?.updateMenus()
             },
-            UIAction(title: "存为草稿") { [weak self] _ in
+            UIAction(title: MudiL10n.text("存为草稿")) { [weak self] _ in
                 guard let self else { return }; self.remember(self.input.text, kind: "draft")
             }])
     }

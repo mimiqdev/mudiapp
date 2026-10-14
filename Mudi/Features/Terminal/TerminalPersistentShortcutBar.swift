@@ -48,10 +48,11 @@ extension ShellTerminalView {
               let container = bar.superview,
               let bottom = shortcutBarBottomConstraint
         else { return }
-        let offset = shortcutBarOffset(
+        var offset = shortcutBarOffset(
             in: container,
             keyboardFrameEnd: keyboardFrameEnd
         )
+        if bar.isAgentPanelDocked { offset = 0 }
         let newConstant = -offset
         // The terminal scroll view reserves the whole strip between its own
         // bottom edge and the bar's TOP edge, so its grid rows always end

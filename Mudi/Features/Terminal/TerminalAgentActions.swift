@@ -41,7 +41,7 @@ enum TerminalAgentPreset: Int, CaseIterable {
 
     var title: String {
         switch self {
-        case .generic: return "通用"
+        case .generic: return MudiL10n.text("通用")
         case .pi: return "Pi"
         case .claudeCode: return "Claude Code"
         }
@@ -50,7 +50,7 @@ enum TerminalAgentPreset: Int, CaseIterable {
     /// Pi 1.1.0 defaults, verified against keybindings.md and slash-commands.md.
     /// Custom remote bindings are deliberately not guessed or overwritten.
     var actions: [TerminalAgentAction] {
-        builtInActions + configuredModels.map { .command("configured-model-" + $0, "模型：" + $0, "/model " + $0) }
+        builtInActions + configuredModels.map { .command("configured-model-" + $0, MudiL10n.text("模型：") + $0, "/model " + $0) }
     }
 
     var configuredModels: [String] {
@@ -83,21 +83,23 @@ enum TerminalAgentPreset: Int, CaseIterable {
             ]
         case .pi:
             [
-                .command("reload", "重新加载配置", "/reload"),
-                .command("compact", "压缩上下文", "/compact"),
-                .command("resume", "切换会话", "/resume"),
-                .command("tree", "会话树", "/tree"),
+                .command("reload", MudiL10n.text("重新加载配置"), "/reload"),
+                .command("compact", MudiL10n.text("压缩上下文"), "/compact"),
+                .command("new", MudiL10n.text("新会话"), "/new"),
+                .command("resume", MudiL10n.text("恢复会话"), "/resume"),
+                .command("tree", MudiL10n.text("会话树"), "/tree"),
+                .command("export", MudiL10n.text("导出"), "/export"),
             ]
         case .claudeCode:
             [
-                .command("model", "选择模型", "/model"),
-                .command("context", "查看上下文", "/context"),
-                .command("compact", "压缩上下文", "/compact"),
-                .command("resume", "恢复会话", "/resume"),
-                .command("usage", "查看用量", "/usage"),
-                .command("rewind", "回滚检查点", "/rewind"),
-                .command("clear", "清空并新开会话", "/clear"),
-                .command("tasks", "后台任务", "/tasks"),
+                .command("model", MudiL10n.text("选择模型"), "/model"),
+                .command("context", MudiL10n.text("查看上下文"), "/context"),
+                .command("compact", MudiL10n.text("压缩上下文"), "/compact"),
+                .command("resume", MudiL10n.text("恢复会话"), "/resume"),
+                .command("usage", MudiL10n.text("查看用量"), "/usage"),
+                .command("rewind", MudiL10n.text("回滚检查点"), "/rewind"),
+                .command("clear", MudiL10n.text("清空并新开会话"), "/clear"),
+                .command("tasks", MudiL10n.text("后台任务"), "/tasks"),
             ]
         }
     }
@@ -150,6 +152,10 @@ struct TerminalAgentActionsState {
     }
 
     mutating func selectAction(_ id: String) -> [UInt8]? {
+        if preset == .pi, id.hasPrefix("thinking-"), ["off", "low", "medium", "high"].contains(String(id.dropFirst(9))) {
+            pendingCommand = "/thinking " + id.dropFirst(9)
+            return nil
+        }
         guard let action = preset.actions.first(where: { $0.id == id }) else { return nil }
         pendingCommand = nil
         switch action.input {

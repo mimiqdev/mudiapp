@@ -10,13 +10,15 @@ final class MudiAgentActionsPanel: UIView {
     var onConfirm: (() -> Void)?
     var onCancel: (() -> Void)?
     var onClose: (() -> Void)?
+    var onKeyboard: (() -> Void)?
+    var onThinking: ((String) -> Void)?
+    private let thinking = UISegmentedControl(items: ["off", "low", "medium", "high"])
+    private let thinkingRow = UIStackView()
 
     private let presetLabel = UILabel()
     private let presetPicker = UISegmentedControl(items: TerminalAgentPreset.allCases.map(\.title))
     private let hintLabel = UILabel()
     private let actionsStack = UIStackView()
-    private let modelInput = UITextView()
-    private let modelConfiguration = UIStackView()
     private let configureModelsButton = UIButton(type: .system)
     private var currentState = TerminalAgentActionsState()
     private let operations = UIStackView()
@@ -31,8 +33,15 @@ final class MudiAgentActionsPanel: UIView {
         super.init(frame: .zero)
         accessibilityIdentifier = "terminal-agent-actions-panel"
         isHidden = true
-        backgroundColor = MudiPalette.sheetUI
-        layer.cornerRadius = 16
+        backgroundColor = .clear
+        let backdrop = MudiTerminalShortcutBar.makeMaterialView()
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        backdrop.isUserInteractionEnabled = false
+        backdrop.layer.cornerRadius = 20
+        backdrop.clipsToBounds = true
+        addSubview(backdrop)
+        NSLayoutConstraint.activate([backdrop.leadingAnchor.constraint(equalTo: leadingAnchor), backdrop.trailingAnchor.constraint(equalTo: trailingAnchor), backdrop.topAnchor.constraint(equalTo: topAnchor), backdrop.bottomAnchor.constraint(equalTo: bottomAnchor)])
+        layer.cornerRadius = 20
         layer.shadowColor = UIColor.black.cgColor
         layer.shadowRadius = 8
         layer.shadowOffset = CGSize(width: 0, height: 2)
@@ -65,18 +74,27 @@ final class MudiAgentActionsPanel: UIView {
         let headingText = UIStackView()
         headingText.axis = .vertical
         headingText.spacing = 3
-        let title = makeLabel("Agent Actions", size: 16, weight: .semibold)
+        let title = makeLabel("π  Agent", size: 16, weight: .semibold)
         headingText.addArrangedSubview(title)
         presetLabel.font = MudiTypography.uiFont(12)
         presetLabel.textColor = MudiPalette.muteUI
         presetLabel.accessibilityIdentifier = "terminal-agent-preset-label"
         headingText.addArrangedSubview(presetLabel)
         heading.addArrangedSubview(headingText)
+        let keyboard = UIButton(type: .system)
+        keyboard.setTitle(MudiL10n.text("⌨ 键盘"), for: .normal)
+        keyboard.setTitleColor(MudiPalette.inkUI, for: .normal)
+        keyboard.accessibilityIdentifier = "terminal-agent-panel-keyboard"
+        keyboard.addAction(UIAction { [weak self] _ in self?.onKeyboard?() }, for: .touchUpInside)
+        keyboard.titleLabel?.font = MudiTypography.uiFont(12)
+        keyboard.widthAnchor.constraint(equalToConstant: 90).isActive = true
+        keyboard.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        heading.addArrangedSubview(keyboard)
         let close = UIButton(type: .system)
         close.setImage(MudiIcon.close.uiImage, for: .normal)
         close.tintColor = MudiPalette.inkUI
         close.accessibilityIdentifier = "terminal-agent-actions-close"
-        close.accessibilityLabel = "关闭 Agent Actions"
+        close.accessibilityLabel = MudiL10n.text("关闭 Agent Actions")
         close.addAction(UIAction { [weak self] _ in self?.onClose?() }, for: .touchUpInside)
         close.widthAnchor.constraint(equalToConstant: 44).isActive = true
         close.heightAnchor.constraint(equalToConstant: 44).isActive = true
@@ -86,18 +104,31 @@ final class MudiAgentActionsPanel: UIView {
         operations.axis = .vertical
         operations.spacing = 10
         presetPicker.accessibilityIdentifier = "terminal-agent-preset-picker"
-        presetPicker.accessibilityLabel = "内置操作预设"
+        presetPicker.accessibilityLabel = MudiL10n.text("内置操作预设")
         presetPicker.heightAnchor.constraint(greaterThanOrEqualToConstant: 36).isActive = true
         presetPicker.addTarget(self, action: #selector(presetChanged), for: .valueChanged)
+        presetPicker.heightAnchor.constraint(equalToConstant: 30).isActive = true
         operations.addArrangedSubview(presetPicker)
         hintLabel.font = MudiTypography.uiFont(11)
         hintLabel.textColor = MudiPalette.muteUI
         hintLabel.numberOfLines = 0
-        operations.addArrangedSubview(hintLabel)
-        configureModelsButton.setTitle("模型选择", for: .normal)
+        hintLabel.isHidden = true
+        configureModelsButton.setTitle(MudiL10n.text("模型  ·  选择快捷模型  ⌄"), for: .normal)
+        configureModelsButton.contentHorizontalAlignment = .left
+        configureModelsButton.backgroundColor = MudiPalette.keyUI.withAlphaComponent(0.45)
+        configureModelsButton.layer.cornerRadius = 10
+        configureModelsButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
         configureModelsButton.accessibilityIdentifier = "terminal-agent-model-configure"
         configureModelsButton.addAction(UIAction { [weak self] _ in self?.openModels() }, for: .touchUpInside)
         operations.addArrangedSubview(configureModelsButton)
+        thinkingRow.axis = .horizontal
+        thinkingRow.spacing = 10
+        thinkingRow.addArrangedSubview(makeLabel("Thinking", size: 12))
+        thinking.accessibilityIdentifier = "terminal-agent-thinking"
+        thinking.selectedSegmentIndex = UISegmentedControl.noSegment
+        thinking.addTarget(self, action: #selector(thinkingChanged), for: .valueChanged)
+        thinkingRow.addArrangedSubview(thinking)
+        operations.addArrangedSubview(thinkingRow)
         actionsStack.axis = .vertical
         actionsStack.spacing = 6
         operations.addArrangedSubview(actionsStack)
@@ -112,17 +143,17 @@ final class MudiAgentActionsPanel: UIView {
     func render(_ state: TerminalAgentActionsState) {
         currentState = state
         configureModelsButton.isHidden = false
-        if renderedPreset != state.preset || state.pendingCommand != nil { modelConfiguration.isHidden = true }
-        if renderedPreset != state.preset { modelInput.text = state.preset.configuredModels.joined(separator: "\n") }
-        presetLabel.text = "当前预设：" + state.preset.title
+        thinkingRow.isHidden = state.preset != .pi
+        if state.pendingCommand == nil { thinking.selectedSegmentIndex = UISegmentedControl.noSegment }
+        presetLabel.text = MudiL10n.text("当前预设：") + state.preset.title
         presetPicker.selectedSegmentIndex = state.preset.rawValue
         switch state.preset {
         case .pi:
-            hintLabel.text = "Pi 命令快捷操作；Ctrl+ 与 Shift+Tab 使用通用快捷栏。命令发送前会确认。"
+            hintLabel.text = MudiL10n.text("Pi 命令快捷操作；Ctrl+ 与 Shift+Tab 使用通用快捷栏。命令发送前会确认。")
         case .claudeCode:
-            hintLabel.text = "Claude Code 的 Ctrl+ 与 Shift+Tab 已由通用快捷栏提供。命令发送前会确认。"
+            hintLabel.text = MudiL10n.text("Claude Code 的 Ctrl+ 与 Shift+Tab 已由通用快捷栏提供。命令发送前会确认。")
         case .generic:
-            hintLabel.text = "通用终端按键；也可手动选择 Pi 或 Claude Code 预设。"
+            hintLabel.text = MudiL10n.text("通用终端按键；也可手动选择 Pi 或 Claude Code 预设。")
         }
         if renderedPreset != state.preset {
             renderedPreset = state.preset
@@ -130,22 +161,30 @@ final class MudiAgentActionsPanel: UIView {
                 actionsStack.removeArrangedSubview(view)
                 view.removeFromSuperview()
             }
-            for action in state.preset.actions.filter({ !$0.id.hasPrefix("configured-model-") }) {
-                actionsStack.addArrangedSubview(makeActionButton(action))
+            let actions = state.preset.actions.filter { !$0.id.hasPrefix("configured-model-") }
+            for start in stride(from: 0, to: actions.count, by: 3) {
+                let row = UIStackView()
+                row.axis = .horizontal
+                row.spacing = 8
+                row.distribution = .fillEqually
+                for action in actions[start..<min(start + 3, actions.count)] { row.addArrangedSubview(makeActionButton(action)) }
+                while row.arrangedSubviews.count < 3 { row.addArrangedSubview(UIView()) }
+                actionsStack.addArrangedSubview(row)
             }
         }
         commandLabel.text = state.pendingCommand
         let destructive = state.pendingCommand == "/rewind" || state.pendingCommand == "/clear"
+        configureModelsButton.setTitle(MudiL10n.text("模型  ·  ") + (lastSentModel.map { $0.replacingOccurrences(of: "/model ", with: "") } ?? MudiL10n.text("选择快捷模型")) + "  ⌄", for: .normal)
         warningLabel.text = destructive
-            ? "将追加到远端当前输入并发送 Enter。/rewind 会回滚代码和/或对话；/clear 会结束当前上下文并开启新会话。请确认编辑器为空。"
-            : "将追加到远端当前输入并发送 Enter。不会清空已有内容，请先确认编辑器为空且没有未完成输入。"
+            ? MudiL10n.text("将追加到远端当前输入并发送 Enter。/rewind 会回滚代码和/或对话；/clear 会结束当前上下文并开启新会话。请确认编辑器为空。")
+            : MudiL10n.text("将追加到远端当前输入并发送 Enter。不会清空已有内容，请先确认编辑器为空且没有未完成输入。")
         confirmation.isHidden = state.pendingCommand == nil
         operations.isHidden = state.pendingCommand != nil
         confirmButton.isEnabled = state.pendingCommand != nil
     }
 
     func setAvailableHeight(_ height: CGFloat) {
-        let resolved = max(0, min(340, height))
+        let resolved = max(0, min(500, height))
         guard abs(panelHeight.constant - resolved) > 0.5 else { return }
         panelHeight.constant = resolved
     }
@@ -185,6 +224,12 @@ final class MudiAgentActionsPanel: UIView {
         presenter.present(page, animated: true)
     }
 
+    @objc private func thinkingChanged() {
+        let levels = ["off", "low", "medium", "high"]
+        guard levels.indices.contains(thinking.selectedSegmentIndex) else { return }
+        onThinking?(levels[thinking.selectedSegmentIndex])
+    }
+
     @objc private func presetChanged() {
         guard let preset = TerminalAgentPreset(rawValue: presetPicker.selectedSegmentIndex) else { return }
         onPreset?(preset)
@@ -193,28 +238,29 @@ final class MudiAgentActionsPanel: UIView {
     private func makeActionButton(_ action: TerminalAgentAction) -> UIButton {
         let button = UIButton(type: .system)
         var config = UIButton.Configuration.plain()
-        config.title = action.title
-        config.subtitle = action.keyLabel
+        config.title = action.keyLabel
+        config.subtitle = action.title
         config.titleAlignment = .leading
         config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12)
         config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
             var result = attributes
-            result.font = MudiTypography.uiFont(13, weight: .medium)
+            result.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .medium)
             return result
         }
         config.subtitleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
             var result = attributes
-            result.font = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+            result.font = MudiTypography.uiFont(10)
             result.foregroundColor = MudiPalette.muteUI
             return result
         }
-        config.titleLineBreakMode = .byWordWrapping
+        config.titleLineBreakMode = .byTruncatingTail
+        config.subtitleLineBreakMode = .byTruncatingTail
         config.baseForegroundColor = MudiPalette.inkUI
-        config.background.backgroundColor = MudiPalette.keyUI
+        config.background.backgroundColor = MudiPalette.keyUI.withAlphaComponent(0.65)
         config.background.cornerRadius = 9
         button.configuration = config
         button.contentHorizontalAlignment = .leading
-        button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 50).isActive = true
         button.accessibilityIdentifier = "terminal-agent-action-" + action.id
         button.accessibilityLabel = action.title + " · " + action.keyLabel
         button.addAction(UIAction { [weak self] _ in self?.onAction?(action.id) }, for: .touchUpInside)
@@ -225,7 +271,7 @@ final class MudiAgentActionsPanel: UIView {
         confirmation.axis = .vertical
         confirmation.spacing = 12
         confirmation.accessibilityIdentifier = "terminal-agent-command-confirmation"
-        confirmation.addArrangedSubview(makeLabel("确认发送命令？", size: 16, weight: .semibold))
+        confirmation.addArrangedSubview(makeLabel(MudiL10n.text("确认发送命令？"), size: 16, weight: .semibold))
         commandLabel.font = UIFont.monospacedSystemFont(ofSize: 17, weight: .medium)
         commandLabel.textColor = MudiPalette.inkUI
         commandLabel.numberOfLines = 0
@@ -241,10 +287,10 @@ final class MudiAgentActionsPanel: UIView {
         buttons.distribution = .fillEqually
         buttons.spacing = 8
         let cancel = UIButton(type: .system)
-        cancel.setTitle("取消", for: .normal)
+        cancel.setTitle(MudiL10n.text("取消"), for: .normal)
         cancel.accessibilityIdentifier = "terminal-agent-command-cancel"
         cancel.addAction(UIAction { [weak self] _ in self?.onCancel?() }, for: .touchUpInside)
-        confirmButton.setTitle("发送 + Enter", for: .normal)
+        confirmButton.setTitle(MudiL10n.text("发送 + Enter"), for: .normal)
         confirmButton.accessibilityIdentifier = "terminal-agent-command-confirm"
         confirmButton.addAction(UIAction { [weak self] _ in self?.onConfirm?() }, for: .touchUpInside)
         for button in [cancel, confirmButton] {
@@ -278,10 +324,10 @@ final class AgentModelListController: UITableViewController {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = preset.title + " 模型"
+        title = preset.title + MudiL10n.text(" 模型")
         tableView.accessibilityIdentifier = "terminal-agent-model-list"
-        navigationItem.leftBarButtonItem = UIBarButtonItem(title: "关闭", style: .plain, target: self, action: #selector(close))
-        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "配置", style: .plain, target: self, action: #selector(configure))
+        navigationItem.leftBarButtonItem = UIBarButtonItem(title: MudiL10n.text("关闭"), style: .plain, target: self, action: #selector(close))
+        navigationItem.rightBarButtonItem = UIBarButtonItem(title: MudiL10n.text("配置"), style: .plain, target: self, action: #selector(configure))
     }
     @objc private func close() { dismiss(animated: true) }
     @objc private func configure() {
@@ -293,7 +339,7 @@ final class AgentModelListController: UITableViewController {
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
         let models = preset.configuredModels
-        cell.textLabel?.text = models.isEmpty ? "尚未配置模型，点右上角配置" : models[indexPath.row]
+        cell.textLabel?.text = models.isEmpty ? MudiL10n.text("尚未配置模型，点右上角配置") : models[indexPath.row]
         cell.textLabel?.numberOfLines = 0
         return cell
     }
@@ -313,7 +359,7 @@ final class AgentModelEditorController: UIViewController {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "配置模型（每行一个 ID）"
+        title = MudiL10n.text("配置模型（每行一个 ID）")
         view.backgroundColor = .systemBackground
         input.text = preset.configuredModels.joined(separator: "\n")
         input.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
@@ -328,7 +374,7 @@ final class AgentModelEditorController: UIViewController {
             input.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             input.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
         ])
-        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "保存", style: .done, target: self, action: #selector(save))
+        navigationItem.rightBarButtonItem = UIBarButtonItem(title: MudiL10n.text("保存"), style: .done, target: self, action: #selector(save))
     }
     @objc func save() {
         preset.saveModels(input.text)
@@ -358,14 +404,14 @@ final class QuickModelPickerController: UITableViewController, UIPopoverPresenta
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
         cell.backgroundColor = .clear
-        if models.isEmpty { cell.textLabel?.text = "还没有快捷模型"; cell.detailTextLabel?.text = "去设置添加 →" }
+        if models.isEmpty { cell.textLabel?.text = MudiL10n.text("还没有快捷模型"); cell.detailTextLabel?.text = MudiL10n.text("去设置添加 →") }
         else {
             let model = models[indexPath.row]
-            cell.textLabel?.text = model.name + "  · " + (model.scopes.isEmpty ? "全部" : model.scopes.map { ["pi": "Pi", "claude code": "Claude Code", "codex": "Codex"][$0] ?? $0 }.joined(separator: "/"))
+            cell.textLabel?.text = model.name + "  · " + (model.scopes.isEmpty ? MudiL10n.text("全部") : model.scopes.map { ["pi": "Pi", "claude code": "Claude Code", "codex": "Codex"][$0] ?? $0 }.joined(separator: "/"))
             cell.detailTextLabel?.text = model.command
             cell.detailTextLabel?.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
             cell.accessoryType = lastSent == model.command ? .checkmark : .none
-            if lastSent == model.command { cell.detailTextLabel?.text = model.command + " · 上次发送" }
+            if lastSent == model.command { cell.detailTextLabel?.text = model.command + MudiL10n.text(" · 上次发送") }
         }
         return cell
     }

@@ -58,7 +58,7 @@ final class GhosttyVTAppMountTests: XCTestCase {
         XCTAssertEqual(ObjectIdentifier(view.terminal), identity)
         XCTAssertTrue(view.screen.rows.indices.contains { view.screen.text(at: $0).contains("queued 界") })
         let status = try XCTUnwrap(phase7View(with: "terminal-engine-status", in: harness.controller.view) as? UILabel)
-        XCTAssertTrue(status.text?.contains("下次挂载生效") == true)
+        XCTAssertTrue(status.text?.contains(MudiL10n.text("引擎偏好已更新，下次挂载生效；当前仍使用 %@。").components(separatedBy: "%@")[0]) == true)
         let snapshot = await channel.snapshot()
         XCTAssertEqual(snapshot.readers, 1)
         XCTAssertEqual(snapshot.closes, 0)
@@ -79,7 +79,7 @@ final class GhosttyVTAppMountTests: XCTestCase {
         XCTAssertFalse(phase7Descendants(of: harness.controller.view).contains { $0 is GhosttyVTView })
         let status = try XCTUnwrap(phase7View(with: "terminal-engine-status", in: harness.controller.view) as? UILabel,
                                   "A real invalidSize error must be visible, not silently swallowed")
-        XCTAssertTrue(status.text?.contains("回退 SwiftTerm") == true)
+        XCTAssertTrue(status.text?.contains(MudiL10n.text("Ghostty VT 未能初始化：%@；已回退 SwiftTerm（原会话）。").components(separatedBy: "%@")[1]) == true)
         let received = await ghosttyWait { (await channel.snapshot()).sent.count == 1 }
         XCTAssertTrue(received)
         view.shortcutBar?.sendEscape()
@@ -136,7 +136,7 @@ final class GhosttyVTAppMountTests: XCTestCase {
         defer { harness.close() }
         await harness.settle()
         let marker = try XCTUnwrap(phase7View(with: "terminal-engine-picker", in: harness.controller.view))
-        XCTAssertTrue(marker.accessibilityLabel?.contains("下次挂载生效") == true)
+        XCTAssertTrue(marker.accessibilityLabel?.contains(MudiL10n.text("；下次挂载生效")) == true)
     }
 
     private func attach(_ view: UIView, name: String) {

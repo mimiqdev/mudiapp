@@ -160,12 +160,14 @@ final class Phase7DeviceFeedbackTests: XCTestCase {
         XCTAssertFalse(keyboardButton.isHidden)
     }
 
-    func testShortcutBarUsesFigmaSolidBackdrop() throws {
+    func testShortcutBarUsesLiquidGlassBackdrop() throws {
         let terminalView = ShellTerminalView(frame: .zero)
         defer { terminalView.stop() }
         let bar = try XCTUnwrap(terminalView.shortcutBar)
         let backdrop = try XCTUnwrap(phase7View(with: "terminal-shortcut-backdrop", in: bar))
-        XCTAssertEqual(backdrop.backgroundColor?.resolvedColor(with: bar.traitCollection), MudiPalette.sheetUI.resolvedColor(with: bar.traitCollection))
+        let material = try XCTUnwrap(backdrop as? UIVisualEffectView)
+        XCTAssertNotNil(material.effect)
+        XCTAssertEqual(material.backgroundColor, .clear)
         XCTAssertEqual(bar.intrinsicContentSize.height, 48)
     }
 

@@ -29,15 +29,15 @@ struct SettingsView: View {
             }.mudiRow()
 
             Section {
-                NavigationLink("快捷模型") { QuickModelSettingsView() }
-                NavigationLink("拇指快捷弧") { ThumbArcSettingsView(model: model) }
+                NavigationLink(MudiL10n.text("快捷模型")) { QuickModelSettingsView() }
+                NavigationLink(MudiL10n.text("拇指快捷弧")) { ThumbArcSettingsView(model: model) }
             }.mudiRow()
 
             TerminalAppearanceSection(model: model)
             DiagnosticsSettingsSection(model: model)
         }
         .mudiGroupedList()
-        .navigationTitle("设置")
+        .navigationTitle(MudiL10n.text("设置"))
         .navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -54,7 +54,7 @@ struct TerminalAppearanceSection: View {
 
     var body: some View {
         Section("Terminal") {
-            NavigationLink("快捷模型") { QuickModelSettingsView() }
+            NavigationLink(MudiL10n.text("快捷模型")) { QuickModelSettingsView() }
             Picker("Renderer", selection: Binding(
                 get: { model.preferences.terminalEngine },
                 set: { model.updateTerminalEngine($0) }
@@ -64,10 +64,10 @@ struct TerminalAppearanceSection: View {
                 }
             }
             .accessibilityIdentifier("terminal-engine-picker")
-            Text("引擎选择下次挂载生效，不转换或清除当前会话内容。Ghostty VT 为实验引擎，真机输入与高级交互尚待验收。")
+            Text(MudiL10n.text("引擎选择下次挂载生效，不转换或清除当前会话内容。Ghostty VT 为实验引擎，真机输入与高级交互尚待验收。"))
                 .font(.footnote).foregroundStyle(.secondary)
             AccessibilityIdentifierBridge(identifier: "terminal-engine-picker",
-                accessibilityLabel: model.preferences.terminalEngine.label + "；下次挂载生效")
+                accessibilityLabel: model.preferences.terminalEngine.label + MudiL10n.text("；下次挂载生效"))
                 .frame(width: 1, height: 1)
 
             Picker("Theme", selection: Binding(
@@ -196,12 +196,12 @@ struct TerminalAppearanceSettingsView: View {
     var body: some View {
         Form {
             TerminalAppearanceSection(model: model)
-            Section { NavigationLink("快捷模型") { QuickModelSettingsView() }
-                NavigationLink("拇指快捷弧") { ThumbArcSettingsView(model: model) } }.mudiRow()
+            Section { NavigationLink(MudiL10n.text("快捷模型")) { QuickModelSettingsView() }
+                NavigationLink(MudiL10n.text("拇指快捷弧")) { ThumbArcSettingsView(model: model) } }.mudiRow()
             DiagnosticsSettingsSection(model: model)
         }
         .mudiGroupedList()
-        .navigationTitle("终端设置")
+        .navigationTitle(MudiL10n.text("终端设置"))
         .navigationBarTitleDisplayMode(.inline)
     }
 }

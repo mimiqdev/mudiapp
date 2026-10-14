@@ -72,3 +72,10 @@
 - 用户决定：Ctrl/Alt 锁定期复用系统英文键盘（隐藏 ASCII responder），仅自绘 44pt 导航条（Ctrl/Alt 状态 + Home/End/PgUp/PgDn/←/→/Tab/Del，横向滚动边缘渐隐）挂在其键盘上方；发送/取消后恢复原中文输入法与终端焦点。原则：除非万不得已不自绘键盘字母区。
 - 逻辑资产沿用 Phase 16 修饰键盘合同：单次语义、全部清锁路径（IME 组合/切会话/切 Host/暂停输入/后台/离窗/硬件键盘接入）、序列编码与会话 generation 防护。
 - 验证：模拟器 iPhone 437/437、iPad 37/37；真实键盘 UI 与 zh-Hans → en-US → zh-Hans 恢复在独立 spike 中验证。真机切换手感待 TestFlight 真机体验。
+
+## 玻璃快捷栏与本地化反馈（2026-10-14）
+
+- 用户真机确认系统英文键盘切换没有问题；保留 accessory 方案，不恢复自绘字母键盘。
+- 快捷栏与 Agent 面板使用 iOS 26+ UIGlassEffect，较旧系统回退超薄材质。Agent 面板占用原键盘槽位，键盘收起不改变终端 frame；Pi 以模型/Thinking/三列命令卡片呈现，新增 /new /export 已核 Pi 文档。Thinking 精确设置走 /thinking level 并沿用文本命令确认规则，不推断远端状态。
+- 补齐 140 条 en/zh-Hans 文案，覆盖 Thumb Arc 设置/练习、Agent、快捷模型、Ctrl/Alt accessory、Compose 和实验引擎提示。用户文本、模型名与协议命令不翻译。
+- 最终模拟器英文全量 441/441、中文专项 23/23、iPad 专项 40/40；玻璃界面深浅色及中英截图均已生成。用户已授权本轮创建 PR 和 TestFlight 发布。

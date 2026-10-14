@@ -17,7 +17,7 @@ extension MudiTerminalShortcutBar {
                 self.agentActionsPanel.lastSentModel = model.command
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 let toast = UILabel()
-                toast.text = "已发送 " + model.command
+                toast.text = MudiL10n.text("已发送 ") + model.command
                 toast.font = .systemFont(ofSize: 12)
                 toast.textColor = .label
                 toast.backgroundColor = .secondarySystemBackground
@@ -31,6 +31,14 @@ extension MudiTerminalShortcutBar {
                     Task { @MainActor in try? await Task.sleep(for: .milliseconds(1500)); toast.removeFromSuperview() }
                 }
             }
+        }
+        agentActionsPanel.onKeyboard = { [weak self] in
+            guard let self else { return }
+            self.dismissAgentActions()
+            if self.terminalView?.isInputFocusAllowed == true { _ = self.terminalView?.becomeFirstResponder() }
+        }
+        agentActionsPanel.onThinking = { [weak self] level in
+            self?.performAgentAction("thinking-" + level)
         }
         agentActionsPanel.onAction = { [weak self] id in self?.performAgentAction(id) }
         agentActionsPanel.onPreset = { [weak self] preset in
@@ -61,8 +69,17 @@ extension MudiTerminalShortcutBar {
         } else {
             agentActionsState.cancelCommand()
             agentActionsPanel.render(agentActionsState)
-            activePopup = .agentActions
             clearModifiers()
+            if let host = terminalView, let container = superview, let frame = host.lastKeyboardFrameEnd {
+                let overlap = max(0, container.bounds.maxY - container.convert(frame, from: nil).minY)
+                agentPanelSlotHeight = overlap > 150 ? overlap : 336
+            } else { agentPanelSlotHeight = 336 }
+            activePopup = .agentActions
+            terminalView?.updateShortcutBarOffset()
+            terminalView?.isModifierFocusHandoff = true
+            terminalView?.resignFirstResponder()
+            terminalView?.isModifierFocusHandoff = false
+            applyPopupState()
         }
     }
 

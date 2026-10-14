@@ -143,9 +143,11 @@ extension GhosttyVTView: TerminalHost {
             let top = container.convert(frame, from: nil).minY
             if top < container.bounds.maxY - 0.5 { offset = max(0, container.bounds.maxY - top) }
         }
+        if bar.isAgentPanelDocked { offset = 0 }
+        let heightChanged = abs((barHeightConstraint?.constant ?? 48) - bar.preferredHeight) > 0.25
         barHeightConstraint?.constant = bar.preferredHeight
         (container as? TerminalChromeView)?.setReservedBottom(offset + bar.preferredHeight)
-        guard abs(bottom.constant + offset) > 0.25 else { return }
+        guard heightChanged || abs(bottom.constant + offset) > 0.25 else { return }
         bottom.constant = -offset
         if animationDuration > 0 {
             UIView.animate(withDuration: animationDuration, delay: 0,
