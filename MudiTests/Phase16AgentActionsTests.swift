@@ -161,6 +161,22 @@ final class Phase16AgentActionsTests: XCTestCase {
         XCTAssertTrue(panel.isHidden)
     }
 
+    func testQuickModelMigrationAndScopeFilteringPreserveRawCommands() throws {
+        let suite = "quick-model-test-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(["anthropic/test"], forKey: "agent-models-1")
+        let store = QuickModelStore(defaults: defaults)
+        XCTAssertEqual(store.models.map(\.command), ["/model anthropic/test"])
+        XCTAssertTrue(store.models[0].applies(to: "pi"))
+        XCTAssertFalse(store.models[0].applies(to: "codex"))
+        store.models.append(QuickModel(name: "Any", command: "/model custom:id --flag", scopes: []))
+        let restored = QuickModelStore(defaults: defaults)
+        XCTAssertEqual(restored.models.count, 2)
+        XCTAssertTrue(restored.models[1].applies(to: nil))
+        XCTAssertEqual(restored.models[1].command, "/model custom:id --flag")
+    }
+
     func testGenericKeyActionSendsBytesAndDismissesPanel() throws {
         let terminal = ShellTerminalView(frame: .zero)
         defer { terminal.stop() }
