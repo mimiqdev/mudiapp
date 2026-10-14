@@ -305,7 +305,7 @@ struct TerminalScreen: View {
             ToolbarItem(placement: .topBarTrailing) {
                 HStack(spacing: 8) {
                     transportBadge.fixedSize()
-                    MudiRoundButton(icon: .settings, label: "终端设置", action: { isTerminalSettingsPresented = true })
+                    MudiRoundButton(icon: .settings, label: MudiL10n.text("终端设置"), action: { isTerminalSettingsPresented = true })
                         .accessibilityIdentifier("terminal-settings")
                 }.fixedSize()
             }.mudiToolbarBackground()

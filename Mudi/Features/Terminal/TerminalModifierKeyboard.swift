@@ -56,7 +56,7 @@ final class TerminalModifierKeyboard: UIInputView {
         top.addArrangedSubview(navigationScroll)
         top.heightAnchor.constraint(equalToConstant: 36).isActive = true
         content.addArrangedSubview(top)
-        let cancel = makeKey("取消")
+        let cancel = makeKey(MudiL10n.text("取消"))
         cancel.widthAnchor.constraint(equalToConstant: 44).isActive = true
         top.addArrangedSubview(cancel)
     }
@@ -70,7 +70,7 @@ final class TerminalModifierKeyboard: UIInputView {
         button.layer.cornerRadius = 6
         button.accessibilityIdentifier = "modifier-key-" + label
         button.addAction(UIAction { [weak self] _ in
-            if label == "取消" { self?.onCancel?() } else { self?.onKey?(label) }
+            if label == MudiL10n.text("取消") { self?.onCancel?() } else { self?.onKey?(label) }
         }, for: .touchUpInside)
         return button
     }
@@ -210,7 +210,7 @@ extension MudiTerminalShortcutBar {
         clearModifiers()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         let toast = UILabel()
-        toast.text = "✓ 已发送 \(prefix)+\(key.uppercased())"
+        toast.text = MudiL10n.format("✓ 已发送 %@+%@", prefix, key.uppercased())
         toast.textAlignment = .center
         toast.font = .systemFont(ofSize: 12)
         toast.textColor = .label

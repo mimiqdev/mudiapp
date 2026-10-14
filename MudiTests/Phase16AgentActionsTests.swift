@@ -15,12 +15,14 @@ final class Phase16AgentActionsTests: XCTestCase {
         let panel = try openPanel(on: terminal)
 
         XCTAssertFalse(panel.isHidden)
-        XCTAssertEqual(presetLabel(in: panel)?.text, "当前预设：Pi")
+        XCTAssertEqual(presetLabel(in: panel)?.text, MudiL10n.text("当前预设：") + "Pi")
         XCTAssertEqual(try presetPicker(in: panel).selectedSegmentIndex, 1)
-        let expected = ["reload", "compact", "resume", "tree"]
+        let expected = ["reload", "compact", "new", "resume", "tree", "export"]
         for id in expected {
             XCTAssertNotNil(phase7View(with: "terminal-agent-action-" + id, in: panel), id)
         }
+        XCTAssertNotNil(phase7View(with: "terminal-agent-thinking", in: panel))
+        XCTAssertNotNil(phase7View(with: "terminal-agent-panel-keyboard", in: panel))
         for id in ["model", "thinking", "tools", "thinking-blocks", "interrupt"] {
             XCTAssertNil(phase7View(with: "terminal-agent-action-" + id, in: panel))
         }
@@ -47,14 +49,14 @@ final class Phase16AgentActionsTests: XCTestCase {
         let terminal = try await fixture.terminal()
         let panel = try openPanel(on: terminal)
 
-        for name in [nil, "codex", "pi-helper", "claude-helper"] as [String?] {
+        for name in [nil, "pi-helper", "claude-helper"] as [String?] {
             var pane = fixture.pane
             pane.agent = name.map { Agent(name: $0, state: .idle) }
             // A Pi-looking title must not substitute for official agent data.
             pane.title = "π - pi terminal"
             fixture.setPane(pane)
             let refreshed = await fixture.harness.waitUntil {
-                self.presetLabel(in: panel)?.text == "当前预设：通用"
+                self.presetLabel(in: panel)?.text == MudiL10n.text("当前预设：") + TerminalAgentPreset.generic.title
             }
             XCTAssertTrue(refreshed)
             XCTAssertEqual(try presetPicker(in: panel).selectedSegmentIndex, 0)
@@ -72,38 +74,38 @@ final class Phase16AgentActionsTests: XCTestCase {
         let picker = try presetPicker(in: panel)
         picker.selectedSegmentIndex = 0
         picker.sendActions(for: .valueChanged)
-        XCTAssertEqual(presetLabel(in: panel)?.text, "当前预设：通用")
+        XCTAssertEqual(presetLabel(in: panel)?.text, MudiL10n.text("当前预设：") + TerminalAgentPreset.generic.title)
 
         var refreshed = fixture.pane
         refreshed.title = "refreshed title"
         refreshed.agent = Agent(name: "pi", state: .working)
         fixture.setPane(refreshed)
         await settle()
-        XCTAssertEqual(presetLabel(in: panel)?.text, "当前预设：通用",
+        XCTAssertEqual(presetLabel(in: panel)?.text, MudiL10n.text("当前预设：") + TerminalAgentPreset.generic.title,
                        "A status/title refresh must not undo a manual choice")
 
         let other = Pane(id: "phase16:other", title: "other", agent: refreshed.agent)
         fixture.setPane(other)
         let otherTerminal = try await fixture.terminal(excluding: terminal)
         let otherPanel = try openPanel(on: otherTerminal)
-        XCTAssertEqual(presetLabel(in: otherPanel)?.text, "当前预设：Pi",
+        XCTAssertEqual(presetLabel(in: otherPanel)?.text, MudiL10n.text("当前预设：") + "Pi",
                        "A new pane must use its own recommendation")
 
         var unknown = other
         unknown.agent = nil
         fixture.setPane(unknown)
         let updated = await fixture.harness.waitUntil {
-            self.presetLabel(in: otherPanel)?.text == "当前预设：通用"
+            self.presetLabel(in: otherPanel)?.text == MudiL10n.text("当前预设：") + TerminalAgentPreset.generic.title
         }
         XCTAssertTrue(updated)
         let otherPicker = try presetPicker(in: otherPanel)
         otherPicker.selectedSegmentIndex = 1
         otherPicker.sendActions(for: .valueChanged)
-        XCTAssertEqual(presetLabel(in: otherPanel)?.text, "当前预设：Pi",
+        XCTAssertEqual(presetLabel(in: otherPanel)?.text, MudiL10n.text("当前预设：") + "Pi",
                        "Manual built-in presets remain available without detection")
         otherPicker.selectedSegmentIndex = 2
         otherPicker.sendActions(for: .valueChanged)
-        XCTAssertEqual(presetLabel(in: otherPanel)?.text, "当前预设：Claude Code")
+        XCTAssertEqual(presetLabel(in: otherPanel)?.text, MudiL10n.text("当前预设：") + "Claude Code")
     }
 
     func testClaudeCodePanePresentsVerifiedActionsAndCommands() async throws {
@@ -115,7 +117,7 @@ final class Phase16AgentActionsTests: XCTestCase {
         let terminal = try await fixture.terminal()
         let panel = try openPanel(on: terminal)
         let ready = await fixture.harness.waitUntil {
-            self.presetLabel(in: panel)?.text == "当前预设：Claude Code"
+            self.presetLabel(in: panel)?.text == MudiL10n.text("当前预设：") + "Claude Code"
         }
         XCTAssertTrue(ready)
         XCTAssertEqual(try presetPicker(in: panel).selectedSegmentIndex, 2)
@@ -128,7 +130,7 @@ final class Phase16AgentActionsTests: XCTestCase {
         let text = try XCTUnwrap(phase7View(with: "terminal-agent-command-text", in: panel) as? UILabel)
         XCTAssertEqual(text.text, "/rewind")
         let warning = try XCTUnwrap(phase7View(with: "terminal-agent-command-warning", in: panel) as? UILabel)
-        XCTAssertTrue(warning.text?.contains("回滚代码和/或对话") == true)
+        XCTAssertTrue(warning.text?.contains(MudiL10n.text("将追加到远端当前输入并发送 Enter。/rewind 会回滚代码和/或对话；/clear 会结束当前上下文并开启新会话。请确认编辑器为空。")) == true)
         try button("terminal-agent-command-cancel", in: panel).sendActions(for: .touchUpInside)
         let sent = await fixture.channel.sent()
         XCTAssertEqual(sent, [])
@@ -175,6 +177,68 @@ final class Phase16AgentActionsTests: XCTestCase {
         XCTAssertEqual(restored.models.count, 2)
         XCTAssertTrue(restored.models[1].applies(to: nil))
         XCTAssertEqual(restored.models[1].command, "/model custom:id --flag")
+    }
+
+    func testGlassAgentDockVisualsInBothAppearances() async throws {
+        let fixture = try Phase16TerminalFixture()
+        defer { fixture.close() }
+        let terminal = try await fixture.terminal()
+        let panel = try openPanel(on: terminal)
+        let bar = try XCTUnwrap(terminal.shortcutBar)
+        for appearance in [UIUserInterfaceStyle.light, .dark] {
+            fixture.harness.window.overrideUserInterfaceStyle = appearance
+            fixture.harness.window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(300))
+            let backdrop = try XCTUnwrap(phase7View(with: "terminal-shortcut-backdrop", in: bar) as? UIVisualEffectView)
+            XCTAssertNotNil(backdrop.effect)
+            XCTAssertEqual(backdrop.layer.cornerRadius, 24)
+            let chrome = try XCTUnwrap(bar.superview)
+            XCTAssertGreaterThanOrEqual(panel.convert(panel.bounds, to: chrome).minY, 0)
+            XCTAssertLessThanOrEqual(panel.convert(panel.bounds, to: chrome).maxY, chrome.bounds.height + 0.5)
+            let size = CGSize(width: bar.bounds.width, height: bar.preferredHeight)
+            let image = UIGraphicsImageRenderer(size: size).image { context in
+                context.cgContext.setFillColor((appearance == .dark ? UIColor(white: 0.1, alpha: 1) : UIColor(white: 0.95, alpha: 1)).cgColor)
+                context.cgContext.fill(CGRect(origin: .zero, size: size))
+                bar.drawHierarchy(in: CGRect(origin: .zero, size: size), afterScreenUpdates: true)
+            }
+            let attachment = XCTAttachment(image: image)
+            attachment.name = "glass-agent-" + (appearance == .dark ? "dark" : "light")
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+    }
+
+    func testAgentDockKeepsKeyboardReservationAndThinkingRequiresConfirmation() async throws {
+        let fixture = try Phase16TerminalFixture()
+        defer { fixture.close() }
+        let terminal = try await fixture.terminal()
+        let bar = try XCTUnwrap(terminal.shortcutBar)
+        let chrome = try XCTUnwrap(terminal.superview as? TerminalChromeView)
+        let frame = CGRect(x: 0, y: fixture.harness.window.bounds.height - 300, width: fixture.harness.window.bounds.width, height: 300)
+        terminal.updateShortcutBarOffset(keyboardFrameEnd: frame)
+        fixture.harness.window.layoutIfNeeded()
+        let reservation = chrome.reservedBottom
+        let originalFrame = terminal.frame
+        let panel = try openPanel(on: terminal)
+        terminal.updateShortcutBarOffset(keyboardFrameEnd: CGRect(x: 0, y: fixture.harness.window.bounds.height, width: frame.width, height: 300))
+        fixture.harness.window.layoutIfNeeded()
+        XCTAssertTrue(bar.isAgentPanelDocked)
+        XCTAssertEqual(chrome.reservedBottom, reservation, accuracy: 0.5)
+        XCTAssertEqual(terminal.frame, originalFrame)
+        XCTAssertGreaterThan(panel.convert(panel.bounds, to: chrome).minY, bar.convert(CGPoint.zero, to: chrome).y)
+        let thinking = try XCTUnwrap(phase7View(with: "terminal-agent-thinking", in: panel) as? UISegmentedControl)
+        XCTAssertEqual(thinking.selectedSegmentIndex, UISegmentedControl.noSegment, "We do not claim remote thinking state")
+        thinking.selectedSegmentIndex = 2
+        thinking.sendActions(for: .valueChanged)
+        let sent = await fixture.channel.sent()
+        XCTAssertTrue(sent.isEmpty)
+        let command = try XCTUnwrap(phase7View(with: "terminal-agent-command-text", in: panel) as? UILabel)
+        XCTAssertEqual(command.text, "/thinking medium")
+        try button("terminal-agent-command-cancel", in: panel).sendActions(for: .touchUpInside)
+        XCTAssertFalse(panel.isHidden)
+        try button("terminal-agent-panel-keyboard", in: panel).sendActions(for: .touchUpInside)
+        XCTAssertFalse(bar.isAgentPanelDocked)
+        XCTAssertTrue(terminal.isFirstResponder)
     }
 
     func testGenericKeyActionSendsBytesAndDismissesPanel() throws {
@@ -238,7 +302,7 @@ final class Phase16AgentActionsTests: XCTestCase {
         unknown.agent = nil
         fixture.setPane(unknown)
         let generic = await fixture.harness.waitUntil {
-            self.presetLabel(in: panel)?.text == "当前预设：通用"
+            self.presetLabel(in: panel)?.text == MudiL10n.text("当前预设：") + TerminalAgentPreset.generic.title
         }
         XCTAssertTrue(generic)
         staleConfirm.sendActions(for: .touchUpInside)
@@ -248,7 +312,7 @@ final class Phase16AgentActionsTests: XCTestCase {
 
         fixture.setPane(fixture.pane)
         let pi = await fixture.harness.waitUntil {
-            self.presetLabel(in: panel)?.text == "当前预设：Pi"
+            self.presetLabel(in: panel)?.text == MudiL10n.text("当前预设：") + "Pi"
         }
         XCTAssertTrue(pi)
         try action("reload", in: panel).sendActions(for: .touchUpInside)

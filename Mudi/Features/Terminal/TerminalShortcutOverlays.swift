@@ -142,8 +142,8 @@ final class MudiTerminalDPadOverlay: UIView {
             case .enter: "Enter"
             case .pageUp: "Page Up"
             case .pageDown: "Page Down"
-            case .backspace: "退格"
-            case .clearScreen: "清屏"
+            case .backspace: MudiL10n.text("退格")
+            case .clearScreen: MudiL10n.text("清屏")
             case .home: "Home"
             case .end: "End"
             }
@@ -255,7 +255,7 @@ final class MudiTerminalDPadOverlay: UIView {
         dragHandle.addSubview(grip)
         lockButton.translatesAutoresizingMaskIntoConstraints = false
         lockButton.setImage(MudiIcon.unlock.uiImage, for: .normal)
-        lockButton.accessibilityLabel = "锁定方向键位置"
+        lockButton.accessibilityLabel = MudiL10n.text("锁定方向键位置")
         lockButton.accessibilityIdentifier = "terminal-dpad-lock"
         lockButton.addTarget(self, action: #selector(toggleLock), for: .touchUpInside)
         dragHandle.addSubview(lockButton)
@@ -274,7 +274,7 @@ final class MudiTerminalDPadOverlay: UIView {
     @objc private func toggleLock() {
         isLocked.toggle()
         lockButton.setImage(isLocked ? UIImage(systemName: "lock.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 12)) : MudiIcon.unlock.uiImage, for: .normal)
-        lockButton.accessibilityValue = isLocked ? "已锁定" : "可拖动"
+        lockButton.accessibilityValue = isLocked ? MudiL10n.text("已锁定") : MudiL10n.text("可拖动")
         lockButton.accessibilityTraits = isLocked ? [.button, .selected] : [.button]
         updateHandle()
     }
@@ -349,7 +349,7 @@ final class MudiTerminalDPadOverlay: UIView {
     }
     private func configureCornerMenu(_ button: UIButton, index: Int) {
         let choices: [Command] = [.backspace, .clearScreen, .pageUp, .pageDown, .home, .end]
-        button.menu = UIMenu(title: "角键操作", children: choices.map { command in
+        button.menu = UIMenu(title: MudiL10n.text("角键操作"), children: choices.map { command in
             UIAction(title: command.title, state: cornerCommands[index] == command ? .on : .off) { [weak self] _ in
                 self?.setCornerCommand(command, index: index)
             }

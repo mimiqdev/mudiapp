@@ -68,7 +68,7 @@ final class UIPolishRenderTests: XCTestCase {
             await harness.settle()
             let picker = try XCTUnwrap(phase7Descendants(of: harness.controller.view)
                 .compactMap { $0 as? UISegmentedControl }.first { $0.numberOfSegments == 3 })
-            XCTAssertEqual((0..<3).map { picker.titleForSegment(at: $0) }, ["短", "中", "长"])
+            XCTAssertEqual((0..<3).map { picker.titleForSegment(at: $0) }, ["短", "中", "长"].map { MudiL10n.text($0) })
             XCTAssertEqual(picker.selectedSegmentIndex, 1)
             picker.selectedSegmentIndex = 2
             picker.sendActions(for: .valueChanged)

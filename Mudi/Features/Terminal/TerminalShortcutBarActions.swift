@@ -21,11 +21,11 @@ extension MudiTerminalShortcutBar {
     func style(_ button: UIButton?) {
         guard let button else { return }
         let cap = (button as? MudiKeyButton)?.cap ?? button
-        cap.backgroundColor = button.isSelected ? MudiPalette.inkUI : normalBackgroundColor
+        cap.backgroundColor = button.isSelected ? MudiPalette.inkUI : normalBackgroundColor.withAlphaComponent(0.5)
         button.tintColor = button.isSelected ? MudiPalette.canvasUI : foregroundColor
         button.setTitleColor(button.tintColor, for: .normal)
-        cap.layer.cornerRadius = 9
-        cap.layer.borderWidth = button.isSelected ? 0 : 1
+        cap.layer.cornerRadius = 17
+        cap.layer.borderWidth = 0
         cap.layer.borderColor = MudiPalette.borderUI.resolvedColor(with: traitCollection).cgColor
         button.accessibilityTraits = button.isSelected ? [.button, .selected] : [.button]
     }
@@ -182,6 +182,7 @@ extension MudiTerminalShortcutBar {
         synchronizeModifierKeyboard()
         setNeedsLayout()
         layoutIfNeeded()
+        if superview != nil { terminalView?.updateShortcutBarOffset() }
     }
 
     @objc func toggleControl() {
