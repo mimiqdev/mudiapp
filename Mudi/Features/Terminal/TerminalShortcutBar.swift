@@ -1,4 +1,5 @@
 import UIKit
+import GameController
 @preconcurrency import SwiftTerm
 
 enum MudiShortcutPopup: Equatable { case none, ctrlCombo, dPad, agentActions }
@@ -41,6 +42,11 @@ final class MudiTerminalShortcutBar: UIView {
     var dpadRelativePosition: CGPoint?
     weak var dpadAnchorView: UIView?
     var lastDPadSafeBounds = CGRect.zero
+    var isHardwareKeyboardConnected: () -> Bool = { GCKeyboard.coalesced != nil }
+    var modifierInput: TerminalModifierInput?
+    var isUpdatingModifierInput = false
+    var modifierKeyboard: TerminalModifierKeyboard?
+    var modifierKeyboardSession: ObjectIdentifier?
     var composer: MudiComposerCard?
     var composeRestoresTerminalFocus = false
     var composeTargetLabel = "Terminal"
@@ -66,8 +72,10 @@ final class MudiTerminalShortcutBar: UIView {
             NotificationCenter.default.addObserver(self, selector: #selector(modifierDidReset(_:)), name: name, object: terminalView)
         }
         installKeyboardGlyphObserver()
+        NotificationCenter.default.addObserver(self, selector: #selector(retireModifierKeyboard), name: UIApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(retireModifierKeyboard), name: .GCKeyboardDidConnect, object: nil)
         refreshKeyboardGlyph()
-        comboPopup.onCombo = { [weak self] in self?.send([$0]) }
+        comboPopup.onCombo = { [weak self] in self?.send($0) }
         dpadOverlay.onCommand = { [weak self] in self?.handle($0) }
         configureAgentActions()
     }
@@ -88,6 +96,11 @@ final class MudiTerminalShortcutBar: UIView {
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         if super.point(inside: point, with: event) { return true }
         return [comboPopup, dpadOverlay, agentActionsPanel].contains { !$0.isHidden && $0.frame.contains(point) }
+    }
+    @objc func retireModifierKeyboard() { dismissAllPopupsAndClearModifiers() }
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil { retireModifierKeyboard() }
     }
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -164,6 +177,7 @@ final class MudiTerminalShortcutBar: UIView {
         hint.text = "⇧"; hint.font = MudiTypography.uiFont(8); hint.textColor = MudiPalette.muteUI
         hint.isUserInteractionEnabled = false; tab.addSubview(hint)
         controlButton = addButton(title: "Ctrl", identifier: "control", label: "Control modifier", action: #selector(toggleControl))
+        controlButton?.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(handleControlLongPress(_:))))
         dpadButton = addButton(icon: .move, identifier: "dpad", label: "Direction pad", action: #selector(toggleDPad))
         addButton(icon: .compose, identifier: "compose", label: "Compose", action: #selector(openCompose))
         addButton(icon: .paste, identifier: "paste", label: "Paste", action: #selector(pasteClipboard))

@@ -21,6 +21,14 @@ final class UIPolishInteractionTests: XCTestCase {
         let input = try XCTUnwrap(phase7View(with: "terminal-compose-input", in: bar) as? UITextView,
                                  "Composer must be inline in the shortcut bar")
         let send = try XCTUnwrap(phase7View(with: "terminal-compose-send", in: bar) as? UIButton)
+        XCTAssertNil(phase7View(with: "terminal-compose-escape", in: bar),
+                     "Compose editing must not expose a remote Escape action")
+        XCTAssertNil(phase7View(with: "terminal-compose-dpad", in: bar),
+                     "Compose editing must not expose remote D-pad actions")
+        for localTool in ["history", "picker", "insert", "snippet", "target", "clear"] {
+            XCTAssertNotNil(phase7View(with: "terminal-compose-\(localTool)", in: bar),
+                            "Compose keeps local editing tool \(localTool)")
+        }
         let text = (1...21).map { "line \($0)" }.joined(separator: "\n")
         input.text = text
         input.delegate?.textViewDidChange?(input)

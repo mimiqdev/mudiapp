@@ -84,10 +84,6 @@ final class MudiComposerCard: UIView, UITextViewDelegate {
             pinned.centerYAnchor.constraint(equalTo: toolbarScroll.centerYAnchor)
         ])
         addTool(.composeClose, "关闭", id: "close") { [weak bar] _ in bar?.closeCompose() }
-        addTool(nil, "Escape", id: "escape", title: "Esc") { [weak bar] _ in bar?.sendEscape() }
-        addTool(.composeMove, "方向键", id: "dpad") { [weak bar] button in
-            bar?.dpadAnchorView = button; bar?.toggleDPad()
-        }
         menuButtons["history"] = addTool(.composeHistory, "历史 / 草稿", id: "history")
         addTool(.composeLayers, "选择 Pane", id: "picker") { [weak bar] _ in bar?.closeCompose(); bar?.jumpToPanes() }
         menuButtons["insert"] = addTool(.composePlus, "插入", id: "insert")

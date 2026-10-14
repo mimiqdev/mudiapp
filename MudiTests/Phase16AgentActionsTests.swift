@@ -314,7 +314,7 @@ final class Phase16AgentActionsTests: XCTestCase {
         XCTAssertEqual(recorder.sentBytes, [[0x1b, 0x5b, 0x5a], [0x09], [0x1b]])
         bar.toggleControl()
         XCTAssertTrue(panel.isHidden, "Agent Actions shares the existing one-popup-at-a-time policy")
-        XCTAssertFalse(bar.comboPopup.isHidden)
+        XCTAssertTrue(bar.comboPopup.isHidden)
         bar.toggleDPad()
         XCTAssertTrue(bar.comboPopup.isHidden)
         XCTAssertFalse(bar.dpadOverlay.isHidden)

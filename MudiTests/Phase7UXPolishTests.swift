@@ -442,83 +442,27 @@ final class Phase7UXPolishTests: XCTestCase {  // pi-lens-ignore: type_body_leng
         )
     }
 
-    func testControlLatchShowsCombosSendsControlBytesAndClears() throws {
+    func testControlLatchUsesModifierKeyboardSendsModifiedNavigationAndClears() throws {
         let terminalView = ShellTerminalView(frame: .zero)
-        let windowHarness = Phase7TerminalViewHarness(terminalView: terminalView)
-        defer {
-            windowHarness.close()
-            terminalView.stop()
-        }
+        let harness = Phase7TerminalViewHarness(terminalView: terminalView)
+        defer { harness.close(); terminalView.stop() }
         let recorder = Phase7TerminalInputRecorder()
         terminalView.terminalDelegate = recorder
         let bar = try XCTUnwrap(terminalView.shortcutBar)
-        let controlButton = try XCTUnwrap(
-            phase7View(with: "terminal-shortcut-control", in: bar) as? UIButton
-        )
-
-        if let popup = phase7View(
-            with: "terminal-control-combo-popup",
-            near: terminalView
-        ) {
-            XCTAssertTrue(popup.isHidden)
-        }
-
-        controlButton.sendActions(for: .touchUpInside)
-        XCTAssertTrue(controlButton.isSelected)
-        let popup = try XCTUnwrap(
-            phase7View(with: "terminal-control-combo-popup", near: terminalView)
-        )
-        XCTAssertFalse(popup.isHidden)
-
-        let expectedControlBytes: [(String, UInt8)] = [
-            ("C", 0x03),
-            ("D", 0x04),
-            ("L", 0x0c),
-            ("A", 0x01),
-            ("E", 0x05),
-            ("U", 0x15),
-            ("K", 0x0b),
-            ("W", 0x17),
-            ("J", 0x0a),
-        ]
-
-        for (index, (label, expectedByte)) in expectedControlBytes.enumerated() {
-            if index > 0 {
-                if !controlButton.isSelected {
-                    controlButton.sendActions(for: .touchUpInside)
-                }
-                let visiblePopup = try XCTUnwrap(
-                    phase7View(
-                        with: "terminal-control-combo-popup",
-                        near: terminalView
-                    )
-                )
-                XCTAssertFalse(visiblePopup.isHidden)
-            }
-
-            let activePopup = try XCTUnwrap(
-                phase7View(
-                    with: "terminal-control-combo-popup",
-                    near: terminalView
-                )
-            )
-            let comboButton = try XCTUnwrap(
-                phase7Buttons(in: activePopup).first {
-                    $0.title(for: .normal) == label
-                        || $0.accessibilityLabel == label
-                },
-                "The Ctrl popup is missing the \(label) combo"
-            )
-            let inputCount = recorder.sentBytes.count
-            comboButton.sendActions(for: .touchUpInside)
-            XCTAssertEqual(recorder.sentBytes.count, inputCount + 1)
-            XCTAssertEqual(recorder.sentBytes.last, [expectedByte])
-            XCTAssertFalse(controlButton.isSelected)
-            let hiddenPopup = phase7View(
-                with: "terminal-control-combo-popup",
-                near: terminalView
-            )
-            XCTAssertTrue(hiddenPopup == nil || hiddenPopup?.isHidden == true)
+        bar.isHardwareKeyboardConnected = { false }
+        for (key, bytes) in [("Home", [UInt8]("\u{1b}[1;5H".utf8)), ("End", [UInt8]("\u{1b}[1;5F".utf8)),
+                             ("PgUp", [UInt8]("\u{1b}[5;5~".utf8)), ("PgDn", [UInt8]("\u{1b}[6;5~".utf8))] {
+            bar.toggleControl()
+            XCTAssertTrue(bar.controlButton?.isSelected == true)
+            XCTAssertTrue(bar.comboPopup.isHidden)
+            let keyboard = try XCTUnwrap(bar.modifierKeyboard)
+            XCTAssertTrue(bar.modifierInput?.inputAccessoryView === keyboard)
+            XCTAssertNil(terminalView.inputView)
+            let button = try XCTUnwrap(phase7View(with: "modifier-key-" + key, in: keyboard) as? UIButton)
+            button.sendActions(for: .touchUpInside)
+            XCTAssertEqual(recorder.sentBytes.last, bytes)
+            XCTAssertFalse(terminalView.controlModifier)
+            XCTAssertNil(terminalView.inputView)
         }
     }
 

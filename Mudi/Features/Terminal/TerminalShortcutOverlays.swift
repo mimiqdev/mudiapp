@@ -1,21 +1,25 @@
 import UIKit
 
-/// Floating popup of common Ctrl combo key caps shown while Ctrl is latched.
-/// Tapping a combo sends the matching control byte through the terminal
-/// input path and clears the latch.
+/// Floating popup of navigation caps the soft keyboard cannot produce,
+/// shown while Ctrl is latched. Tapping a cap sends the matching escape
+/// sequence through the terminal input path and clears the latch.
 @MainActor
 final class MudiControlComboPopup: UIView {
-    /// Plan contract note: the active plan enumerates the eight caps
-    /// C D L A E U K W; Ctrl+J (0x0A) was added on explicit user request
-    /// (device-feedback round 3) and the contract test was updated in
-    /// step. Plan-text amendment is tracked by the reviewer.
-    static let combos: [(label: String, byte: UInt8)] = [
-        ("C", 0x03), ("D", 0x04), ("L", 0x0C), ("A", 0x01),
-        ("E", 0x05), ("U", 0x15), ("K", 0x0B), ("W", 0x17),
-        ("J", 0x0A),
+    /// Phase 16 latch rework: plain Ctrl+letter combos moved to the Ctrl
+    /// latch + soft keyboard; the popup keeps only navigation caps
+    /// (Home/End/PgUp/PgDn and their Ctrl variants) per user confirmation.
+    static let combos: [(label: String, accessibility: String, bytes: [UInt8])] = [
+        ("Home", "Home", [0x1b, 0x5b, 0x48]),
+        ("End", "End", [0x1b, 0x5b, 0x46]),
+        ("⌃Home", "Control Home", [0x1b, 0x5b, 0x31, 0x3b, 0x35, 0x48]),
+        ("⌃End", "Control End", [0x1b, 0x5b, 0x31, 0x3b, 0x35, 0x46]),
+        ("PgUp", "Page Up", [0x1b, 0x5b, 0x35, 0x7e]),
+        ("PgDn", "Page Down", [0x1b, 0x5b, 0x36, 0x7e]),
+        ("⌃PgUp", "Control Page Up", [0x1b, 0x5b, 0x35, 0x3b, 0x35, 0x7e]),
+        ("⌃PgDn", "Control Page Down", [0x1b, 0x5b, 0x36, 0x3b, 0x35, 0x7e]),
     ]
 
-    var onCombo: ((UInt8) -> Void)?
+    var onCombo: (([UInt8]) -> Void)?
     private var comboButtons: [UIButton] = []
     private let stackView = UIStackView()
     private let scrollView = MudiKeyScrollView()
@@ -91,12 +95,12 @@ final class MudiControlComboPopup: UIView {
         ).cgPath
     }
 
-    private func comboButton(for combo: (label: String, byte: UInt8)) -> UIButton {
+    private func comboButton(for combo: (label: String, accessibility: String, bytes: [UInt8])) -> UIButton {
         let button = MudiKeyButton(type: .custom)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle(combo.label, for: .normal)
         button.titleLabel?.font = MudiTypography.uiFont(15, weight: .semibold)
-        button.accessibilityLabel = combo.label
+        button.accessibilityLabel = combo.accessibility
         button.cap.backgroundColor = MudiPalette.keyUI
         button.tintColor = MudiPalette.inkUI
         button.cap.layer.borderWidth = 1
@@ -119,7 +123,7 @@ final class MudiControlComboPopup: UIView {
 
     @objc private func comboTapped(_ sender: UIButton) {
         guard let index = comboButtons.firstIndex(of: sender) else { return }
-        onCombo?(Self.combos[index].byte)
+        onCombo?(Self.combos[index].bytes)
     }
 }
 

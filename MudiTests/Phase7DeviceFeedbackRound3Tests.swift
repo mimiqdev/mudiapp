@@ -185,9 +185,9 @@ final class Phase7DeviceFeedbackRound3Tests: XCTestCase {
         }
     }
 
-    // MARK: 3b - Ctrl+J combo
+    // MARK: 3b - navigation combo popup (latch rework)
 
-    func testComboPopupIncludesCtrlJ() throws {
+    func testComboPopupSendsNavigationSequences() throws {
         let terminalView = ShellTerminalView(frame: .zero)
         let harness = Phase7TerminalViewHarness(terminalView: terminalView)
         let recorder = Phase7TerminalInputRecorder()
@@ -209,17 +209,66 @@ final class Phase7DeviceFeedbackRound3Tests: XCTestCase {
         let comboButtons = phase7Buttons(in: popup)
         XCTAssertEqual(
             comboButtons.map { $0.title(for: .normal) },
-            ["C", "D", "L", "A", "E", "U", "K", "W", "J"],
-            "The combo set is C D L A E U K W J"
+            ["Home", "End", "⌃Home", "⌃End", "PgUp", "PgDn", "⌃PgUp", "⌃PgDn"],
+            "The popup keeps only the navigation caps the soft keyboard cannot produce"
         )
 
-        let jCombo = try XCTUnwrap(comboButtons.last)
-        jCombo.sendActions(for: .touchUpInside)
+        comboButtons[4].sendActions(for: .touchUpInside)
         XCTAssertEqual(
             recorder.sentBytes.last,
-            [0x0A],
-            "Ctrl+J must send 0x0A"
+            [0x1b, 0x5b, 0x35, 0x7e],
+            "PgUp must send CSI 5 ~"
         )
+        controlButton.sendActions(for: .touchUpInside)
+        comboButtons[2].sendActions(for: .touchUpInside)
+        XCTAssertEqual(
+            recorder.sentBytes.last,
+            [0x1b, 0x5b, 0x31, 0x3b, 0x35, 0x48],
+            "Ctrl+Home must send CSI 1;5 H"
+        )
+    }
+
+    // MARK: 3c - modifier latches
+
+    func testCtrlLatchConvertsSoftKeyboardLetterAndUnlatches() throws {
+        let terminalView = ShellTerminalView(frame: .zero)
+        let harness = Phase7TerminalViewHarness(terminalView: terminalView)
+        let recorder = Phase7TerminalInputRecorder()
+        terminalView.terminalDelegate = recorder
+        defer {
+            harness.close()
+            terminalView.stop()
+        }
+        let bar = try XCTUnwrap(terminalView.shortcutBar)
+        harness.window.layoutIfNeeded()
+        bar.toggleControl()
+        XCTAssertTrue(terminalView.controlModifier)
+        terminalView.insertText("a")
+        XCTAssertEqual(recorder.sentBytes.last, [0x01], "Ctrl latch must turn 'a' into 0x01")
+        XCTAssertFalse(terminalView.controlModifier, "The latch is single-shot")
+    }
+
+    func testAltLatchSendsESCPrefixAndUnlatches() throws {
+        let terminalView = ShellTerminalView(frame: .zero)
+        let harness = Phase7TerminalViewHarness(terminalView: terminalView)
+        let recorder = Phase7TerminalInputRecorder()
+        terminalView.terminalDelegate = recorder
+        defer {
+            harness.close()
+            terminalView.stop()
+        }
+        let bar = try XCTUnwrap(terminalView.shortcutBar)
+        harness.window.layoutIfNeeded()
+        bar.toggleAltLatch()
+        XCTAssertTrue(terminalView.metaModifier)
+        XCTAssertEqual(
+            bar.controlButton?.title(for: .normal), "Alt",
+            "The cap must read Alt while the Alt latch is on"
+        )
+        terminalView.insertText("b")
+        XCTAssertEqual(recorder.sentBytes.suffix(2), [[0x1b], Array("b".utf8)], "Alt latch must ESC-prefix the letter")
+        XCTAssertFalse(terminalView.metaModifier, "The Alt latch is single-shot")
+        XCTAssertEqual(bar.controlButton?.title(for: .normal), "Ctrl")
     }
 
     // MARK: 4 - compact D-pad footprint

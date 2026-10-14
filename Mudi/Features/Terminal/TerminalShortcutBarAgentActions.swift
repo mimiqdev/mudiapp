@@ -48,6 +48,8 @@ extension MudiTerminalShortcutBar {
     }
 
     func updateAgentActionsContext(_ context: TerminalAgentActionsContext?) {
+        if agentActionsState.context != nil && context == nil { dismissAllPopupsAndClearModifiers() }
+        if let old = agentActionsState.context, let context, !old.hasSameScopeAndType(as: context) { dismissAllPopupsAndClearModifiers() }
         agentActionsState.updateContext(context)
         agentActionsPanel.render(agentActionsState)
     }

@@ -26,6 +26,7 @@ protocol TerminalHost: AnyObject {
     func sendCursorKey(normal: [UInt8], application: [UInt8], final: UInt8)
     func sendComposedText(_ text: String, bracketedPaste: Bool, appendReturn: Bool)
     func updateShortcutBarOffset(keyboardFrameEnd: CGRect?, animationDuration: TimeInterval, animationCurve: UInt)
+    var isModifierFocusHandoff: Bool { get set }
     func updateInputFocus(isAllowed: Bool)
     func requestTerminalRelayout()
     func updateFont(familyName: String?, pointSize: Double)
