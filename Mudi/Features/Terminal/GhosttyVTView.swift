@@ -14,6 +14,7 @@ final class GhosttyVTView: UIView {
 
     var isModifierFocusHandoff = false
 
+    var performanceProbe: RendererPerformanceProbe?
     let terminal: GhosttyVt.Terminal
     private(set) var screen = GhosttyVTScreen()
     private(set) var font: UIFont
@@ -152,14 +153,21 @@ final class GhosttyVTView: UIView {
     /// into the screen or discarded by the renderer.
     @discardableResult
     func feed(_ data: Data) throws -> [GhosttyVt.Terminal.Event] {
+        let feedStart = performanceProbe == nil ? 0 : CACurrentMediaTime()
         terminal.feed(data)
+        performanceProbe?.record("vt_feed", since: feedStart)
         try refresh()
         return terminal.drainEvents()
     }
 
     func refresh() throws {
         let previous = terminalSelection == nil ? nil : screen
-        screen.apply(try terminal.update())
+        let frameStart = performanceProbe == nil ? 0 : CACurrentMediaTime()
+        let frame = try terminal.update()
+        performanceProbe?.record("vt_frame_extract", since: frameStart)
+        let cacheStart = performanceProbe == nil ? 0 : CACurrentMediaTime()
+        screen.apply(frame)
+        performanceProbe?.record("screen_cache_apply", since: cacheStart)
         // A colour-only theme update retains selection. Reflow/output/scroll
         // that actually changes cell text invalidates stale viewport indices.
         if let previous, !GhosttyVTCellSelection.contentMatches(previous, screen) { clearTerminalSelection() }
@@ -217,6 +225,8 @@ final class GhosttyVTView: UIView {
     /// UIFont descriptor carries Mudi's registered Nerd Font cascade; CoreText
     /// chooses fallback glyph runs instead of a home-grown shaper.
     func glyphLine(for cell: TerminalFrame.Cell, foreground: UIColor) -> CTLine {
+        let start = performanceProbe == nil ? 0 : CACurrentMediaTime()
+        defer { performanceProbe?.record("coretext_construct", since: start) }
         var traits = font.fontDescriptor.symbolicTraits
         if cell.style.isBold { traits.insert(.traitBold) }
         if cell.style.isItalic { traits.insert(.traitItalic) }
@@ -230,6 +240,8 @@ final class GhosttyVTView: UIView {
     }
 
     override func draw(_ rect: CGRect) {
+        let start = performanceProbe == nil ? 0 : CACurrentMediaTime()
+        defer { performanceProbe?.record("draw_total_inclusive", since: start) }
         guard let context = UIGraphicsGetCurrentContext(), let theme = screen.theme else { return }
         context.setFillColor(theme.background.uiColor.cgColor)
         context.fill(bounds)
