@@ -102,6 +102,7 @@ extension ShellTerminalView {
         bar.removeFromSuperview()
         shortcutBarBottomConstraint = nil
         container.addSubview(bar)
+        bar.installPopupDismissGesture(on: container)
         bar.translatesAutoresizingMaskIntoConstraints = false
         let bottomConstraint = bar.bottomAnchor.constraint(
             equalTo: container.bottomAnchor

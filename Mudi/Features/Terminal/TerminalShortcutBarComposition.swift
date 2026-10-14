@@ -14,7 +14,7 @@ extension MudiTerminalShortcutBar {
         // - The visible marked-text pill is idiom-gated: iPad hosts no
         //   composition text presentation (hardware keyboard is the norm).
         let hasMarkedText = markedText?.isEmpty == false
-        if hasMarkedText { dismissAgentActions() }
+        if hasMarkedText { dismissAllPopupsAndClearModifiers() }
         let text = isCompositionStripSuppressed
             ? nil
             : (hasMarkedText ? markedText : nil)

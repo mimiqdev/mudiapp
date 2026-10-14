@@ -33,7 +33,7 @@ extension GhosttyVTView: TerminalHost {
     func updateInputFocus(isAllowed: Bool) {
         isInputFocusAllowed = isAllowed
         if !isAllowed {
-            shortcutBar?.dismissAgentActions()
+            shortcutBar?.dismissAllPopupsAndClearModifiers()
             shortcutBar?.composer?.input.resignFirstResponder()
             _ = resignFirstResponder()
         } else {
@@ -71,6 +71,7 @@ extension GhosttyVTView: TerminalHost {
         onHostError = onError
         onHostClosed = onClosed
         guard self.session.map(ObjectIdentifier.init) != ObjectIdentifier(session) else { return }
+        shortcutBar?.dismissAllPopupsAndClearModifiers()
         // Keep the same view, VT state and first responder. Retire only the
         // old pump/input generation; the connection owner handles disconnect.
         // A key held on the old session must not repeat into the new PTY via
@@ -81,7 +82,7 @@ extension GhosttyVTView: TerminalHost {
         start(session: session, onError: onError, onClosed: onClosed)
     }
     func stop() {
-        shortcutBar?.dismissAgentActions()
+        shortcutBar?.dismissAllPopupsAndClearModifiers()
         stopHardwareKeyRepeat()
         suppressFocusCallbacks = true
         shortcutBar?.composer?.input.resignFirstResponder()
@@ -110,7 +111,11 @@ extension GhosttyVTView: TerminalHost {
                 let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? TimeInterval ?? 0
                 let curve = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 0
                 MainActor.assumeIsolated {
-                    self?.updateShortcutBarOffset(keyboardFrameEnd: frame, animationDuration: duration, animationCurve: curve)
+                    guard let self else { return }
+                    if let frame, frame.minY < self.bounds.maxY - 0.5 {
+                        self.shortcutBar?.dismissAllPopups()
+                    }
+                    self.updateShortcutBarOffset(keyboardFrameEnd: frame, animationDuration: duration, animationCurve: curve)
                 }
             })
     }
@@ -119,6 +124,7 @@ extension GhosttyVTView: TerminalHost {
         if bar.superview !== container {
             bar.removeFromSuperview()
             container.addSubview(bar)
+            bar.installPopupDismissGesture(on: container)
             bar.translatesAutoresizingMaskIntoConstraints = false
             let bottom = bar.bottomAnchor.constraint(equalTo: container.bottomAnchor)
             let height = bar.heightAnchor.constraint(equalToConstant: bar.preferredHeight)

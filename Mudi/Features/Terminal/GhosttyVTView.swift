@@ -12,6 +12,8 @@ final class GhosttyVTView: UIView {
         case gridTooLarge
     }
 
+    var isModifierFocusHandoff = false
+
     let terminal: GhosttyVt.Terminal
     private(set) var screen = GhosttyVTScreen()
     private(set) var font: UIFont
@@ -98,7 +100,8 @@ final class GhosttyVTView: UIView {
     override func becomeFirstResponder() -> Bool {
         guard isInputFocusAllowed else { return false }
         let result = super.becomeFirstResponder()
-        if result, !suppressFocusCallbacks { onInputFocusChange?(true) }
+        if result { shortcutBar?.dismissAllPopups() }
+        if result, !suppressFocusCallbacks, !isModifierFocusHandoff { onInputFocusChange?(true) }
         return result
     }
 
@@ -106,7 +109,7 @@ final class GhosttyVTView: UIView {
         stopHardwareKeyRepeat()
         cancelComposition()
         let result = super.resignFirstResponder()
-        if result, !suppressFocusCallbacks, window != nil,
+        if result, !suppressFocusCallbacks, !isModifierFocusHandoff, window != nil,
            UIApplication.shared.applicationState == .active { onInputFocusChange?(false) }
         return result
     }

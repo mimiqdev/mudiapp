@@ -269,6 +269,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     let thumbArcOverlay = MudiThumbArcOverlay()
     var thumbArcRecognizer: UILongPressGestureRecognizer?
     var onOpenPanePicker: (() -> Void)?
+    var isModifierFocusHandoff = false
     private(set) var isInputFocusAllowed = true
     /// Mirrors UIKit's own state restoration: when the terminal had keyboard
     /// focus before a background retakeover replaced its control session,
@@ -375,7 +376,8 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     override func becomeFirstResponder() -> Bool {
         becomeFirstResponderRequestCount += 1
         let didBecome = super.becomeFirstResponder()
-        if didBecome, !suppressFocusCallbacks {
+        if didBecome { shortcutBar?.dismissAllPopups() }
+        if didBecome, !suppressFocusCallbacks, !isModifierFocusHandoff {
             onInputFocusChange?(true)
         }
         return didBecome
@@ -384,7 +386,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     override func resignFirstResponder() -> Bool {
         resignFirstResponderRequestCount += 1
         let didResign = super.resignFirstResponder()
-        if didResign, !suppressFocusCallbacks {
+        if didResign, !suppressFocusCallbacks, !isModifierFocusHandoff {
             onInputFocusChange?(false)
         }
         return didResign
@@ -393,7 +395,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     func updateInputFocus(isAllowed: Bool) {
         isInputFocusAllowed = isAllowed
         guard !isAllowed else { return }
-        shortcutBar?.dismissAgentActions()
+        shortcutBar?.dismissAllPopupsAndClearModifiers()
         shortcutBar?.composer?.input.resignFirstResponder()
         _ = resignFirstResponder()
     }
@@ -675,7 +677,7 @@ final class ShellTerminalView: TerminalView, @preconcurrency TerminalViewDelegat
     }
 
     func stop() {
-        shortcutBar?.dismissAgentActions()
+        shortcutBar?.dismissAllPopupsAndClearModifiers()
         thumbArcOverlay.cancel()
         // UIKit resigns first responder when the view leaves the window. That
         // implicit resign is teardown, not a user keyboard dismissal, so it

@@ -1,6 +1,13 @@
 import UIKit
 @preconcurrency import SwiftTerm
 
+final class MudiPopupDismissTapGestureRecognizer: UITapGestureRecognizer {
+    weak var shortcutBar: MudiTerminalShortcutBar?
+
+    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+}
+
 /// Key dispatch and latch/state rendering for MudiTerminalShortcutBar:
 /// byte-sequence sending, arrow/application-cursor handling, modifier
 /// latching (with the combo popup visibility) and the chip styling used
@@ -38,6 +45,68 @@ extension MudiTerminalShortcutBar {
         terminalView?.controlModifier = false
         terminalView?.metaModifier = false
         updateModifierState()
+    }
+
+    func dismissAllPopups() {
+        activePopup = .none
+        agentActionsState.cancelCommand()
+        applyPopupState()
+    }
+
+    /// Pane switches and input suspension retire the latches too; plain
+    /// popup dismissal (outside taps, keyboard raise) keeps them so the
+    /// Ctrl-latch → terminal-tap → letter flow survives.
+    func dismissAllPopupsAndClearModifiers() {
+        dismissAllPopups()
+        clearModifiers()
+    }
+
+    /// Long-press on the Ctrl cap: switch to the single-shot Alt latch.
+    /// Tapping Ctrl again cancels it (see toggleControl).
+    @objc func handleControlLongPress(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+        toggleAltLatch()
+    }
+
+    /// Switches between the single-shot Alt latch and no latch. Tapping the
+    /// Ctrl cap while Alt is latched cancels it (see toggleControl).
+    func toggleAltLatch() {
+        guard let terminalView, !isShowingComposition else { return }
+        if terminalView.metaModifier {
+            terminalView.metaModifier = false
+        } else {
+            terminalView.controlModifier = false
+            activePopup = .none
+            terminalView.metaModifier = true
+        }
+        applyPopupState()
+    }
+
+    func installPopupDismissGesture(on container: UIView) {
+        guard !(container.gestureRecognizers ?? []).contains(where: { ($0 as? MudiPopupDismissTapGestureRecognizer)?.shortcutBar === self }) else { return }
+        let tap = MudiPopupDismissTapGestureRecognizer(target: self, action: #selector(dismissPopupsFromTerminalTap(_:)))
+        tap.cancelsTouchesInView = false
+        tap.delaysTouchesBegan = false
+        tap.delaysTouchesEnded = false
+        tap.shortcutBar = self
+        container.addGestureRecognizer(tap)
+    }
+
+    func dismissPopupIfOutsideTap(at point: CGPoint, in container: UIView) {
+        container.layoutIfNeeded()
+        var interiorViews: [UIView] = [comboPopup, dpadOverlay, agentActionsPanel]
+        if let barSuperview = superview, barSuperview === container { interiorViews.append(self) }
+        let hitPopup = interiorViews.contains { view in
+            guard !view.isHidden else { return false }
+            return view.bounds.contains(container.convert(point, to: view))
+        }
+        guard !hitPopup else { return }
+        dismissAllPopups()
+    }
+
+    @objc private func dismissPopupsFromTerminalTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended, let container = recognizer.view else { return }
+        dismissPopupIfOutsideTap(at: recognizer.location(in: container), in: container)
     }
 
     func insert(_ text: String) {
@@ -96,7 +165,7 @@ extension MudiTerminalShortcutBar {
     /// lockstep through one code path.
     func applyPopupState() {
         let ctrlLatched = terminalView?.controlModifier == true
-        comboPopup.isHidden = !(activePopup == .ctrlCombo && ctrlLatched)
+        comboPopup.isHidden = true
         dpadOverlay.isHidden = activePopup != .dPad
         agentActionsPanel.isHidden = activePopup != .agentActions
         if activePopup != .agentActions {
@@ -105,20 +174,29 @@ extension MudiTerminalShortcutBar {
         }
         agentActionsButton?.isSelected = activePopup == .agentActions
         style(agentActionsButton)
-        controlButton?.isSelected = activePopup == .ctrlCombo && ctrlLatched
+        controlButton?.setTitle(terminalView?.metaModifier == true ? "Alt" : "Ctrl", for: .normal)
+        controlButton?.isSelected = ctrlLatched || terminalView?.metaModifier == true
         dpadButton?.isSelected = activePopup == .dPad
         style(controlButton)
         style(dpadButton)
+        synchronizeModifierKeyboard()
         setNeedsLayout()
         layoutIfNeeded()
     }
 
     @objc func toggleControl() {
-        guard let terminalView else { return }
+        guard let terminalView, !isShowingComposition else { return }
+        // While the Alt latch is on, tapping the cap cancels it instead of
+        // latching Ctrl (the agreed interaction).
+        if terminalView.metaModifier {
+            terminalView.metaModifier = false
+            applyPopupState()
+            return
+        }
         terminalView.controlModifier.toggle()
         if terminalView.controlModifier {
             // Opening the popup replaces whichever popup was open.
-            activePopup = .ctrlCombo
+            activePopup = .none
         } else if activePopup == .ctrlCombo {
             activePopup = .none
         }
@@ -155,7 +233,11 @@ extension MudiTerminalShortcutBar {
             else if terminalView.isInputFocusAllowed { composer.input.becomeFirstResponder() }
             return
         }
-        if terminalView.isFirstResponder {
+        if isModifierInputActive {
+            clearModifiers()
+            terminalView.resignFirstResponder()
+            isKeyboardVisible = false
+        } else if terminalView.isFirstResponder {
             terminalView.resignFirstResponder()
             isKeyboardVisible = false
         } else if terminalView.isInputFocusAllowed {
@@ -202,8 +284,9 @@ extension MudiTerminalShortcutBar {
         // since there is at most one keyboard at a time.
         guard let terminalView else { return }
         if didShow {
-            guard terminalView.isFirstResponder else { return }
+            guard terminalView.isFirstResponder || isModifierInputActive else { return }
             isKeyboardVisible = true
+            dismissAllPopups()
         } else {
             isKeyboardVisible = false
         }

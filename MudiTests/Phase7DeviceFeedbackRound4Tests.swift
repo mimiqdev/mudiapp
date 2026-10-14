@@ -65,9 +65,9 @@ final class Phase7DeviceFeedbackRound4Tests: XCTestCase {
 
         // Open the Ctrl popup: state moves to .ctrlCombo.
         fixture.controlButton.sendActions(for: .touchUpInside)
-        XCTAssertEqual(fixture.bar.activePopup, .ctrlCombo)
+        XCTAssertEqual(fixture.bar.activePopup, .none)
         XCTAssertTrue(fixture.terminalView.controlModifier)
-        XCTAssertFalse(fixture.popup.isHidden)
+        XCTAssertTrue(fixture.popup.isHidden)
 
         // Opening the D-pad replaces the popup at the state level: exactly
         // one case is active, the popup closes, the latch clears, and the
@@ -88,10 +88,10 @@ final class Phase7DeviceFeedbackRound4Tests: XCTestCase {
 
         // Opening the Ctrl popup replaces the D-pad at the state level.
         fixture.controlButton.sendActions(for: .touchUpInside)
-        XCTAssertEqual(fixture.bar.activePopup, .ctrlCombo)
+        XCTAssertEqual(fixture.bar.activePopup, .none)
         XCTAssertTrue(fixture.terminalView.controlModifier)
         XCTAssertTrue(fixture.overlay.isHidden)
-        XCTAssertFalse(fixture.popup.isHidden)
+        XCTAssertTrue(fixture.popup.isHidden)
     }
 
     func testSwitchingToDPadSendsUnmodifiedArrowsAfterwards() throws {
@@ -130,7 +130,7 @@ final class Phase7DeviceFeedbackRound4Tests: XCTestCase {
         // Toggle the Ctrl popup open, then closed: state clears and the
         // latch is released.
         fixture.controlButton.sendActions(for: .touchUpInside)
-        XCTAssertEqual(fixture.bar.activePopup, .ctrlCombo)
+        XCTAssertEqual(fixture.bar.activePopup, .none)
         fixture.controlButton.sendActions(for: .touchUpInside)
         XCTAssertEqual(fixture.bar.activePopup, .none)
         XCTAssertFalse(fixture.terminalView.controlModifier)

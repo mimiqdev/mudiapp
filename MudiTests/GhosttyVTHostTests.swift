@@ -29,6 +29,296 @@ final class GhosttyVTHostTests: XCTestCase {
         }
     }
 
+    func testPopupDismissalIsSharedAcrossHostsAndTerminalFocus() throws {
+        for view in [ShellTerminalView(frame: .zero), try GhosttyVTView()] as [UIView] {
+            let host = try XCTUnwrap(view as? any TerminalHost)
+            let bar = try XCTUnwrap(host.shortcutBar)
+            let window = Phase7TerminalScreenHarness.makeWindow()
+            let controller = UIViewController()
+            window.rootViewController = controller
+            host.hostView.frame = CGRect(x: 0, y: 0, width: 320, height: 240)
+            controller.view.addSubview(host.hostView)
+            window.makeKeyAndVisible()
+            defer { host.stop(); window.isHidden = true; window.rootViewController = nil }
+            let tapContainer = try XCTUnwrap(bar.superview)
+            tapContainer.layoutIfNeeded()
+            let recognizer = try XCTUnwrap(tapContainer.gestureRecognizers?.compactMap { $0 as? MudiPopupDismissTapGestureRecognizer }.first)
+            XCTAssertFalse(recognizer.cancelsTouchesInView)
+            XCTAssertFalse(recognizer.canPrevent(UITapGestureRecognizer()))
+
+            for popup in [MudiShortcutPopup.dPad, .agentActions] {
+                switch popup {
+                case .ctrlCombo: bar.toggleControl()
+                case .dPad: bar.toggleDPad()
+                case .agentActions: bar.toggleAgentActions()
+                case .none: break
+                }
+                XCTAssertEqual(bar.activePopup, popup)
+                bar.dismissAllPopups()
+                XCTAssertEqual(bar.activePopup, .none)
+                XCTAssertTrue(bar.comboPopup.isHidden)
+                XCTAssertTrue(bar.dpadOverlay.isHidden)
+                XCTAssertTrue(bar.agentActionsPanel.isHidden)
+            }
+
+            for popup in [MudiShortcutPopup.dPad, .agentActions] {
+                switch popup {
+                case .ctrlCombo: bar.toggleControl()
+                case .dPad: bar.toggleDPad()
+                case .agentActions: bar.toggleAgentActions()
+                case .none: break
+                }
+                XCTAssertEqual(bar.activePopup, popup)
+                bar.updateComposition(markedText: "ni")
+                XCTAssertEqual(bar.activePopup, .none, "IME composition hides all shortcut popups")
+                XCTAssertTrue(bar.comboPopup.isHidden)
+                XCTAssertTrue(bar.dpadOverlay.isHidden)
+                XCTAssertTrue(bar.agentActionsPanel.isHidden)
+                XCTAssertTrue(bar.shortcutButtons.allSatisfy(\.isHidden))
+                bar.updateComposition(markedText: nil)
+                XCTAssertTrue(bar.shortcutButtons.allSatisfy { !$0.isHidden })
+            }
+
+            // Popup dismissal keeps the latches (outside taps / keyboard raise);
+            // only input suspension retires them.
+            bar.toggleControl()
+            XCTAssertTrue(host.controlModifier)
+            bar.dismissPopupIfOutsideTap(at: CGPoint(x: -30, y: -30), in: try XCTUnwrap(bar.superview))
+            XCTAssertTrue(bar.comboPopup.isHidden)
+            XCTAssertTrue(host.controlModifier, "An outside tap must keep the Ctrl latch")
+            bar.toggleControl()
+            XCTAssertFalse(host.controlModifier, "Tapping Ctrl again cancels the latch")
+
+            // Long-press Ctrl switches to the single-shot Alt latch; the cap
+            // reads "Alt" and tapping it cancels without latching Ctrl.
+            bar.toggleAltLatch()
+            XCTAssertTrue(host.metaModifier)
+            XCTAssertFalse(host.controlModifier)
+            XCTAssertEqual(bar.controlButton?.title(for: .normal), "Alt")
+            XCTAssertTrue(bar.comboPopup.isHidden)
+            host.insertText("b")
+            XCTAssertFalse(host.metaModifier, "Alt latch is single-shot")
+            XCTAssertEqual(bar.controlButton?.title(for: .normal), "Ctrl")
+
+            bar.toggleAltLatch()
+            XCTAssertTrue(host.metaModifier)
+            bar.toggleControl()
+            XCTAssertFalse(host.metaModifier, "Tapping the cap cancels the Alt latch")
+            XCTAssertFalse(host.controlModifier)
+
+            bar.toggleDPad()
+            XCTAssertEqual(bar.activePopup, .dPad)
+            bar.toggleAgentActions()
+            host.hostView.layoutIfNeeded()
+            bar.layoutIfNeeded()
+            let agentPoint = bar.agentActionsPanel.convert(CGPoint(x: bar.agentActionsPanel.bounds.midX, y: bar.agentActionsPanel.bounds.midY), to: try XCTUnwrap(bar.superview))
+            bar.dismissPopupIfOutsideTap(at: agentPoint, in: try XCTUnwrap(bar.superview))
+            XCTAssertEqual(bar.activePopup, .agentActions, "A tap inside Agent Actions keeps it open")
+            bar.dismissPopupIfOutsideTap(at: CGPoint(x: -30, y: -30), in: try XCTUnwrap(bar.superview))
+            XCTAssertEqual(bar.activePopup, .none, "A tap outside Agent Actions closes it")
+
+            bar.toggleDPad()
+            let dpadPoint = bar.dpadOverlay.convert(CGPoint(x: bar.dpadOverlay.bounds.midX, y: bar.dpadOverlay.bounds.midY), to: try XCTUnwrap(bar.superview))
+            bar.dismissPopupIfOutsideTap(at: dpadPoint, in: try XCTUnwrap(bar.superview))
+            XCTAssertEqual(bar.activePopup, .dPad, "A tap inside the D-pad keeps it open")
+            bar.dismissPopupIfOutsideTap(at: CGPoint(x: -30, y: -30), in: try XCTUnwrap(bar.superview))
+            XCTAssertEqual(bar.activePopup, .none)
+
+            bar.toggleControl()
+            let comboPoint = bar.comboPopup.convert(CGPoint(x: bar.comboPopup.bounds.midX, y: bar.comboPopup.bounds.midY), to: try XCTUnwrap(bar.superview))
+            bar.dismissPopupIfOutsideTap(at: comboPoint, in: try XCTUnwrap(bar.superview))
+            XCTAssertEqual(bar.activePopup, .none, "Ctrl uses a keyboard, not a popup")
+            bar.dismissPopupIfOutsideTap(at: CGPoint(x: -30, y: -30), in: try XCTUnwrap(bar.superview))
+            XCTAssertEqual(bar.activePopup, .none)
+
+            // Beginning IME composition clears both modifier latches and every
+            // popup so committed composition text is never sent with stale Alt/Ctrl.
+            bar.toggleAltLatch()
+            XCTAssertTrue(host.metaModifier)
+            bar.toggleAgentActions()
+            bar.updateComposition(markedText: "ni")
+            XCTAssertFalse(host.metaModifier)
+            XCTAssertFalse(host.controlModifier)
+            XCTAssertEqual(bar.activePopup, .none)
+            XCTAssertTrue(bar.agentActionsPanel.isHidden)
+            XCTAssertTrue(bar.shortcutButtons.allSatisfy(\.isHidden))
+            bar.updateComposition(markedText: nil)
+            XCTAssertTrue(bar.shortcutButtons.allSatisfy { !$0.isHidden })
+
+            bar.toggleDPad()
+            host.updateInputFocus(isAllowed: false)
+            XCTAssertEqual(bar.activePopup, .none, "Suspending keyboard input closes an open popup")
+        }
+    }
+
+    func testModifierKeyboardReplacesSystemInputWithoutResponderHandoffAndRetiresOnPause() async throws {
+        for view in [ShellTerminalView(frame: .zero), try GhosttyVTView()] as [UIView] {
+            let host = try XCTUnwrap(view as? any TerminalHost)
+            let channel = GhosttyVTTestPTY()
+            let session = SSHShellSession(connectedChannel: channel)
+            host.start(session: session, onError: { XCTFail($0) }, onClosed: {})
+            let window = Phase7TerminalScreenHarness.makeWindow()
+            let controller = UIViewController()
+            window.rootViewController = controller
+            controller.view.addSubview(view)
+            view.frame = CGRect(x: 0, y: 0, width: 390, height: 400)
+            window.makeKeyAndVisible()
+            defer { host.stop(); window.isHidden = true; window.rootViewController = nil }
+            _ = host.becomeFirstResponder()
+            let bar = try XCTUnwrap(host.shortcutBar)
+            bar.isHardwareKeyboardConnected = { false }
+            bar.toggleControl()
+            let keyboard = try XCTUnwrap(bar.modifierKeyboard)
+            XCTAssertFalse(host.isFirstResponder)
+            XCTAssertTrue(bar.modifierInput?.isFirstResponder == true)
+            XCTAssertTrue(bar.modifierInput?.inputAccessoryView === keyboard)
+            XCTAssertNil(view.inputView)
+            XCTAssertEqual(bar.activePopup, .none)
+            keyboard.onKey?("c")
+            let first = await ghosttyWait { (await channel.snapshot()).sent.count == 1 }
+            XCTAssertTrue(first)
+            let snapshot1 = await channel.snapshot()
+            XCTAssertEqual(snapshot1.sent, [[3]])
+            XCTAssertTrue(host.isFirstResponder)
+            XCTAssertNil(view.inputView)
+            XCTAssertNil(bar.modifierKeyboard)
+            keyboard.onKey?("c")
+            bar.toggleAltLatch()
+            XCTAssertEqual(bar.modifierKeyboard?.mode, .alt)
+            keyboard.onKey?("c")
+            XCTAssertTrue(host.metaModifier, "Retired keyboard cannot consume a newly armed latch")
+            bar.modifierKeyboard?.onKey?("Home")
+            let second = await ghosttyWait { (await channel.snapshot()).sent.count == 2 }
+            XCTAssertTrue(second)
+            let snapshot2 = await channel.snapshot()
+            XCTAssertEqual(snapshot2.sent.last, Array("\u{1b}[1;3H".utf8))
+            bar.toggleAltLatch()
+            let retired = try XCTUnwrap(bar.modifierKeyboard)
+            host.updateInputFocus(isAllowed: false)
+            XCTAssertNil(view.inputView)
+            retired.onKey?("b")
+            let snapshot3 = await channel.snapshot()
+            XCTAssertEqual(snapshot3.sent.count, 2)
+        }
+    }
+
+    func testModifierKeyboardVisualStatesAndNavigationReset() async throws {
+        let view = ShellTerminalView(frame: .zero)
+        let window = Phase7TerminalScreenHarness.makeWindow()
+        let controller = UIViewController()
+        window.rootViewController = controller
+        controller.view.addSubview(view)
+        view.frame = controller.view.bounds
+        window.makeKeyAndVisible()
+        defer { view.stop(); window.isHidden = true; window.rootViewController = nil }
+        let bar = try XCTUnwrap(view.shortcutBar)
+        bar.isHardwareKeyboardConnected = { false }
+        _ = view.becomeFirstResponder()
+        try await Task.sleep(for: .milliseconds(350))
+        let originalMode = view.textInputMode?.primaryLanguage
+        for appearance in [UIUserInterfaceStyle.light, .dark] {
+            window.overrideUserInterfaceStyle = appearance
+            for mode in [TerminalModifierKeyboard.Mode.control, .alt] {
+                if mode == .control { bar.toggleControl() } else { bar.toggleAltLatch() }
+                try await Task.sleep(for: .milliseconds(350))
+                let keyboard = try XCTUnwrap(bar.modifierKeyboard)
+                XCTAssertEqual(keyboard.mode, mode)
+                XCTAssertEqual(keyboard.bounds.height, 44, accuracy: 1)
+                keyboard.layoutIfNeeded()
+                let key = try XCTUnwrap(phase7View(with: "modifier-key-Home", in: keyboard) as? UIButton)
+                XCTAssertGreaterThan(key.bounds.width, 15)
+                XCTAssertGreaterThan(key.bounds.height, 30)
+                let image = UIGraphicsImageRenderer(size: CGSize(width: 390, height: keyboard.bounds.height + 60)).image { renderer in
+                    renderer.cgContext.setFillColor((appearance == .dark ? UIColor.black : UIColor.white).cgColor)
+                    renderer.cgContext.fill(CGRect(x: 0, y: 0, width: 390, height: keyboard.bounds.height + 60))
+                    renderer.cgContext.saveGState()
+                    bar.layer.render(in: renderer.cgContext)
+                    renderer.cgContext.restoreGState()
+                    renderer.cgContext.translateBy(x: 0, y: 60)
+                    keyboard.layer.render(in: renderer.cgContext)
+                }
+                let attachment = XCTAttachment(image: image)
+                attachment.name = "modifier-\(appearance == .dark ? "dark" : "light")-\(mode == .alt ? "alt" : "ctrl")"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+                keyboard.navigationScroll.setContentOffset(CGPoint(x: 50, y: 0), animated: false)
+                keyboard.onCancel?()
+                XCTAssertNil(view.inputView)
+                XCTAssertEqual(view.textInputMode?.primaryLanguage, originalMode)
+                XCTAssertTrue(view.isFirstResponder)
+            }
+        }
+        bar.toggleControl()
+        XCTAssertEqual(bar.modifierKeyboard?.navigationScroll.contentOffset.x, 0)
+        bar.clearModifiers()
+    }
+
+    func testModifierKeyboardSessionReplacementCannotConsumeStaleKey() async throws {
+        for view in [ShellTerminalView(frame: .zero), try GhosttyVTView()] as [UIView] {
+            let host = try XCTUnwrap(view as? any TerminalHost)
+            let oldChannel = GhosttyVTTestPTY()
+            let newChannel = GhosttyVTTestPTY()
+            host.start(session: SSHShellSession(connectedChannel: oldChannel), onError: { XCTFail($0) }, onClosed: {})
+            let window = Phase7TerminalScreenHarness.makeWindow()
+            let controller = UIViewController()
+            window.rootViewController = controller
+            controller.view.addSubview(view)
+            view.frame = controller.view.bounds
+            window.makeKeyAndVisible()
+            defer { host.stop(); window.isHidden = true; window.rootViewController = nil }
+            let bar = try XCTUnwrap(host.shortcutBar)
+            bar.isHardwareKeyboardConnected = { false }
+            bar.toggleAltLatch()
+            let retired = try XCTUnwrap(bar.modifierKeyboard)
+            host.updateSession(session: SSHShellSession(connectedChannel: newChannel), onError: { XCTFail($0) }, onClosed: {})
+            XCTAssertNil(view.inputView)
+            XCTAssertFalse(host.metaModifier)
+            retired.onKey?("b")
+            let old = await oldChannel.snapshot()
+            let new = await newChannel.snapshot()
+            XCTAssertTrue(old.sent.isEmpty)
+            XCTAssertTrue(new.sent.isEmpty)
+        }
+    }
+
+    func testHardwareKeyboardBypassAndSoftwareModifierCancelKeepOriginalInputOwner() throws {
+        for view in [ShellTerminalView(frame: .zero), try GhosttyVTView()] as [UIView] {
+            let host = try XCTUnwrap(view as? any TerminalHost)
+            let window = Phase7TerminalScreenHarness.makeWindow()
+            let controller = UIViewController()
+            window.rootViewController = controller
+            controller.view.addSubview(view)
+            view.frame = controller.view.bounds
+            window.makeKeyAndVisible()
+            defer { host.stop(); window.isHidden = true; window.rootViewController = nil }
+            let bar = try XCTUnwrap(host.shortcutBar)
+            bar.isHardwareKeyboardConnected = { true }
+            bar.toggleControl()
+            XCTAssertTrue(host.controlModifier)
+            XCTAssertNil(view.inputView)
+            XCTAssertNil(bar.modifierKeyboard)
+            bar.toggleControl()
+            bar.isHardwareKeyboardConnected = { false }
+            _ = host.becomeFirstResponder()
+            bar.toggleAltLatch()
+            XCTAssertTrue(bar.modifierInput?.isFirstResponder == true)
+            let keyboard = try XCTUnwrap(bar.modifierKeyboard)
+            keyboard.onCancel?()
+            XCTAssertTrue(host.isFirstResponder)
+            XCTAssertNil(view.inputView)
+            XCTAssertFalse(host.metaModifier)
+            bar.toggleControl()
+            bar.updateComposition(markedText: "ni")
+            XCTAssertNil(view.inputView)
+            XCTAssertFalse(host.controlModifier)
+            bar.updateComposition(markedText: nil)
+            bar.toggleAltLatch()
+            NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+            XCTAssertNil(view.inputView)
+            XCTAssertFalse(host.metaModifier)
+        }
+    }
+
     func testAgentActionsConfirmationIsCancelledWhenEitherHostPausesOrStops() throws {
         for view in [ShellTerminalView(frame: .zero), try GhosttyVTView()] as [UIView] {
             let host = try XCTUnwrap(view as? any TerminalHost)
@@ -79,7 +369,7 @@ final class GhosttyVTHostTests: XCTestCase {
         ghosttyPress(view, GhosttyVTTestKey(.keyboardUpArrow))
         view.setMarkedText("ni", selectedRange: .init(location: 2, length: 0))
         ghosttyPress(view, GhosttyVTTestKey(.keyboardUpArrow))
-        XCTAssertEqual(host.shortcutBar?.compositionLabel.text, "ni")
+        XCTAssertEqual(host.shortcutBar?.compositionLabel.text, host.shortcutBar?.isCompositionStripSuppressed == true ? nil : "ni")
         XCTAssertTrue(host.shortcutBar?.isShowingComposition == true)
         view.setMarkedText(nil, selectedRange: .init(location: 0, length: 0))
         let received = await ghosttyWait { (await channel.snapshot()).sent.count == 2 }
