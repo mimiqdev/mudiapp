@@ -163,7 +163,7 @@ final class MudiAgentActionsPanel: UIView {
         set { sentModels[modelScopeKey] = newValue }
     }
     private var modelScopeKey: String {
-        guard let context = currentState.context else { return "unattached" }
+        guard let context = currentState.context else { sentModels.removeAll(); return "unattached" }
         return "\(context.hostID)|\(String(describing: context.sessionID))|\(String(describing: context.paneID))"
     }
     private func openModels() {

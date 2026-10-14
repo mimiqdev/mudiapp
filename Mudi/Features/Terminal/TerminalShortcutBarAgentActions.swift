@@ -24,7 +24,9 @@ extension MudiTerminalShortcutBar {
                 toast.layer.cornerRadius = 8
                 toast.clipsToBounds = true
                 if let container = self.superview {
-                    toast.frame = CGRect(x: 16, y: max(0, self.frame.minY - 50), width: container.bounds.width - 32, height: 34)
+                    toast.numberOfLines = 2
+                toast.textAlignment = .center
+                toast.frame = CGRect(x: 16, y: max(0, self.frame.minY - 56), width: container.bounds.width - 32, height: 44)
                     container.addSubview(toast)
                     Task { @MainActor in try? await Task.sleep(for: .milliseconds(1500)); toast.removeFromSuperview() }
                 }
