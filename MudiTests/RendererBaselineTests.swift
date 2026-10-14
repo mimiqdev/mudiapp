@@ -96,6 +96,7 @@ final class RendererBaselineTests: XCTestCase {
             "started": ISO8601DateFormatter().string(from: started), "ended": ISO8601DateFormatter().string(from: Date())
         ]
         let report: [String: Any] = ["schema_version": 1, "environment": environment, "runs": runs, "summary": summary,
+            "percentile_method": "linear interpolation between closest ranks (numpy linear); p50 is the interpolated median",
             "limitations": ["draw_total_inclusive includes CoreText construction; do not add these metrics together",
                              "SwiftTerm public feed combines parser/display scheduling; cache and CoreText stages unavailable separately without patching dependency",
                              "CPU raster is explicit UIView.layer.render, not a presented frame; display_link_intervals describe opportunities, not renderer FPS or GPU duration",
@@ -262,9 +263,17 @@ final class RendererBaselineTests: XCTestCase {
         }
         return (manifest, corpora)
     }
+    /// Linear-interpolated percentile (numpy "linear" method). Fixed and
+    /// documented so odd/even sample counts cannot silently change the
+    /// estimator: p50 of [a,b] is the midpoint, not the lower sample.
     private func percentile(_ values: [Double], _ fraction: Double) -> Double {
         guard !values.isEmpty else { return 0 }
-        return values[min(values.count - 1, Int(ceil(Double(values.count) * fraction)) - 1)]
+        let sorted = values.sorted()
+        guard sorted.count > 1 else { return sorted[0] }
+        let position = Double(sorted.count - 1) * fraction
+        let lower = Int(position)
+        let upper = min(lower + 1, sorted.count - 1)
+        return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - Double(lower))
     }
 }
 
