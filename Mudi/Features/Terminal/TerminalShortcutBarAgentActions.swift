@@ -3,6 +3,35 @@ import UIKit
 @MainActor
 extension MudiTerminalShortcutBar {
     func configureAgentActions() {
+        agentActionsPanel.onModel = { [weak self] model in
+            guard let self, let host = self.terminalView, host.isInputFocusAllowed else { return }
+            let context = self.agentActionsState.context
+            let session = host.session.map(ObjectIdentifier.init)
+            host.sendComposedText(model.command, bracketedPaste: true, appendReturn: false)
+            self.dismissAgentActions()
+            Task { @MainActor [weak self, weak host] in
+                try? await Task.sleep(for: .milliseconds(150))
+                guard let self, let host, self.terminalView === host, host.isInputFocusAllowed,
+                      host.session.map(ObjectIdentifier.init) == session, self.agentActionsState.context == context else { return }
+                host.send([13])
+                self.agentActionsPanel.lastSentModel = model.command
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                let toast = UILabel()
+                toast.text = "已发送 " + model.command
+                toast.font = .systemFont(ofSize: 12)
+                toast.textColor = .label
+                toast.backgroundColor = .secondarySystemBackground
+                toast.layer.cornerRadius = 8
+                toast.clipsToBounds = true
+                if let container = self.superview {
+                    toast.numberOfLines = 2
+                toast.textAlignment = .center
+                toast.frame = CGRect(x: 16, y: max(0, self.frame.minY - 56), width: container.bounds.width - 32, height: 44)
+                    container.addSubview(toast)
+                    Task { @MainActor in try? await Task.sleep(for: .milliseconds(1500)); toast.removeFromSuperview() }
+                }
+            }
+        }
         agentActionsPanel.onAction = { [weak self] id in self?.performAgentAction(id) }
         agentActionsPanel.onPreset = { [weak self] preset in
             guard let self, self.terminalView?.isInputFocusAllowed == true else { return }

@@ -25,6 +25,7 @@ struct TerminalAgentActionsContext: Equatable {
         switch normalizedAgentName {
         case "pi": return .pi
         case "claude code": return .claudeCode
+        case "codex": return .claudeCode
         default: return .generic
         }
     }

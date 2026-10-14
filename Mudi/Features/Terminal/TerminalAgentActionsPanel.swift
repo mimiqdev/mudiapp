@@ -1,4 +1,5 @@
 import UIKit
+import SwiftUI
 
 /// A scrollable popup, kept separate from the existing terminal key row.
 /// Inline confirmation doesn't steal keyboard focus or send before consent.
@@ -110,7 +111,7 @@ final class MudiAgentActionsPanel: UIView {
 
     func render(_ state: TerminalAgentActionsState) {
         currentState = state
-        configureModelsButton.isHidden = state.preset == .generic
+        configureModelsButton.isHidden = false
         if renderedPreset != state.preset || state.pendingCommand != nil { modelConfiguration.isHidden = true }
         if renderedPreset != state.preset { modelInput.text = state.preset.configuredModels.joined(separator: "\n") }
         presetLabel.text = "当前预设：" + state.preset.title
@@ -155,19 +156,33 @@ final class MudiAgentActionsPanel: UIView {
         layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: 16).cgPath
     }
 
+    var onModel: ((QuickModel) -> Void)?
+    private var sentModels: [String: String] = [:]
+    var lastSentModel: String? {
+        get { sentModels[modelScopeKey] }
+        set { sentModels[modelScopeKey] = newValue }
+    }
+    private var modelScopeKey: String {
+        guard let context = currentState.context else { sentModels.removeAll(); return "unattached" }
+        return "\(context.hostID)|\(String(describing: context.sessionID))|\(String(describing: context.paneID))"
+    }
     private func openModels() {
         var responder: UIResponder? = self
         while let current = responder, !(current is UIViewController) { responder = current.next }
         guard let presenter = responder as? UIViewController else { return }
         let state = currentState
-        let page = AgentModelListController(preset: state.preset)
-        page.onSelect = { [weak self] id in
-            guard let self, self.currentState.context == state.context, self.currentState.preset == state.preset else { return }
-            self.onAction?("configured-model-" + id)
+        let page = QuickModelPickerController(agent: state.context?.normalizedAgentName, lastSent: lastSentModel)
+        page.onSelect = { [weak self] model in
+            guard let self, self.currentState.context == state.context else { return }
+            self.onModel?(model)
         }
-        let navigation = UINavigationController(rootViewController: page)
-        navigation.modalPresentationStyle = .pageSheet
-        presenter.present(navigation, animated: true)
+        page.modalPresentationStyle = .popover
+        page.preferredContentSize = CGSize(width: 340, height: 300)
+        page.popoverPresentationController?.delegate = page
+        page.popoverPresentationController?.sourceView = configureModelsButton
+        page.popoverPresentationController?.sourceRect = configureModelsButton.bounds
+        page.popoverPresentationController?.permittedArrowDirections = .down
+        presenter.present(page, animated: true)
     }
 
     @objc private func presetChanged() {
@@ -319,5 +334,44 @@ final class AgentModelEditorController: UIViewController {
         preset.saveModels(input.text)
         onSave?()
         navigationController?.popViewController(animated: true)
+    }
+}
+
+@MainActor
+final class QuickModelPickerController: UITableViewController, UIPopoverPresentationControllerDelegate {
+    func adaptivePresentationStyle(for controller: UIPresentationController) -> UIModalPresentationStyle { .none }
+    let agent: String?
+    let lastSent: String?
+    var onSelect: ((QuickModel) -> Void)?
+    var models: [QuickModel] { QuickModelStore.shared.models.filter { $0.applies(to: agent) } }
+    init(agent: String?, lastSent: String?) { self.agent = agent; self.lastSent = lastSent; super.init(style: .plain) }
+    required init?(coder: NSCoder) { fatalError("init(coder:)") }
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        tableView.backgroundColor = .clear
+        tableView.backgroundView = MudiTerminalShortcutBar.makeMaterialView()
+        tableView.accessibilityIdentifier = "quick-model-picker"
+        tableView.rowHeight = 58
+    }
+    override func viewWillAppear(_ animated: Bool) { super.viewWillAppear(animated); tableView.reloadData() }
+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { max(1, models.count) }
+    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
+        cell.backgroundColor = .clear
+        if models.isEmpty { cell.textLabel?.text = "还没有快捷模型"; cell.detailTextLabel?.text = "去设置添加 →" }
+        else {
+            let model = models[indexPath.row]
+            cell.textLabel?.text = model.name + "  · " + (model.scopes.isEmpty ? "全部" : model.scopes.map { ["pi": "Pi", "claude code": "Claude Code", "codex": "Codex"][$0] ?? $0 }.joined(separator: "/"))
+            cell.detailTextLabel?.text = model.command
+            cell.detailTextLabel?.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            cell.accessoryType = lastSent == model.command ? .checkmark : .none
+            if lastSent == model.command { cell.detailTextLabel?.text = model.command + " · 上次发送" }
+        }
+        return cell
+    }
+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        if models.isEmpty { present(UINavigationController(rootViewController: UIHostingController(rootView: QuickModelSettingsView())), animated: true); return }
+        let model = models[indexPath.row]
+        dismiss(animated: true) { [weak self] in self?.onSelect?(model) }
     }
 }

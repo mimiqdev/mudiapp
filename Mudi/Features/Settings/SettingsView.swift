@@ -29,6 +29,7 @@ struct SettingsView: View {
             }.mudiRow()
 
             Section {
+                NavigationLink("快捷模型") { QuickModelSettingsView() }
                 NavigationLink("拇指快捷弧") { ThumbArcSettingsView(model: model) }
             }.mudiRow()
 
@@ -53,6 +54,7 @@ struct TerminalAppearanceSection: View {
 
     var body: some View {
         Section("Terminal") {
+            NavigationLink("快捷模型") { QuickModelSettingsView() }
             Picker("Renderer", selection: Binding(
                 get: { model.preferences.terminalEngine },
                 set: { model.updateTerminalEngine($0) }
@@ -194,7 +196,8 @@ struct TerminalAppearanceSettingsView: View {
     var body: some View {
         Form {
             TerminalAppearanceSection(model: model)
-            Section { NavigationLink("拇指快捷弧") { ThumbArcSettingsView(model: model) } }.mudiRow()
+            Section { NavigationLink("快捷模型") { QuickModelSettingsView() }
+                NavigationLink("拇指快捷弧") { ThumbArcSettingsView(model: model) } }.mudiRow()
             DiagnosticsSettingsSection(model: model)
         }
         .mudiGroupedList()
