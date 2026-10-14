@@ -105,6 +105,9 @@ targets:
     sources:
       - path: MudiTests
     resources:
+      - path: MudiTests/Resources/RendererCorpus
+        type: folder
+        buildPhase: resources
       - path: MudiTests/Resources/Hack-Regular.ttf
       - path: MudiTests/Resources/Hack-LICENSE.txt
     dependencies:

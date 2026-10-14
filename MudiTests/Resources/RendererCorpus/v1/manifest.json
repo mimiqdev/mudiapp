@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "encoding": "UTF-8 VT byte stream",
+  "corpora": [
+    {
+      "file": "mixed.vt",
+      "sha256": "0014d0f4719f184577e84a70c2aac21335d83fb8727e7e9f2f68522f9313f273",
+      "bytes": 145
+    },
+    {
+      "file": "logs.vt",
+      "sha256": "807b5b22aafa6c59c67bfee4ec00ff3338c4350a41de573ab1748ac6032dcf32",
+      "bytes": 9360
+    },
+    {
+      "file": "overwrite.vt",
+      "sha256": "ed4907fa7ea5080591d8aac8e3ce4712897832f772ec1dc1a6df140c159cbf95",
+      "bytes": 4620
+    },
+    {
+      "file": "wrap.vt",
+      "sha256": "fb5e21bc26d48acb5f65bd82c59f3bb3680d17bb59553af29812fea333414ba7",
+      "bytes": 258
+    }
+  ]
+}
